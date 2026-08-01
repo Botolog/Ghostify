@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  XML-side colors. The Compose palette in
+  com/ghostify/ui/theme/Color.kt is the source of truth; these values mirror
+  its surfaces so the pre-Compose window (launch background, status/nav bars)
+  matches the in-app theme exactly — no white flash in dark mode.
+-->
+<resources>
+    <color name="ghostify_background">#FEF7FF</color>       <!-- LightSurface -->
+    <color name="ghostify_background_dark">#1C1B1F</color>  <!-- DarkSurface -->
+</resources>

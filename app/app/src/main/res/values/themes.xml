@@ -1,6 +1,16 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.Ghostify" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:fontFamily">sans</item>
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Light XML theme. It is only the window shell shown before Compose attaches
+  (launch window, status/nav bar colors); all real theming happens in the
+  Compose GhostifyTheme. Platform parents are used deliberately so this app
+  does not depend on the View Material library.
+-->
+<resources>
+    <style name="Theme.Ghostify" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ghostify_background</item>
+        <item name="android:statusBarColor">@color/ghostify_background</item>
+        <item name="android:navigationBarColor">@color/ghostify_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>
