@@ -20,6 +20,7 @@ local.properties
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.egg-info/
 
 # Local environment files
 .env
