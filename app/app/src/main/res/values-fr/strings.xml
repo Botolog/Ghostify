@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Example locale override. It demonstrates the localization pipeline (T-176):
+  a values-fr folder overrides keys, every missing key falls back to the
+  default values/strings.xml, and the app must show zero hardcoded strings in
+  any locale. Translators extend this file (and add more values-<locale>/).
+-->
+<resources>
+    <string name="app_name">Ghostify</string>
+    <string name="library_title">Votre bibliothèque</string>
+    <string name="library_empty_title">Aucune playlist pour le moment</string>
+    <string name="library_empty_body">Appuyez sur + et collez l\'URL d\'une playlist Spotify pour l\'enregistrer hors ligne.</string>
+    <string name="library_add_playlist">Ajouter une playlist</string>
+    <string name="add_title">Ajouter une playlist Spotify</string>
+    <string name="add_url_hint">Collez l\'URL d\'une playlist Spotify</string>
+    <string name="add_fetch">Récupérer</string>
+    <string name="add_save">Enregistrer</string>
+    <string name="add_cancel">Annuler</string>
+    <string name="detail_play_all">Tout lire</string>
+    <string name="detail_download_all">Tout télécharger</string>
+    <string name="detail_resync">Resynchroniser</string>
+    <string name="player_nothing_playing">Rien en lecture</string>
+    <string name="settings_title">Paramètres</string>
+</resources>

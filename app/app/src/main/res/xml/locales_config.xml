@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-app language settings (Android 13+, attribute android:localeConfig).
+  Every locale shipped under res/values-<locale>/ must be listed here or users
+  cannot select it. Update alongside adding a locale.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="fr" />
+</locale-config>

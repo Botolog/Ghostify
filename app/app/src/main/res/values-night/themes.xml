@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark counterpart of Theme.Ghostify (see values/themes.xml). -->
+<resources>
+    <style name="Theme.Ghostify" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ghostify_background_dark</item>
+        <item name="android:statusBarColor">@color/ghostify_background_dark</item>
+        <item name="android:navigationBarColor">@color/ghostify_background_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

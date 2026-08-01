@@ -1,3 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ghostify canonical user-visible strings (default locale = en).
+  Every user-facing literal in the app must come from here (T-176).
+  Localizers add res/values-<locale>/strings.xml; missing keys fall back here.
+-->
 <resources>
+
+    <!-- App -->
     <string name="app_name">Ghostify</string>
+    <string name="app_short_description">Offline Spotify playlist downloader and player</string>
+
+    <!-- Library (home) -->
+    <string name="library_title">Your library</string>
+    <string name="library_empty_title">No playlists yet</string>
+    <string name="library_empty_body">Tap + and paste a Spotify playlist URL to save it offline.</string>
+    <string name="library_add_playlist">Add playlist</string>
+    <string name="library_track_count">%1$d tracks</string>
+    <string name="library_track_count_zero">No tracks</string>
+    <string name="library_synced_just_now">Synced just now</string>
+    <string name="library_synced_at">Synced %1$s</string>
+    <string name="library_downloading">Downloading…</string>
+    <string name="library_error">Something went wrong</string>
+
+    <!-- Add playlist dialog -->
+    <string name="add_title">Add a Spotify playlist</string>
+    <string name="add_url_hint">Paste a Spotify playlist URL</string>
+    <string name="add_fetch">Fetch</string>
+    <string name="add_fetching">Fetching playlist…</string>
+    <string name="add_save">Save</string>
+    <string name="add_cancel">Cancel</string>
+    <string name="add_error_invalid_url">That doesn\'t look like a Spotify playlist link.</string>
+    <string name="add_error_private">This playlist is private or no longer available.</string>
+    <string name="add_error_network">Couldn\'t reach Spotify. Check your connection and try again.</string>
+    <string name="add_duplicate">This playlist is already in your library.</string>
+    <string name="add_preview_by">by %1$s</string>
+
+    <!-- Playlist detail -->
+    <string name="detail_play_all">Play all</string>
+    <string name="detail_play_all_disabled">Nothing downloaded yet — download a track to play it.</string>
+    <string name="detail_download_all">Download all</string>
+    <string name="detail_resync">Re-sync</string>
+    <string name="detail_syncing">Syncing…</string>
+    <string name="detail_song_status_downloaded">Downloaded</string>
+    <string name="detail_song_status_pending">Queued</string>
+    <string name="detail_song_status_failed">Failed — tap to retry</string>
+    <string name="detail_song_status_downloading">Downloading</string>
+    <string name="detail_retry_song">Retry</string>
+    <string name="detail_no_tracks">This playlist has no tracks.</string>
+    <string name="detail_download_progress">%1$d of %2$d downloaded</string>
+
+    <!-- Player -->
+    <string name="player_nothing_playing">Nothing playing</string>
+    <string name="player_queue">Queue</string>
+    <string name="player_shuffle_on">Shuffle on</string>
+    <string name="player_shuffle_off">Shuffle off</string>
+    <string name="player_repeat_mode">Repeat %1$s</string>
+    <string name="player_repeat_off">Repeat off</string>
+    <string name="player_repeat_all">Repeat all</string>
+    <string name="player_repeat_one">Repeat one</string>
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_next">Next</string>
+    <string name="player_previous">Previous</string>
+    <string name="player_volume">Volume</string>
+    <string name="player_seek">Seek</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_storage_location">Storage location</string>
+    <string name="settings_storage_path">%1$s</string>
+    <string name="settings_bitrate">Download bitrate</string>
+    <string name="settings_bitrate_kbps">%1$d kbps</string>
+    <string name="settings_concurrent_downloads">Concurrent downloads</string>
+    <string name="settings_auto_download_on_add">Download new tracks automatically</string>
+    <string name="settings_clear_cache">Clear cache</string>
+    <string name="settings_clear_cache_done">Cache cleared</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_downloads">Download progress</string>
+    <string name="notif_channel_downloads_desc">Progress of Spotify track downloads</string>
+    <string name="notif_channel_playback">Playback</string>
+    <string name="notif_channel_playback_desc">Media controls while music plays in the background</string>
+    <string name="notif_downloading">Downloading %1$s…</string>
+    <string name="notif_download_complete">%1$s downloaded</string>
+    <string name="notif_permission_banner_title">Turn on notifications</string>
+    <string name="notif_permission_banner_body">See download progress and control playback from the notification shade.</string>
+    <string name="notif_permission_banner_action">Allow</string>
+    <string name="notif_permission_banner_dismiss">Not now</string>
+    <string name="notif_permission_open_settings">Open settings</string>
+
+    <!-- Errors -->
+    <string name="error_python_unavailable">Offline tools aren\'t available right now.</string>
+    <string name="error_generic">Something went wrong. Please try again.</string>
+    <string name="error_retry">Retry</string>
+
+    <!-- Testing / instrumentation aids (non-user-visible in normal flow) -->
+    <string name="cd_add_playlist_button">Add playlist</string>
+    <string name="cd_player_play_pause">Play or pause</string>
+
 </resources>
