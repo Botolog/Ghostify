@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+    id("com.chaquo.python")
 }
 
 android {
@@ -16,9 +17,24 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
 
     buildFeatures { compose = true; buildConfig = true }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+                "proguard-chaquopy.pro",
+            )
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -28,7 +44,31 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        jniLibs {
+            // Extract native libs (libpython.so, libffmpeg.so) so the ffmpeg
+            // binary can be exec()'d by Python subprocesses (FfmpegLocator).
+            useLegacyPackaging = true
+            keepDebugSymbols += "libffmpeg.so"
+        }
     }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        pip {
+            // Chaquopy ships no rapidfuzz wheel (C++ extension); install our
+            // pure-Python difflib-based fallback first so spotdl's dependency
+            // `rapidfuzz>=3.0.0` resolves (see python-rapidfuzz/).
+            install("./python-rapidfuzz")
+            install("spotdl")
+            install("yt-dlp")
+        }
+    }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -41,6 +81,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

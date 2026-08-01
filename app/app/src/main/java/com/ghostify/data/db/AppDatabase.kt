@@ -11,10 +11,11 @@ import com.ghostify.data.db.dao.SongDao
 import com.ghostify.data.db.entity.PlaylistEntity
 import com.ghostify.data.db.entity.SettingEntity
 import com.ghostify.data.db.entity.SongEntity
+import com.ghostify.recovery.RoomRecoveryDao
 
 @Database(
     entities = [PlaylistEntity::class, SongEntity::class, SettingEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -22,11 +23,25 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun songDao(): SongDao
     abstract fun settingDao(): SettingDao
+    abstract fun recoveryDao(): RoomRecoveryDao
 
     /** Atomic multi-statement writes backed by SQLite transactions. */
     fun transactionRunner(): TransactionRunner = AppDatabaseTransactionRunner(this)
 
     companion object {
+
+        /** The one file-backed instance used by the whole app. */
+        @Volatile
+        private var instance: AppDatabase? = null
+
+        fun get(context: Context): AppDatabase =
+            instance ?: synchronized(this) {
+                instance ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    DB_NAME,
+                ).addMigrations(*Migrations.ALL).build().also { instance = it }
+            }
 
         /**
          * In-memory database for tests and previews. Note: intentionally not exposed to
@@ -36,6 +51,8 @@ abstract class AppDatabase : RoomDatabase() {
             Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
                 .addMigrations(*Migrations.ALL)
                 .build()
+
+        private const val DB_NAME = "ghostify.db"
     }
 }
 

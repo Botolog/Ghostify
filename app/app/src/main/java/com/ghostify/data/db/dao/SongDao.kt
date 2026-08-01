@@ -66,6 +66,17 @@ interface SongDao {
     @Query("UPDATE songs SET status = :status WHERE id IN (:ids)")
     suspend fun updateStatus(ids: List<String>, status: SongStatus)
 
+    /**
+     * Single-row status write used by the download manager. `file_path` is only
+     * written when non-null so a recovery reset never wipes a downloaded path;
+     * `error` mirrors the last failure reason (nullable, typically only while FAILED).
+     */
+    @Query(
+        "UPDATE songs SET status = :status, error = :error, " +
+            "file_path = COALESCE(:filePath, file_path) WHERE id = :songId"
+    )
+    suspend fun setStatus(songId: String, status: SongStatus, filePath: String?, error: String?)
+
     @Query("SELECT COUNT(*) FROM songs WHERE playlist_id = :playlistId")
     suspend fun countForPlaylist(playlistId: String): Int
 

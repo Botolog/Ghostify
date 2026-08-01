@@ -17,6 +17,9 @@ enum class SongStatus {
     /** Download failed (retryable). */
     FAILED,
 
+    /** User cancelled the download; recoverable back to PENDING. */
+    CANCELED,
+
     /** Track removed from the Spotify playlist / deleted from disk. */
     REMOVED
 }

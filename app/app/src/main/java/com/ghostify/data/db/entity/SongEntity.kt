@@ -64,6 +64,9 @@ data class SongEntity(
     @ColumnInfo(name = "file_path")
     val filePath: String? = null,
 
+    /** Last failure reason; non-null only while status == FAILED. */
+    val error: String? = null,
+
     val status: SongStatus = SongStatus.PENDING,
 
     /** Playlist ordering (0-based). */

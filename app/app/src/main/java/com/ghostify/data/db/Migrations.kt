@@ -14,12 +14,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *      - composite indexes `(playlist_id, position)` and `(playlist_id, status)`
  *        for the ordered track list and status-filtered queries;
  *      - the `settings` key/value table.
+ * v3 — adds `songs.error` (last download failure reason, consumed by the
+ *      download manager's retry UI).
  *
  * The migration is a single Room transaction, so it is atomic: if any step fails
- * SQLite rolls the whole upgrade back and the database is left at v1.
+ * SQLite rolls the whole upgrade back and the database is left at the previous
+ * version.
  *
- * The statements are kept in one place ([MIGRATION_1_2_STATEMENTS]) so the Room
- * [Migration] and the JVM (sqlite-jdbc) migration test share the exact same SQL.
+ * The statements are kept in one place ([MIGRATION_1_2_STATEMENTS],
+ * [MIGRATION_2_3_STATEMENTS]) so the Room [Migration] and the JVM (sqlite-jdbc)
+ * migration test share the exact same SQL.
  */
 object Migrations {
 
@@ -43,5 +47,16 @@ object Migrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2)
+    /** The v2 -> v3 DDL. Single nullable column — no backfill required. */
+    val MIGRATION_2_3_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE songs ADD COLUMN error TEXT"
+    )
+
+    val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            MIGRATION_2_3_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 }

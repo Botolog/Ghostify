@@ -7,9 +7,9 @@ import kotlinx.coroutines.SupervisorJob
 
 /**
  * Minimal manual-DI entry point used by [DownloadWorker] to reach the shared
- * [DownloadManager]. In the assembled app this is replaced by Hilt wiring
- * (PROJECT.md §3, §7.1); keeping a tiny provider here keeps the component
- * self-contained and buildable in isolation.
+ * [DownloadManager]. In the assembled app the composition root builds these
+ * dependencies and passes them down (PROJECT.md §3, §7.1); keeping a tiny
+ * provider here keeps the component self-contained and buildable in isolation.
  */
 class DownloadProvider private constructor(
     context: Context,
@@ -63,10 +63,10 @@ class DownloadProvider private constructor(
     }
 }
 
-/** Points the download component at the Room-backed repository + spotdl wrapper. */
+/** Points the download component at the canonical Room-backed repository. */
 object SpotdlDataWiring {
-    fun buildRepository(app: Context): DownloadRepository =
-        com.ghostify.download.data.RoomDownloadRepository(
-            com.ghostify.download.data.DownloadDatabase.get(app).downloadDao(),
-        )
+    fun buildRepository(app: Context): DownloadRepository {
+        val db = com.ghostify.data.db.AppDatabase.get(app)
+        return com.ghostify.download.data.RoomDownloadRepository(db.songDao(), db.playlistDao())
+    }
 }

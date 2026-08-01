@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.ghostify.data.db.entity.PlaylistEntity
+import com.ghostify.data.model.PlaylistStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -41,4 +42,14 @@ interface PlaylistDao {
 
     @Query("SELECT COUNT(*) FROM playlists")
     suspend fun count(): Int
+
+    /** Playlist-level download status, used by the download manager. */
+    @Query("SELECT status FROM playlists WHERE id = :id")
+    suspend fun getPlaylistStatus(id: String): PlaylistStatus?
+
+    @Query("UPDATE playlists SET status = :status WHERE id = :id")
+    suspend fun setPlaylistStatus(id: String, status: PlaylistStatus)
+
+    @Query("SELECT id FROM playlists")
+    suspend fun allPlaylistIds(): List<String>
 }
