@@ -1,0 +1,29 @@
+# Gradle and Android build outputs
+.gradle/
+**/.gradle/
+**/build/
+.build/
+**/.build/
+.kotlin/
+**/.kotlin/
+*.apk
+*.aab
+components/track-download/tests/bridge-test.jar
+*.bak
+
+# Android Studio and IntelliJ
+.idea/
+*.iml
+local.properties
+
+# Python test and runtime artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment files
+.env
+.env.*
+
+# OS files
+.DS_Store

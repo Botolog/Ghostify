@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Component manifest for Background Playback (T-093..T-108).
+  This <service> + the FOREGROUND_SERVICE_MEDIA_PLAYBACK permission must be merged
+  into the app's AndroidManifest.xml at the application package `com.ghostify`.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <application>
+        <!-- Foreground MediaSessionService: owns ExoPlayer + MediaSession and the
+             media notification. Kept as a service (not Activity-bound) so it
+             survives process/Recents removal and config changes. -->
+        <service
+            android:name=".background.PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- The app's player-activity to open when the notification is tapped. -->
+        <meta-data
+            android:name="com.ghostify.background.PLAYER_ACTIVITY"
+            android:value="com.ghostify.ui.PlayerActivity" />
+    </application>
+</manifest>

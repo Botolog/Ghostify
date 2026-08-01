@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- =========================================================================
+     app/src/main/AndroidManifest.xml — additions for the Python runtime.
+     Merge the <uses-permission> elements into the top of your manifest and the
+     <service> + <application> attributes into your <application> element.
+     ========================================================================= -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keeps the :pythond host process alive for long downloads (download
+         manager calls IPythonHost.enterForeground). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <application
+        android:name=".GhostifyApp"
+        android:extractNativeLibs="true">
+
+        <!--
+          The :pythond process owns the single Chaquopy interpreter. Running it
+          in a separate process is what guarantees TEST_PLAN T-028: a Python
+          segfault only ever kills this process; the app process binds to it
+          and transparently restarts it on the next call.
+
+          It is a plain bound service (BIND_AUTO_CREATE) so the host process is
+          created lazily on first use and dies with the app. Long downloads
+          hold it via startForeground.
+        -->
+        <service
+            android:name="com.ghostify.python.PythondService"
+            android:process=":pythond"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

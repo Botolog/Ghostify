@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (API 31) additions: system splash screen colors.
+  Styles are replaced wholesale per config, so the parent and base items from
+  values/themes.xml are repeated here.
+-->
+<resources>
+    <style name="Theme.Ghostify" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ghostify_background</item>
+        <item name="android:statusBarColor">@color/ghostify_background</item>
+        <item name="android:navigationBarColor">@color/ghostify_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowSplashScreenBackground">@color/ghostify_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

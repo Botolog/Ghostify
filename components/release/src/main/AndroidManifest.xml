@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ghostify — canonical app manifest (Platform / Release Readiness).
+
+  This is the merged, authoritative manifest. Other components must NOT redeclare
+  the components owned here (Application, launcher Activity, MediaSessionService,
+  MediaButtonReceiver); they only reference them from Kotlin code.
+
+  minSdk 26 / targetSdk 36. Chaquopy needs no manifest entries of its own.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Network: Spotify public metadata fetch + YouTube audio resolution/download. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Android 13+ runtime permission for download / playback notifications.
+         On API < 33 this is a normal permission that installs silently. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Foreground services: background playback (MediaSessionService) and
+         background downloads (WorkManager worker). Both type-specific permissions
+         are required from targetSdk 34 onwards. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Media playback must survive screen-off. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- No storage permission: all media lives in app-scoped storage
+         (getExternalFilesDir) — see PROJECT.md §8. -->
+    <!-- No uses-feature restrictions: the app must remain installable on the
+         full API 26+ device range. -->
+
+    <application
+        android:name=".GhostifyApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Ghostify"
+        android:usesCleartextTraffic="false"
+        android:enableOnBackInvokedCallback="true">
+
+        <!-- Single-activity Compose app. Exported so the launcher can start it;
+             singleTop so notification taps don't stack instances. -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Media3 MediaSessionService. exported=false: controllers reach the
+             session through the system's MediaSessionManager, never by binding
+             this component directly. -->
+        <service
+            android:name=".player.MediaSessionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Media buttons (Bluetooth/headset) route here; Media3 connects the
+             receiver to the active session. Must be exported for the system. -->
+        <receiver
+            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

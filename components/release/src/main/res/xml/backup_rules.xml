@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pre-Android 12 (API < 31) full-backup rules.
+
+  On these versions the OS offers no cloud-vs-transfer distinction, so the
+  privacy stance from PROJECT.md ("no cloud, everything local") opts out of
+  backup entirely: nothing from a user's offline library ever leaves the device.
+  API 31+ behaviour (allow DB+prefs on device-to-device transfer) is defined in
+  data_extraction_rules.xml.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="external" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="device_file" path="." />
+</full-backup-content>
