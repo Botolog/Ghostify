@@ -190,9 +190,14 @@ class TrackDownloadBridge(
     // ------------------------------------------------------------------
 
     internal class HookAdapter(private val listener: TrackProgressListener) {
-        /** Mirrors `on_download_start` (called with the `_track_dict` map). */
-        fun onDownloadStart(track: Map<String, Any?>) {
-            listener.onDownloadStart(TrackInfo.fromMap(track))
+        /**
+         * Mirrors `on_download_start` (called with the `_track_dict` map). Chaquopy
+         * cannot auto-convert a Python dict into a Kotlin Map-typed parameter, so
+         * we accept PyObject and convert explicitly (cf. PlaylistMetadataBridge).
+         */
+        fun onDownloadStart(track: PyObject) {
+            val map = track.toJava(Map::class.java) as? Map<*, *>
+            if (map != null) listener.onDownloadStart(TrackInfo.fromMap(map))
         }
 
         /** Mirrors `on_progress` (called with percent: int, message: str). */
@@ -200,9 +205,13 @@ class TrackDownloadBridge(
             listener.onProgress(percent, message)
         }
 
-        /** Mirrors `on_download_complete` (called with the result payload map). */
-        fun onDownloadComplete(result: Map<String, Any?>) {
-            listener.onDownloadComplete(TrackDownloadResult.fromMap(result))
+        /**
+         * Mirrors `on_download_complete` (called with the result payload map). Same
+         * PyObject conversion as `onDownloadStart`.
+         */
+        fun onDownloadComplete(result: PyObject) {
+            val map = result.toJava(Map::class.java) as? Map<*, *>
+            if (map != null) listener.onDownloadComplete(TrackDownloadResult.fromMap(map))
         }
     }
 
