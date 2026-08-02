@@ -66,6 +66,60 @@ _PART_HASH_CACHE: Dict[str, str] = {
     "fetchPlaylist": "e4b2953f160e58e38ac025d79b5a9b3aceee5c4c716598e9830bfceb69faff5f",
 }
 
+# Hash cache persistence file (under spotdl's writable config dir). Runtime
+# discovery is expensive (~80 requests), so any hash we discover is written here
+# and reloaded on the next process — discovery happens at most once per build,
+# not once per fetch/process.
+_PART_HASH_CACHE_FILE = "spotapi_part_hashes.json"
+
+
+def _part_hash_cache_path() -> str | None:
+    try:
+        import os
+        from pathlib import Path
+
+        home = Path(os.environ.get("HOME") or os.path.expanduser("~"))
+        spotdl = home / ".config" / "spotdl"
+        if not spotdl.exists():
+            spotdl = home / ".spotdl"
+        spotdl.mkdir(parents=True, exist_ok=True)
+        return str(spotdl / _PART_HASH_CACHE_FILE)
+    except Exception:  # noqa: BLE001 - persistence is best-effort
+        return None
+
+
+def _load_part_hash_cache() -> None:
+    path = _part_hash_cache_path()
+    if path is None:
+        return
+    try:
+        import json
+
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(key, str) and isinstance(value, str):
+                    _PART_HASH_CACHE[key] = value
+    except Exception:  # noqa: BLE001 - corrupt/missing file is not fatal
+        return
+
+
+def _persist_part_hash_cache() -> None:
+    path = _part_hash_cache_path()
+    if path is None:
+        return
+    try:
+        import json
+
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(_PART_HASH_CACHE, fh)
+    except Exception:  # noqa: BLE001 - persistence is best-effort
+        return
+
+
+_load_part_hash_cache()
+
 __all__ = ["BaseClient", "BaseClientError"]
 
 
@@ -305,11 +359,13 @@ class BaseClient:
                 str(self.raw_hashes).split(f'"{name}","mutation","')[1].split('"')[0]
             )
         _PART_HASH_CACHE[name] = value
+        _persist_part_hash_cache()
         return value
 
     def _discard_part_hash(self, name: str) -> None:
         """Drop a stale persisted-query hash so the next part_hash re-discovers it."""
         _PART_HASH_CACHE.pop(name, None)
+        _persist_part_hash_cache()
         self.raw_hashes = _Undefined
 
     def get_sha256_hash(self) -> None:
