@@ -46,6 +46,35 @@ logger = logging.getLogger("ghostify_dl")
 _MODULES: Dict[str, Any] = {}
 
 
+def _patch_chaquopy_asset_path() -> bool:
+    """Make Chaquopy 17's ``AssetPath`` an ``os.PathLike``.
+
+    Chaquopy serves packaged Python from APK assets, so
+    ``importlib.resources.files()`` returns a Chaquopy ``AssetPath`` which is
+    deliberately *not* an ``os.PathLike``. Packages that hand those objects to
+    ``os.path`` functions break with ``TypeError: expected str, bytes or
+    os.PathLike object, not AssetPath``. The first offender in our chain is
+    pykakasi (``spotdl.utils.formatter`` runs ``pykakasi.kakasi()`` at import,
+    which loads dictionaries via ``os.path.join(files("pykakasi") / "data",
+    name)``). Giving the class an ``__fspath__`` lets ``os.path`` coerce it to
+    the real on-disk path — Chaquopy extracts data files, so that path exists.
+    """
+    try:
+        from java.android import importer
+    except Exception:  # pragma: no cover - plain CPython host
+        return False
+    cls = getattr(importer, "AssetPath", None)
+    if cls is None or getattr(cls, "__fspath__", None) is not None:
+        return False
+    cls.__fspath__ = lambda self: str(self)  # type: ignore[attr-defined]
+    return True
+
+
+_patched_asset_path = _patch_chaquopy_asset_path()
+if _patched_asset_path:
+    logger.debug("Patched Chaquopy AssetPath with __fspath__")
+
+
 def _import(name):
     """Import *name* once and cache the module object."""
     module = _MODULES.get(name)
