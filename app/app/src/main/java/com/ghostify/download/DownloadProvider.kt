@@ -22,7 +22,20 @@ class DownloadProvider private constructor(
     private val repo: DownloadRepository by lazy { repoOverride ?: SpotdlDataWiring.buildRepository(app) }
 
     private val runner: DownloadQueueRunner by lazy {
-        DownloadQueueRunner(repo, downloaderOverride ?: SpotdlTrackDownloader())
+        DownloadQueueRunner(repo, downloaderOverride ?: buildWiredDownloader())
+    }
+
+    /** Builds the Chaquopy-backed [TrackDownloader] with the real bridge + store. */
+    private fun buildWiredDownloader(): TrackDownloader {
+        val db = com.ghostify.data.db.AppDatabase.get(app)
+        val store = com.ghostify.file.musicStore(app)
+        return SpotdlTrackDownloader(
+            ChaquopySpotdlCall(
+                bridge = com.ghostify.trackdownload.TrackDownloadBridge(),
+                musicStore = store,
+                settings = com.ghostify.data.repo.SettingsRepository(db.settingDao()),
+            )
+        )
     }
 
     private val manager: DownloadManager by lazy {

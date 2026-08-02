@@ -28,6 +28,9 @@ class PlaylistRepository(
 
     suspend fun getPlaylist(id: String): PlaylistEntity? = playlistDao.getById(id)
 
+    /** Looks a saved playlist up by its Spotify id (used by the Add-dialog duplicate check). */
+    suspend fun getBySpotifyId(spotifyId: String): PlaylistEntity? = playlistDao.getBySpotifyId(spotifyId)
+
     suspend fun getSongs(playlistId: String): List<SongEntity> =
         songDao.getSongsForPlaylist(playlistId)
 

@@ -1,7 +1,15 @@
 package com.ghostify.download
 
+import com.ghostify.data.repo.SettingsRepository
+import com.ghostify.file.MusicStore
+import com.ghostify.trackdownload.DownloadErrorKind
+import com.ghostify.trackdownload.TrackDownloadBridge
+import com.ghostify.trackdownload.TrackDownloadConfig
+import com.ghostify.trackdownload.TrackProgressListener
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 
 /**
  * Default [TrackDownloader] used in production. It delegates the actual spotdl
@@ -12,7 +20,7 @@ import kotlinx.coroutines.currentCoroutineContext
  * propagation) so the queue stays clean regardless of what spotdl throws.
  */
 class SpotdlTrackDownloader(
-    private val call: SpotdlCall = ChaquopySpotdlCall(),
+    private val call: SpotdlCall,
 ) : TrackDownloader {
 
     override suspend fun download(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult {
@@ -43,13 +51,82 @@ fun interface SpotdlCall {
 
 /**
  * Production binding to the Python `ghostify_dl.download(...)` (PROJECT.md §7).
- * The Chaquopy module lives in the `python/` package; until it is wired, this
- * placeholder reports a typed failure instead of crashing the queue.
+ *
+ * Each track is downloaded through [TrackDownloadBridge] with the current
+ * settings bitrate, writing into the app-scoped [MusicStore] root. Progress
+ * events are relayed as 0f..1f fractions for the per-song progress UI.
  */
-class ChaquopySpotdlCall : SpotdlCall {
-    override suspend fun invoke(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult =
-        TrackDownloadResult(
-            songId = song.id,
-            error = DownloadError.Generic("Python bridge not yet wired (see PROJECT.md §7)"),
+class ChaquopySpotdlCall(
+    private val bridge: TrackDownloadBridge,
+    private val musicStore: MusicStore,
+    private val settings: SettingsRepository,
+) : SpotdlCall {
+
+    override suspend fun invoke(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult {
+        currentCoroutineContext().ensureActive()
+        val bitrate = settings.getBitrate()
+            .toIntOrNull()
+            ?.takeIf { TrackDownloadConfig.isValidBitrate(it) }
+            ?: TrackDownloadConfig.DEFAULT_BITRATE
+        val config = TrackDownloadConfig(
+            outputDir = musicStore.rootDir.absolutePath,
+            bitrate = bitrate,
+            outputTemplate = TrackDownloadConfig.DEFAULT_TEMPLATE,
+            ffmpeg = "ffmpeg",
         )
+        val url = "spotify:track:${song.spotifyId}"
+        val listener = object : TrackProgressListener {
+            override fun onDownloadStart(track: com.ghostify.trackdownload.TrackInfo) {
+                // Metadata resolved; conversion is about to begin.
+            }
+
+            override fun onProgress(percent: Int, message: String?) {
+                onProgress((percent / 100f).coerceIn(0f, 1f))
+            }
+
+            override fun onDownloadComplete(result: com.ghostify.trackdownload.TrackDownloadResult) {
+                // The download call itself returns the final result.
+            }
+        }
+        return withContext(Dispatchers.IO) {
+            when (val result = bridge.downloadBlocking(url, config, listener)) {
+                is com.ghostify.trackdownload.TrackDownloadResult.Downloaded ->
+                    TrackDownloadResult(songId = song.id, filePath = result.outputPath)
+
+                is com.ghostify.trackdownload.TrackDownloadResult.Skipped ->
+                    TrackDownloadResult(songId = song.id, filePath = result.outputPath)
+
+                is com.ghostify.trackdownload.TrackDownloadResult.Failure ->
+                    TrackDownloadResult(songId = song.id, error = mapError(result.error))
+            }
+        }
+    }
+
+    private fun mapError(
+        error: com.ghostify.trackdownload.DownloadError,
+    ): DownloadError = when (error.kind) {
+        DownloadErrorKind.INTERRUPTED -> DownloadError.Canceled
+        DownloadErrorKind.NO_TRACK,
+        DownloadErrorKind.SEARCH_FAILED,
+        DownloadErrorKind.AUDIO_UNAVAILABLE,
+        -> DownloadError.NotFound(error.message)
+
+        DownloadErrorKind.IO ->
+            if (looksLikeStorage(error.message)) DownloadError.StorageFull()
+            else DownloadError.Network(error.message)
+
+        DownloadErrorKind.METADATA_FAILED,
+        DownloadErrorKind.CONVERSION_FAILED,
+        DownloadErrorKind.TAGGING_FAILED,
+        DownloadErrorKind.VALIDATION_FAILED,
+        DownloadErrorKind.DEPENDENCY,
+        DownloadErrorKind.UNKNOWN,
+        -> DownloadError.Generic(error.message)
+    }
+
+    private fun looksLikeStorage(message: String): Boolean {
+        val m = message.lowercase()
+        return "enospc" in m || "no space" in m || "not enough space" in m ||
+            "disk full" in m || "out of space" in m
+    }
 }

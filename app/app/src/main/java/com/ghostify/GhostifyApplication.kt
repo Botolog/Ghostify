@@ -9,11 +9,20 @@ import com.ghostify.crash.FileLogCrashReporter
 import com.ghostify.crash.GhostifyCrashHandler
 import com.ghostify.crash.PrefsCrashMarker
 import com.ghostify.data.db.AppDatabase
+import com.ghostify.data.repo.PlaylistRepository
+import com.ghostify.data.repo.SettingsRepository
+import com.ghostify.data.repo.SongRepository
+import com.ghostify.download.DownloadManager
+import com.ghostify.file.MusicStore
+import com.ghostify.player.PlayerController
 import com.ghostify.python.FfmpegLocator
+import com.ghostify.python.PlaylistMetadataBridge
 import com.ghostify.recovery.KilledProcessRecovery
 import com.ghostify.recovery.RecoveryGate
 import com.ghostify.recovery.RoomRecoveryDao
 import com.ghostify.recovery.StartupBootstrap
+import com.ghostify.sync.SyncUseCase
+import com.ghostify.ui.viewmodel.GhostifyViewModels
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -79,9 +88,88 @@ class GhostifyApplication : Application() {
     }
 }
 
-/** Placeholder for the app-level composition root; populated with the UI shell. */
+/** App-level composition root: builds every process-wide dependency (manual DI). */
 class GhostifyContainer(private val context: Application) {
+
     val database: AppDatabase by lazy { AppDatabase.get(context) }
     val crashMarker: CrashMarker by lazy { PrefsCrashMarker(context) }
     val recoveryDao: RoomRecoveryDao by lazy { database.recoveryDao() }
+
+    // --- file layer --------------------------------------------------------
+
+    val musicStore: MusicStore by lazy { com.ghostify.file.musicStore(context) }
+
+    // --- repositories -------------------------------------------------------
+
+    val settingsRepository: SettingsRepository by lazy {
+        SettingsRepository(database.settingDao())
+    }
+
+    val playlistRepository: PlaylistRepository by lazy {
+        PlaylistRepository(
+            playlistDao = database.playlistDao(),
+            songDao = database.songDao(),
+            transactions = database.transactionRunner(),
+        )
+    }
+
+    val songRepository: SongRepository by lazy {
+        SongRepository(database.songDao(), database.transactionRunner())
+    }
+
+    // --- python bridges -----------------------------------------------------
+
+    val metadataBridge: PlaylistMetadataBridge by lazy { PlaylistMetadataBridge() }
+
+    // --- downloads ----------------------------------------------------------
+
+    /** The single shared [DownloadManager]; also used by [DownloadWorker]. */
+    val downloadManager: DownloadManager by lazy {
+        com.ghostify.download.DownloadProvider.get(context).manager()
+    }
+
+    // --- sync ---------------------------------------------------------------
+
+    val syncUseCase: SyncUseCase by lazy {
+        SyncUseCase(
+            playlists = database.playlistDao(),
+            songs = database.songDao(),
+            transactions = database.transactionRunner(),
+            fetcher = com.ghostify.di.SpotifyPlaylistFetcherAdapter(metadataBridge),
+            files = com.ghostify.di.MusicStoreLocalFileStore(musicStore),
+            enqueuer = com.ghostify.sync.DownloadEnqueuer { playlistId ->
+                downloadManager.downloadAll(playlistId)
+            },
+            locks = com.ghostify.sync.SyncLocks(),
+        )
+    }
+
+    // --- playback ------------------------------------------------------------
+
+    val playerController: com.ghostify.player.PlayerController by lazy {
+        com.ghostify.player.PlayerController.create(
+            context = context,
+            sessionActivityClass = MainActivity::class.java,
+        )
+    }
+
+    // --- view models ----------------------------------------------------------
+
+    val viewModels: com.ghostify.ui.viewmodel.GhostifyViewModels by lazy {
+        com.ghostify.ui.viewmodel.GhostifyViewModels(
+            repo = playlistRepository,
+            songRepo = songRepository,
+            settings = settingsRepository,
+            bridge = metadataBridge,
+            downloads = downloadManager,
+            syncer = syncUseCase,
+            player = playerController,
+            musicStore = musicStore,
+        )
+    }
+
+    /** Tears down process-scoped resources when the activity is destroyed. */
+    fun onDestroy() {
+        viewModels.clear()
+    }
 }
