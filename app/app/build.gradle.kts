@@ -61,6 +61,20 @@ chaquopy {
             // pure-Python difflib-based fallback first so spotdl's dependency
             // `rapidfuzz>=3.0.0` resolves (see python-rapidfuzz/).
             install("./python-rapidfuzz")
+            // spotdl 4.5.2's anonymous client chain (SpotipyFree -> spotapi)
+            // depends on curl_cffi (compiled TLS lib) which has no Android
+            // wheel. Install a pure-Python requests-based shim that satisfies
+            // the `from curl_cffi.requests import ...` imports (see
+            // python-curl-cffi/).
+            install("./python-curl-cffi")
+            // spotapi (the private-API wrapper) is vendored with pymongo,
+            // redis and readerwriterlock savers stripped out and curl_cffi
+            // replaced by the shim above (see python-spotapi/).
+            install("./python-spotapi")
+            // spotipyfree (Spotipy-compatible anonymous client) is vendored
+            // because the PyPI copy hard-requires pymongo, which has no
+            // Android wheel (see python-spotipyfree/).
+            install("./python-spotipyfree")
             // ghostify_dl targets the spotdl 4.x API (spotdl.types.playlist).
             // Chaquopy's resolver would pick 3.9.6 (no spotdl/types/) and the
             // PyPI 4.x line requires pydantic-core (Rust) which has no Android
