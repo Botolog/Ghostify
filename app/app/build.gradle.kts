@@ -61,7 +61,12 @@ chaquopy {
             // pure-Python difflib-based fallback first so spotdl's dependency
             // `rapidfuzz>=3.0.0` resolves (see python-rapidfuzz/).
             install("./python-rapidfuzz")
-            install("spotdl")
+            // ghostify_dl targets the spotdl 4.x API (spotdl.types.playlist).
+            // Chaquopy's resolver would pick 3.9.6 (no spotdl/types/) and the
+            // PyPI 4.x line requires pydantic-core (Rust) which has no Android
+            // wheel — so install our vendored 4.5.2 copy with the web-UI deps
+            // (fastapi/uvicorn/pydantic) stripped out (see python-spotdl/).
+            install("./python-spotdl")
             install("yt-dlp")
         }
     }
