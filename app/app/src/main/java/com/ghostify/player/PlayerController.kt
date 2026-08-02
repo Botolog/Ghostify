@@ -55,7 +55,7 @@ class PlayerController private constructor(
     private val exoPlayer: ExoPlayer,
     private val queueBuilder: PlayerQueueBuilder,
     private val artworkExtractor: ArtworkExtractor,
-    private val sessionHolder: MediaSessionHolder?,
+    private val session: MediaSession?,
     private val scope: CoroutineScope,
 ) : Player.Listener {
 
@@ -67,9 +67,6 @@ class PlayerController private constructor(
 
     /** Snapshot of the current playback state, updated on every relevant player event. */
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
-
-    /** The active [MediaSession]; only non-null when a session was configured. */
-    val session: MediaSession? get() = sessionHolder?.session
 
     init {
         exoPlayer.addListener(this)
@@ -190,9 +187,7 @@ class PlayerController private constructor(
 
     fun release() {
         tickerJob?.cancel()
-        sessionHolder?.release()
         exoPlayer.removeListener(this)
-        exoPlayer.release()
         scope.cancel()
     }
 
@@ -307,8 +302,9 @@ class PlayerController private constructor(
         private const val TICK_INTERVAL_MS = 250L
 
         /**
-         * Creates a controller backed by a new [ExoPlayer] (default renderers, progressive
-         * sources — the right setup for a local MP3 library) and a [MediaSession].
+         * Creates a controller backed by the shared process-wide [ExoPlayer] (see
+         * [PlaybackEngine]) and its [MediaSession], so the UI and the background
+         * media service always drive the same player.
          */
         fun create(
             context: Context,
@@ -317,12 +313,11 @@ class PlayerController private constructor(
             sessionActivityClass: Class<*>? = null,
             scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
         ): PlayerController {
-            val exoPlayer = ExoPlayer.Builder(context).build()
             return PlayerController(
-                exoPlayer = exoPlayer,
+                exoPlayer = PlaybackEngine.exoPlayer(context),
                 queueBuilder = queueBuilder,
                 artworkExtractor = artworkExtractor,
-                sessionHolder = MediaSessionHolder(context, exoPlayer, sessionActivityClass),
+                session = PlaybackEngine.session(context, sessionActivityClass),
                 scope = scope,
             )
         }

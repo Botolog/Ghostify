@@ -1,30 +1,33 @@
 package com.ghostify.background
 
-import android.app.PendingIntent
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.ghostify.MainActivity
 import com.ghostify.R
 import com.ghostify.background.core.AudioFocusController
 import com.ghostify.background.core.FocusPolicy
+import com.ghostify.player.PlaybackEngine
 
 /**
  * Foreground `MediaSessionService` that is the single source of truth for audio
  * playback in Ghostify.
  *
  * Responsibilities:
- *  - Owns the `ExoPlayer` and the `MediaSession`; hands the session to controllers
- *    (UI `MediaController`, Bluetooth, Android Auto) via [onGetSession].
+ *  - Hosts the shared `ExoPlayer` + `MediaSession` from [PlaybackEngine]; hands
+ *    the session to controllers (UI `MediaController`, Bluetooth, Android Auto)
+ *    via [onGetSession]. The UI's [com.ghostify.player.PlayerController] drives
+ *    the same player, so there is never a second audio engine.
  *  - Runs as a foreground service via a `MediaNotification.Provider`
  *    ([PlaybackNotificationProvider]) so playback survives the app being swiped
  *    away (T-093, T-096) and works under battery saver (T-106).
- *  - Explicit audio-focus management (T-099) and becoming-noisy handling (T-098)
- *    via [AudioFocusController] / [AudioBecomingNoisyReceiver], keeping the player
- *    on `handleAudioFocus = false` so the two never fight.
+ *  - Audio focus is primarily owned by ExoPlayer's automatic handling (the shared
+ *    player is built with default focus attributes); the explicit
+ *    [AudioFocusController] and [AudioBecomingNoisyReceiver] are kept as a
+ *    complementary safety net (T-098, T-099).
  *  - Tears the service down on an explicit Stop / end-of-queue, so there is never
  *    a zombie notification (T-097).
  *  - Survives configuration changes (T-102): the player lives in the service, not
@@ -38,7 +41,6 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         const val NOTIFICATION_ID: Int = 1
-        private const val META_PLAYER_ACTIVITY = "com.ghostify.background.PLAYER_ACTIVITY"
     }
 
     private var player: ExoPlayer? = null
@@ -56,13 +58,13 @@ class PlaybackService : MediaSessionService() {
         )
     }
 
-    /** Lazily builds the player + session the first time a controller asks. */
+    /** Hands out the shared process-wide session, wiring focus policy around it. */
     override fun onGetSession(
         controllerInfo: MediaSession.ControllerInfo,
     ): MediaSession {
         var s = session
         if (s == null) {
-            val p = buildExoPlayer(this)
+            val p = PlaybackEngine.exoPlayer(this)
             val control = PlayerControlAdapter(p)
             val focus = AudioFocusController(AndroidAudioFocusDriver(this), control, FocusPolicy())
             control.focusController = focus
@@ -85,9 +87,7 @@ class PlaybackService : MediaSessionService() {
                 }
             })
 
-            val builder = MediaSession.Builder(this, p)
-            sessionActivityIntent()?.let { builder.setSessionActivity(it) }
-            s = builder.build()
+            s = PlaybackEngine.session(this, MainActivity::class.java)
 
             session = s
             player = p
@@ -97,29 +97,6 @@ class PlaybackService : MediaSessionService() {
             playbackEverStarted = false
         }
         return s
-    }
-
-    /**
-     * PendingIntent that opens the app's player screen when the notification is
-     * tapped. The target activity is declared via `<meta-data>` (see the manifest)
-     * so this component never hard-codes the app's UI package.
-     */
-    private fun sessionActivityIntent(): PendingIntent? {
-        val activityName = resolvePlayerActivityName() ?: return null
-        val intent = Intent().setClassName(packageName, activityName)
-        return PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-    }
-
-    private fun resolvePlayerActivityName(): String? {
-        return try {
-            val appInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
-            appInfo?.metaData?.getString(META_PLAYER_ACTIVITY)
-        } catch (e: PackageManager.NameNotFoundException) {
-            null
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
@@ -138,8 +115,8 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         noisyReceiver?.let { unregisterReceiver(it) }
         focusController?.abandon()
-        player?.release()
-        session?.release()
+        // The shared player/session are owned by PlaybackEngine and must NOT be
+        // released here; the UI controller may still be using them.
         super.onDestroy()
     }
 }

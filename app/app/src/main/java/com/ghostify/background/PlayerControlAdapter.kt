@@ -1,7 +1,5 @@
 package com.ghostify.background
 
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import com.ghostify.background.core.AudioFocusController
 import com.ghostify.background.core.PlaybackControl
@@ -12,9 +10,9 @@ import com.ghostify.background.core.PlayDecision
  * component's collaborators speak.
  *
  * Two responsibilities beyond "delegate":
- *  - **ducking** is implemented as player volume scaling (the player manages
- *    volume with [handleAudioFocus=false] on the player, since focus is owned
- *    by [AudioFocusController]).
+ *  - **ducking** is implemented as player volume scaling. The shared player uses
+ *    ExoPlayer's automatic focus for the primary path; this adapter's volume
+ *    ducking is kept as a complementary safety net.
  *  - **focus lifecycle** is tied to play/stop so a request is always paired
  *    with an abandon (T-099). Play requests focus first; stop abandons it.
  */
@@ -56,17 +54,4 @@ class PlayerControlAdapter(
         private const val DUCK_VOLUME = 0.15f
         private const val FULL_VOLUME = 1.0f
     }
-}
-
-/** Builds an ExoPlayer configured for media-playback focus + attribute policy. */
-internal fun buildExoPlayer(context: android.content.Context): ExoPlayer = ExoPlayer.Builder(context).build().apply {
-    setAudioAttributes(
-        AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.CONTENT_TYPE_MUSIC)
-            .build(),
-        /* handleAudioFocus = */ false, // owned by AudioFocusController
-    )
-    // Foreground-service playback already keeps the process alive across screen
-    // off (T-093), so no WAKE_LOCK / setWakeMode is needed here.
 }
