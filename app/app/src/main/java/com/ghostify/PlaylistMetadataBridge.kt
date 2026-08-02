@@ -42,7 +42,9 @@ class PlaylistMetadataBridge(
             return try {
                 val python = Python.getInstance()
                 val module = python.getModule(moduleName)
-                val result = module.callAttr("fetch_playlist", spotifyId, options)
+                val result = module.callAttr(
+                    "fetch_playlist", spotifyId, toPyOptions(python, options)
+                )
                 parseSuccess(result)
             } catch (e: PyException) {
                 parsePyException(e)
@@ -52,6 +54,26 @@ class PlaylistMetadataBridge(
                 PlaylistFetchResult.Failure(PlaylistFetchError.unknown(e.message))
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Option marshalling.
+    // ------------------------------------------------------------------
+
+    /**
+     * Converts a Kotlin options [Map] into a real Python dict. Chaquopy
+     * auto-converts primitives, String and arrays only — a `Map` would cross
+     * the bridge as an opaque Java proxy and Python's
+     * `_normalize_options` (`dict(options)`) would fail with
+     * "TypeError: 'LinkedHashMap' object is not iterable". Building the dict
+     * here sidesteps that (T-019/T-021).
+     */
+    private fun toPyOptions(python: Python, options: Map<String, Any>): PyObject {
+        val dict = python.getModule("builtins").callAttr("dict")
+        for ((key, value) in options) {
+            dict.callAttr("__setitem__", key, value)
+        }
+        return dict
     }
 
     // ------------------------------------------------------------------
