@@ -5,7 +5,7 @@ import base64
 import pyotp
 import atexit
 import requests
-from typing import Tuple, Literal
+from typing import Any, Dict, Tuple, Literal
 from collections.abc import Mapping
 from spotapi.utils.logger import Logger
 from spotapi.types.annotations import enforce
@@ -21,7 +21,34 @@ RECAPTCHA_SITE_KEY: str = "6LfCVLAUAAAAALFwwRnnCJ12DalriUGbj8FW_J39"
 _FALLBACK_SECRET: Tuple[Literal[18], bytearray] = (
     61,
     bytearray(
-        [44,55,47,42,70,40,34,114,76,74,50,111,120,97,75,76,94,102,43,69,49,120,118,80,64,78]
+        [
+            44,
+            55,
+            47,
+            42,
+            70,
+            40,
+            34,
+            114,
+            76,
+            74,
+            50,
+            111,
+            120,
+            97,
+            75,
+            76,
+            94,
+            102,
+            43,
+            69,
+            49,
+            120,
+            118,
+            80,
+            64,
+            78,
+        ]
     ),
 )
 
@@ -29,6 +56,15 @@ _FALLBACK_SECRET: Tuple[Literal[18], bytearray] = (
 _secret_cache: Tuple[int, bytearray] | None = None
 _cache_expiry: float = -1
 _CACHE_TTL = 15 * 60
+
+# Spotify web-player persisted-query hashes, seeded from the web-player JS
+# packs. Discovering them at runtime downloads ~80 JS chunks (tens of seconds on
+# mobile), so we seed the ones Ghostify uses and only fall back to the runtime
+# discovery when a hash goes stale (the first query then fails with a 401 and
+# part_hash re-discovers it).
+_PART_HASH_CACHE: Dict[str, str] = {
+    "fetchPlaylist": "e4b2953f160e58e38ac025d79b5a9b3aceee5c4c716598e9830bfceb69faff5f",
+}
 
 __all__ = ["BaseClient", "BaseClientError"]
 
@@ -253,6 +289,9 @@ class BaseClient:
         self.client_token = resp.response["granted_token"]["token"]
 
     def part_hash(self, name: str) -> str:
+        if name in _PART_HASH_CACHE:
+            return _PART_HASH_CACHE[name]
+
         if self.raw_hashes is _Undefined:
             self.get_sha256_hash()
 
@@ -260,9 +299,18 @@ class BaseClient:
             raise ValueError("Could not get playlist hashes")
 
         try:
-            return str(self.raw_hashes).split(f'"{name}","query","')[1].split('"')[0]
+            value = str(self.raw_hashes).split(f'"{name}","query","')[1].split('"')[0]
         except IndexError:
-            return str(self.raw_hashes).split(f'"{name}","mutation","')[1].split('"')[0]
+            value = (
+                str(self.raw_hashes).split(f'"{name}","mutation","')[1].split('"')[0]
+            )
+        _PART_HASH_CACHE[name] = value
+        return value
+
+    def _discard_part_hash(self, name: str) -> None:
+        """Drop a stale persisted-query hash so the next part_hash re-discovers it."""
+        _PART_HASH_CACHE.pop(name, None)
+        self.raw_hashes = _Undefined
 
     def get_sha256_hash(self) -> None:
         if self.js_pack is _Undefined:

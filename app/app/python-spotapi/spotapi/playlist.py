@@ -56,35 +56,44 @@ class PublicPlaylist:
     ) -> Mapping[str, Any]:
         """Gets the public playlist information"""
         url = "https://api-partner.spotify.com/pathfinder/v1/query"
-        params = {
-            "operationName": "fetchPlaylist",
-            "variables": json.dumps(
-                {
-                    "uri": f"spotify:playlist:{self.playlist_id}",
-                    "offset": offset,
-                    "limit": limit,
-                    "enableWatchFeedEntrypoint": enable_watch_feed_entrypoint,
-                }
-            ),
-            "extensions": json.dumps(
-                {
-                    "persistedQuery": {
-                        "version": 1,
-                        "sha256Hash": self.base.part_hash("fetchPlaylist"),
+        for attempt in range(2):
+            params = {
+                "operationName": "fetchPlaylist",
+                "variables": json.dumps(
+                    {
+                        "uri": f"spotify:playlist:{self.playlist_id}",
+                        "offset": offset,
+                        "limit": limit,
+                        "enableWatchFeedEntrypoint": enable_watch_feed_entrypoint,
                     }
-                }
-            ),
-        }
+                ),
+                "extensions": json.dumps(
+                    {
+                        "persistedQuery": {
+                            "version": 1,
+                            "sha256Hash": self.base.part_hash("fetchPlaylist"),
+                        }
+                    }
+                ),
+            }
 
-        resp = self.base.client.post(url, params=params, authenticate=True)
+            resp = self.base.client.post(url, params=params, authenticate=True)
 
-        if resp.fail:
-            raise PlaylistError("Could not get playlist info", error=resp.error.string)
+            if resp.fail and attempt == 0 and resp.status_code == 401:
+                # Stale seeded/known hash (Spotify rotates them): drop it so the
+                # next part_hash re-discovers it from the web-player packs, then retry.
+                self.base._discard_part_hash("fetchPlaylist")
+                continue
 
-        if not isinstance(resp.response, Mapping):
-            raise PlaylistError("Invalid JSON")
+            if resp.fail:
+                raise PlaylistError(
+                    "Could not get playlist info", error=resp.error.string
+                )
 
-        return resp.response
+            if not isinstance(resp.response, Mapping):
+                raise PlaylistError("Invalid JSON")
+
+            return resp.response
 
     def paginate_playlist(self) -> Generator[Mapping[str, Any], None, None]:
         """
@@ -306,7 +315,9 @@ class PrivatePlaylist:
         resp = self.login.client.post(url, params=params, authenticate=True)
 
         if resp.fail:
-            raise PlaylistError("Could not get library tracks info", error=resp.error.string)
+            raise PlaylistError(
+                "Could not get library tracks info", error=resp.error.string
+            )
 
         if not isinstance(resp.response, Mapping):
             raise PlaylistError("Invalid JSON")
@@ -331,7 +342,9 @@ class PrivatePlaylist:
 
         offset = UPPER_LIMIT
         while offset < total_count:
-            yield self.get_saved_tracks_info(limit=UPPER_LIMIT, offset=offset)["data"]["me"]["library"]["tracks"]
+            yield self.get_saved_tracks_info(limit=UPPER_LIMIT, offset=offset)["data"][
+                "me"
+            ]["library"]["tracks"]
             offset += UPPER_LIMIT
 
     def _stage_create_playlist(self, name: str) -> str:
