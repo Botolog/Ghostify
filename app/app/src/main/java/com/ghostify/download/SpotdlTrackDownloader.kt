@@ -2,6 +2,7 @@ package com.ghostify.download
 
 import com.ghostify.data.repo.SettingsRepository
 import com.ghostify.file.MusicStore
+import com.ghostify.python.FfmpegLocator
 import com.ghostify.trackdownload.DownloadErrorKind
 import com.ghostify.trackdownload.TrackDownloadBridge
 import com.ghostify.trackdownload.TrackDownloadConfig
@@ -72,7 +73,7 @@ class ChaquopySpotdlCall(
             outputDir = musicStore.rootDir.absolutePath,
             bitrate = bitrate,
             outputTemplate = TrackDownloadConfig.DEFAULT_TEMPLATE,
-            ffmpeg = "ffmpeg",
+            ffmpeg = FfmpegLocator.executablePath ?: "ffmpeg",
         )
         val url = "spotify:track:${song.spotifyId}"
         val listener = object : TrackProgressListener {

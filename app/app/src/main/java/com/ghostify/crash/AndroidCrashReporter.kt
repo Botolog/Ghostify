@@ -29,6 +29,8 @@ class FileLogCrashReporter(
         val entry = buildString {
             append("== ${formatter.format(Instant.ofEpochMilli(crash.timestampMs))} ==\n")
             append("Thread: ${crash.thread.name}\n")
+            append("Type: ${crash.type}\n")
+            append("Message: ${crash.throwable.message}\n")
             append("Mapped: ${ErrorMapper.map(crash.throwable).code}\n")
             append(crash.stackTraceText)
             append("\n\n")

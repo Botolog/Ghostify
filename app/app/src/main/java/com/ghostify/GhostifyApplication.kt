@@ -73,10 +73,11 @@ class GhostifyApplication : Application() {
             if (!Python.isStarted()) {
                 Python.start(AndroidPlatform(this))
             }
-            val ffmpegDir = FfmpegLocator.ensureExecutable(this)
+            val ffmpeg = FfmpegLocator.ensureExecutable(this)
+            val ffmpegDir = ffmpeg.parentFile?.absolutePath ?: ffmpeg.absolutePath
             Python.getInstance()
                 .getModule("ghostify_dl")
-                .callAttr("prepend_path", ffmpegDir.absolutePath)
+                .callAttr("prepend_path", ffmpegDir)
             Log.i(TAG, "Python + ffmpeg ready")
         } catch (t: Throwable) {
             Log.e(TAG, "Python runtime failed to start; running in degraded mode.", t)

@@ -5,8 +5,8 @@ import android.util.Log
 import java.io.File
 
 /**
- * Locates the bundled static ffmpeg binary and makes it executable and usable
- * by Python subprocesses (TEST_PLAN T-025).
+ * Locates the bundled static ffmpeg binary and makes it exec()-able by Python
+ * subprocesses (TEST_PLAN T-025).
  *
  * Packaging (see `build-config/app-build.gradle.kts`):
  * - the binary ships in `src/main/jniLibs/<abi>/libffmpeg.so`. It must be
@@ -20,39 +20,47 @@ import java.io.File
  *   static executable as if it were a dynamic `.so`.
  *
  * Runtime:
- * - the extracted `libffmpeg.so` is copied once to `filesDir/ffmpeg/ffmpeg`
- *   and marked executable (exec bit is not guaranteed on every device), and
- * - that directory is prepended to `os.environ["PATH"]` in the interpreter
- *   (via `ghostify_dl.prepend_path`) so spotdl's `subprocess`/`shutil.which`
- *   resolves `ffmpeg` by name.
+ * - **The binary is exec'd in place** at
+ *   `<nativeLibraryDir>/libffmpeg.so`. Since Android 10 (targetSdk >= 29),
+ *   SELinux forbids `exec()` of files in the app's own data directory
+ *   (`app_data_file` only allows `dlopen`); the extracted APK native-library
+ *   directory is the sole location the app may exec (its files carry the
+ *   `apk_data_file` context, for which `untrusted_app` holds `execute` and
+ *   `execute_no_trans`). Copying the binary to `filesDir/ffmpeg` would land in
+ *   `app_data_file` and every `exec()` would fail with EACCES, so we never do
+ *   that here.
+ * - the directory is prepended to `os.environ["PATH"]` in the interpreter (via
+ *   `ghostify_dl.prepend_path`) and, more importantly, the absolute in-place
+ *   path is handed to spotdl as the `ffmpeg` setting so its subprocess execs
+ *   the file directly.
  */
 internal object FfmpegLocator {
 
     private const val TAG = "FfmpegLocator"
     private const val BUNDLED_NAME = "libffmpeg.so"
-    private const val EXEC_NAME = "ffmpeg"
 
-    /** Returns the directory whose `ffmpeg` entry can be put on PATH. */
+    @Volatile
+    private var cached: File? = null
+
+    /** Returns the bundled executable, run in place from the APK lib dir. */
     fun ensureExecutable(context: Context): File {
+        cached?.let { return it }
         val nativeDir = File(context.applicationInfo.nativeLibraryDir)
         val bundled = File(nativeDir, BUNDLED_NAME)
         require(bundled.isFile) {
             "Bundled ffmpeg missing at ${bundled.path}; expected " +
                 "src/main/jniLibs/<abi>/$BUNDLED_NAME with matching ndk.abiFilters"
         }
-
-        val binDir = File(context.filesDir, "ffmpeg")
-        val executable = File(binDir, EXEC_NAME)
-        if (!executable.isFile) {
-            binDir.mkdirs()
-            check(binDir.isDirectory) { "Cannot create ffmpeg dir ${binDir.path}" }
-            bundled.copyTo(executable, overwrite = true)
-            check(executable.setExecutable(true, false)) { "Cannot make ${executable.path} executable" }
-            Log.i(TAG, "Installed ffmpeg: ${bundled.path} -> ${executable.path}")
+        if (!bundled.canExecute()) {
+            // apk_data_file artifacts are normally executable; be defensive.
+            bundled.setExecutable(true, false)
         }
-        if (!executable.canExecute()) {
-            check(executable.setExecutable(true, false)) { "Cannot make ${executable.path} executable" }
-        }
-        return binDir
+        cached = bundled
+        Log.i(TAG, "Running bundled ffmpeg in place: ${bundled.path}")
+        return bundled
     }
+
+    /** Absolute path to the executable (set by [ensureExecutable]); null before boot. */
+    val executablePath: String?
+        get() = cached?.absolutePath
 }
