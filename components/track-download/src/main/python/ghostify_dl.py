@@ -271,13 +271,17 @@ _COMPLETE_NAMES = ("on_download_complete", "onDownloadComplete", "onComplete")
 def _as_callable(hook: Any, method_names: Tuple[str, ...]) -> Optional[Callable]:
     if hook is None:
         return None
-    if callable(hook):
-        return hook
-    # Java/Kotlin object: resolve the first method it exposes.
+    # Prefer an explicitly-named callback method. For a Chaquopy Java/Kotlin
+    # proxy object `callable(hook)` is True (it implements __call__ for SAM
+    # dispatch), but calling the object directly fails unless it is a functional
+    # interface — our multi-method HookAdapter is not. Resolving the named
+    # method dispatches to the concrete Java method instead.
     for name in method_names:
         method = getattr(hook, name, None)
         if method is not None and callable(method):
             return method
+    if callable(hook):
+        return hook
     raise TrackDownloadError(
         ErrorKind.IO,
         f"Progress hook {hook!r} exposes none of the methods {method_names}",

@@ -70,24 +70,26 @@ private fun installDownloaderStub(
                 val hook = args.getOrNull(2) as? TrackDownloadBridge.HookAdapter
                 if (hook != null) {
                     hook.onDownloadStart(
-                        mapOf(
-                            "url" to args[1],
-                            "spotify_id" to "4cOdK2wGLETKBW3PvgPWqT",
-                            "title" to "Never Gonna Give You Up",
-                            "artists" to "Rick Astley",
-                            "album" to "Whenever You Need Somebody",
-                            "duration_ms" to 213000L
+                        PyObject(
+                            mapOf(
+                                "url" to args[1],
+                                "spotify_id" to "4cOdK2wGLETKBW3PvgPWqT",
+                                "title" to "Never Gonna Give You Up",
+                                "artists" to "Rick Astley",
+                                "album" to "Whenever You Need Somebody",
+                                "duration_ms" to 213000L
+                            )
                         )
                     )
-                    hook.onProgress(25, "Resolving YouTube")
-                    hook.onProgress(50, "Downloading")
-                    hook.onProgress(75, "Converting to MP3")
-                    hook.onProgress(100, "Tagging")
-                    hook.onDownloadComplete(result)
+                    hook.onProgress(PyObject(25), PyObject("Resolving YouTube"))
+                    hook.onProgress(PyObject(50), PyObject("Downloading"))
+                    hook.onProgress(PyObject(75), PyObject("Converting to MP3"))
+                    hook.onProgress(PyObject(100), PyObject("Tagging"))
+                    hook.onDownloadComplete(PyObject(result))
                 }
                 PyObject(result)
             }
-            "expected_output_path" -> PyObject(expectedPath)
+            "expected_output_path" -> if (expectedPath == null) null else PyObject(expectedPath)
             "cleanup_temp" -> PyObject(orphanCount)
             else -> throw PyException("unknown attr " + attr)
         }

@@ -3,6 +3,7 @@ package com.ghostify.trackdownload
 import com.chaquo.python.PyException
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
+import com.ghostify.python.PyConverters
 
 /**
  * Kotlin bridge to the `ghostify_dl` Python module (Chaquopy) for single-track
@@ -27,8 +28,9 @@ import com.chaquo.python.Python
  * bridge wraps it in an internal [HookAdapter] and passes it to Python as a
  * single Java object. spotdl's hooks resolve `onDownloadStart` / `onProgress` /
  * `onDownloadComplete` by name (see `ghostify_dl._as_callable`), so on device
- * Chaquopy marshals the Python dict/int/str straight into the adapter's typed
- * methods. Hook exceptions on the Python side are swallowed by the bridge (see
+ * Chaquopy hands the Python dict/int/str to the adapter as `PyObject` handles,
+ * which the adapter reads explicitly via [com.ghostify.python.PyConverters].
+ * Hook exceptions on the Python side are swallowed by the bridge (see
  * `ghostify_dl._fire`), so a misbehaving listener can never fail a download.
  */
 class TrackDownloadBridge(
@@ -47,7 +49,7 @@ class TrackDownloadBridge(
      * Builds (or rebuilds) the Python downloader for [config]. Reuses the cached
      * downloader when [config] is unchanged. Caller must hold [lock].
      */
-    private fun requireDownloader(config: TrackDownloadConfig): PyObject {
+    private fun requireDownloader(config: TrackDownloadConfig): PyObject? {
         val current = downloader
         val cached = this.config
         if (current != null && cached == config) return current
@@ -86,6 +88,12 @@ class TrackDownloadBridge(
     ): TrackDownloadResult = synchronized(lock) {
         try {
             val downloader = requireDownloader(config)
+            if (downloader == null) {
+                return TrackDownloadResult.Failure(
+                    url = url,
+                    error = DownloadError.unknown("The downloader could not be created.")
+                )
+            }
             val hook = if (listener == null) null else HookAdapter(listener)
             val module = Python.getInstance().getModule(moduleName)
             val pyResult = module.callAttr(
@@ -111,11 +119,10 @@ class TrackDownloadBridge(
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT
     ): String? = synchronized(lock) {
         try {
-            val downloader = requireDownloader(config)
+            val downloader = requireDownloader(config) ?: return null
             val module = Python.getInstance().getModule(moduleName)
             val py = module.callAttr("expected_output_path", downloader, url)
-            val value = py.toJava(String::class.java)
-            value as? String
+            PyConverters.string(py)
         } catch (e: PyException) {
             null
         } catch (e: RuntimeException) {
@@ -133,14 +140,14 @@ class TrackDownloadBridge(
         ageSeconds: Double? = null
     ): Int = synchronized(lock) {
         try {
-            val downloader = requireDownloader(config)
+            val downloader = requireDownloader(config) ?: return 0
             val module = Python.getInstance().getModule(moduleName)
             val py = if (ageSeconds == null) {
                 module.callAttr("cleanup_temp", downloader)
             } else {
                 module.callAttr("cleanup_temp", downloader, ageSeconds)
             }
-            (py.toJava(Number::class.java) as? Number)?.toInt() ?: 0
+            PyConverters.int(py) ?: 0
         } catch (e: PyException) {
             0
         } catch (e: RuntimeException) {
@@ -155,18 +162,18 @@ class TrackDownloadBridge(
     /**
      * Converts the Python result dict (the return of `ghostify_dl.download`) into
      * a typed [TrackDownloadResult]. Pure Kotlin — no Python, no I/O.
+     *
+     * Reads the dict explicitly via [PyConverters] because Chaquopy's automatic
+     * `toJava(Map)` conversion cannot deep-convert dicts.
      */
-    internal fun parseResult(pyResult: PyObject, url: String): TrackDownloadResult {
-        val raw = pyResult.toJava(Map::class.java)
-        val map = raw as? Map<*, *>
-        return if (map != null) {
-            TrackDownloadResult.fromMap(map)
-        } else {
-            TrackDownloadResult.Failure(
+    internal fun parseResult(pyResult: PyObject?, url: String): TrackDownloadResult {
+        if (!PyConverters.isDict(pyResult)) {
+            return TrackDownloadResult.Failure(
                 url = url,
                 error = DownloadError.unknown("Download returned an unexpected result.")
             )
         }
+        return TrackDownloadResult.fromMap(PyConverters.stringMap(pyResult))
     }
 
     private fun failureFromPy(e: PyException, url: String): TrackDownloadResult.Failure {
@@ -191,27 +198,31 @@ class TrackDownloadBridge(
 
     internal class HookAdapter(private val listener: TrackProgressListener) {
         /**
-         * Mirrors `on_download_start` (called with the `_track_dict` map). Chaquopy
-         * cannot auto-convert a Python dict into a Kotlin Map-typed parameter, so
-         * we accept PyObject and convert explicitly (cf. PlaylistMetadataBridge).
+         * Mirrors `on_download_start` (called with the `_track_dict` map).
+         * Args arrive as `PyObject` handles; they are read explicitly with
+         * [PyConverters] because Chaquopy cannot auto-convert a Python dict
+         * into a Kotlin `Map`-typed parameter (cf. PlaylistMetadataBridge).
          */
-        fun onDownloadStart(track: PyObject) {
-            val map = track.toJava(Map::class.java) as? Map<*, *>
-            if (map != null) listener.onDownloadStart(TrackInfo.fromMap(map))
+        fun onDownloadStart(track: PyObject?) {
+            listener.onDownloadStart(TrackInfo.fromMap(PyConverters.stringMap(track)))
         }
 
         /** Mirrors `on_progress` (called with percent: int, message: str). */
-        fun onProgress(percent: Int, message: String?) {
-            listener.onProgress(percent, message)
+        fun onProgress(percent: PyObject?, message: PyObject?) {
+            listener.onProgress(
+                PyConverters.int(percent) ?: 0,
+                PyConverters.string(message)
+            )
         }
 
         /**
-         * Mirrors `on_download_complete` (called with the result payload map). Same
-         * PyObject conversion as `onDownloadStart`.
+         * Mirrors `on_download_complete` (called with the result payload map).
+         * Same PyObject conversion as `onDownloadStart`.
          */
-        fun onDownloadComplete(result: PyObject) {
-            val map = result.toJava(Map::class.java) as? Map<*, *>
-            if (map != null) listener.onDownloadComplete(TrackDownloadResult.fromMap(map))
+        fun onDownloadComplete(result: PyObject?) {
+            listener.onDownloadComplete(
+                TrackDownloadResult.fromMap(PyConverters.stringMap(result))
+            )
         }
     }
 
