@@ -69,7 +69,9 @@ class PlaylistMetadataBridge(
      * here sidesteps that (T-019/T-021).
      */
     private fun toPyOptions(python: Python, options: Map<String, Any>): PyObject {
+        // builtins.dict() always returns a dict, never None.
         val dict = python.getModule("builtins").callAttr("dict")
+            ?: throw IllegalStateException("builtins.dict returned None")
         for ((key, value) in options) {
             dict.callAttr("__setitem__", key, value)
         }
@@ -80,14 +82,21 @@ class PlaylistMetadataBridge(
     // Success parsing.
     // ------------------------------------------------------------------
 
-    private fun parseSuccess(result: PyObject): PlaylistFetchResult {
-        val raw = result.toJava(Map::class.java)
-        @Suppress("UNCHECKED_CAST")
-        val map = raw as? Map<String, Any?>
-            ?: return PlaylistFetchResult.Failure(
+    /**
+     * Converts the Python result dict into [PlaylistMetadata] using our own
+     * [PyConverters] walker. Chaquopy's automatic `toJava(Map)` conversion
+     * cannot deep-convert a dict containing lists of dicts ("TypeError: Cannot
+     * convert dict object to java.util.map"), so the tree is read explicitly.
+     */
+    private fun parseSuccess(result: PyObject?): PlaylistFetchResult {
+        if (!PyConverters.isDict(result)) {
+            return PlaylistFetchResult.Failure(
                 PlaylistFetchError.unknown("The bridge returned an unexpected result.")
             )
-        return PlaylistFetchResult.Success(PlaylistMetadata.fromMap(map))
+        }
+        return PlaylistFetchResult.Success(
+            PlaylistMetadata.fromMap(PyConverters.stringMap(result))
+        )
     }
 
     // ------------------------------------------------------------------
