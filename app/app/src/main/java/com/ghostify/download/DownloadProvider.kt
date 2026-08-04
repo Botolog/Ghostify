@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.runBlocking
 
 /**
  * Minimal manual-DI entry point used by [DownloadWorker] to reach the shared
@@ -22,7 +23,10 @@ class DownloadProvider private constructor(
     private val repo: DownloadRepository by lazy { repoOverride ?: SpotdlDataWiring.buildRepository(app) }
 
     private val runner: DownloadQueueRunner by lazy {
-        DownloadQueueRunner(repo, downloaderOverride ?: buildWiredDownloader())
+        val db = com.ghostify.data.db.AppDatabase.get(app)
+        val settings = com.ghostify.data.repo.SettingsRepository(db.settingDao())
+        val concurrency = runBlocking { settings.getConcurrency() }
+        DownloadQueueRunner(repo, downloaderOverride ?: buildWiredDownloader(), concurrency)
     }
 
     /** Builds the Chaquopy-backed [TrackDownloader] with the real bridge + store. */
