@@ -66,7 +66,7 @@ class SettingsViewModel(
     }
 
     override fun setConcurrency(count: Int) {
-        launch { settings.setConcurrency(count.coerceIn(1, 8)) }
+        launch { settings.setConcurrency(count.coerceAtLeast(1)) }
     }
 
     override fun setAutoDownload(enabled: Boolean) {
