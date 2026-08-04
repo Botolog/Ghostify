@@ -1,10 +1,15 @@
 package com.ghostify.ui
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ghostify.ui.add.AddPlaylistDialog
@@ -14,6 +19,7 @@ import com.ghostify.ui.contract.PlayerContract
 import com.ghostify.ui.contract.PlaylistDetailContract
 import com.ghostify.ui.contract.SettingsContract
 import com.ghostify.ui.library.LibraryScreen
+import com.ghostify.ui.player.MiniPlayer
 import com.ghostify.ui.player.PlayerScreen
 import com.ghostify.ui.playlist.PlaylistDetailScreen
 import com.ghostify.ui.settings.SettingsScreen
@@ -47,44 +53,55 @@ fun GhostifyApp(
     GhostifyTheme {
         val navController = rememberNavController()
         val startDestination = initialRoute ?: Routes.LIBRARY
+        val backStackEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = backStackEntry?.destination?.route
+        val playerState by deps.player.state.collectAsState()
 
-        NavHost(
-            navController = navController,
-            startDestination = startDestination,
-            modifier = modifier,
-        ) {
-            composable(Routes.LIBRARY) {
-                LibraryScreen(
-                    contract = deps.library,
-                    onOpenPlaylist = { id -> navController.navigate(Routes.playlist(id)) },
-                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                    addDialog = { AddPlaylistDialog(contract = deps.addPlaylist) },
-                )
+        Column(modifier = modifier.fillMaxSize()) {
+            NavHost(
+                navController = navController,
+                startDestination = startDestination,
+                modifier = Modifier.weight(1f),
+            ) {
+                composable(Routes.LIBRARY) {
+                    LibraryScreen(
+                        contract = deps.library,
+                        onOpenPlaylist = { id -> navController.navigate(Routes.playlist(id)) },
+                        onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                        addDialog = { AddPlaylistDialog(contract = deps.addPlaylist) },
+                    )
+                }
+
+                composable(
+                    route = Routes.PLAYLIST,
+                    arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
+                ) { entry ->
+                    val playlistId = entry.arguments?.getString("playlistId").orEmpty()
+                    PlaylistDetailScreen(
+                        contract = deps.detailFor(playlistId),
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+
+                composable(Routes.PLAYER) {
+                    PlayerScreen(
+                        contract = deps.player,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+
+                composable(Routes.SETTINGS) {
+                    SettingsScreen(
+                        contract = deps.settings,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
 
-            composable(
-                route = Routes.PLAYLIST,
-                arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
-            ) { entry ->
-                val playlistId = entry.arguments?.getString("playlistId").orEmpty()
-                PlaylistDetailScreen(
-                    contract = deps.detailFor(playlistId),
-                    onBack = { navController.popBackStack() },
-                )
-            }
-
-            composable(Routes.PLAYER) {
-                PlayerScreen(
-                    contract = deps.player,
-                    onBack = { navController.popBackStack() },
-                )
-            }
-
-            composable(Routes.SETTINGS) {
-                SettingsScreen(
-                    contract = deps.settings,
-                    onBack = { navController.popBackStack() },
-                )
+            // Spotify-style now-playing bar. Persistent across every screen except the full
+            // player; hidden while nothing is loaded.
+            if (currentRoute != Routes.PLAYER && !playerState.empty) {
+                MiniPlayer(contract = deps.player)
             }
         }
     }

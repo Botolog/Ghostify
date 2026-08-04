@@ -1,5 +1,6 @@
 package com.ghostify.ui
 
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -10,6 +11,7 @@ import com.ghostify.ui.contract.LibraryContract
 import com.ghostify.ui.contract.PlaylistDetailContract
 import com.ghostify.ui.contract.SettingsContract
 import com.ghostify.ui.library.LibraryTestTags
+import com.ghostify.ui.player.MiniPlayerTestTags
 import com.ghostify.ui.playlist.PlaylistDetailTestTags
 import com.ghostify.ui.settings.SettingsTestTags
 import org.junit.Rule
@@ -157,5 +159,75 @@ class GhostifyAppTest {
         }
         rule.onNodeWithText("Hits").assertIsDisplayed()
         assert(library.state.value.playlists.size == 1)
+    }
+
+    @Test
+    fun t210_miniPlayerShowsOnLibraryWhenPlaying() {
+        val player = FakePlayerContract(
+            Fixtures.playerState(
+                title = "Song One",
+                isPlaying = true,
+                queue = listOf(Fixtures.queueItem("Song One", "Artist One")),
+            ),
+        )
+
+        rule.setContent {
+            GhostifyApp(
+                deps = GhostifyDependencies(
+                    library = FakeLibraryContract(),
+                    addPlaylist = FakeAddPlaylistContract(),
+                    detailFor = { FakePlaylistDetailContract() },
+                    player = player,
+                    settings = FakeSettingsContract(),
+                ),
+            )
+        }
+
+        rule.onNodeWithTag(MiniPlayerTestTags.BAR).assertIsDisplayed()
+        rule.onNodeWithText("Song One").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Pause").assertIsDisplayed()
+    }
+
+    @Test
+    fun t211_miniPlayerHiddenWhenNothingPlaying() {
+        rule.setContent {
+            GhostifyApp(
+                deps = GhostifyDependencies(
+                    library = FakeLibraryContract(),
+                    addPlaylist = FakeAddPlaylistContract(),
+                    detailFor = { FakePlaylistDetailContract() },
+                    player = FakePlayerContract(),
+                    settings = FakeSettingsContract(),
+                ),
+            )
+        }
+
+        rule.onNodeWithTag(MiniPlayerTestTags.BAR).assertDoesNotExist()
+    }
+
+    @Test
+    fun t212_miniPlayerHiddenOnFullPlayerRoute() {
+        val player = FakePlayerContract(
+            Fixtures.playerState(
+                title = "Notification Song",
+                queue = listOf(Fixtures.queueItem("Notification Song", "Artist")),
+            ),
+        )
+
+        rule.setContent {
+            GhostifyApp(
+                deps = GhostifyDependencies(
+                    library = FakeLibraryContract(),
+                    addPlaylist = FakeAddPlaylistContract(),
+                    detailFor = { FakePlaylistDetailContract() },
+                    player = player,
+                    settings = FakeSettingsContract(),
+                ),
+                initialRoute = Routes.PLAYER,
+            )
+        }
+
+        rule.onNodeWithTag(com.ghostify.ui.player.PlayerTestTags.PLAY).assertIsDisplayed()
+        rule.onNodeWithTag(MiniPlayerTestTags.BAR).assertDoesNotExist()
     }
 }
