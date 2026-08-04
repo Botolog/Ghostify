@@ -22,11 +22,15 @@ class DownloadProvider private constructor(
 
     private val repo: DownloadRepository by lazy { repoOverride ?: SpotdlDataWiring.buildRepository(app) }
 
-    private val runner: DownloadQueueRunner by lazy {
+    private val settingsRepo: com.ghostify.data.repo.SettingsRepository by lazy {
         val db = com.ghostify.data.db.AppDatabase.get(app)
-        val settings = com.ghostify.data.repo.SettingsRepository(db.settingDao())
-        val concurrency = runBlocking { settings.getConcurrency() }
-        DownloadQueueRunner(repo, downloaderOverride ?: buildWiredDownloader(), concurrency)
+        com.ghostify.data.repo.SettingsRepository(db.settingDao())
+    }
+
+    private val runner: DownloadQueueRunner by lazy {
+        DownloadQueueRunner(repo, downloaderOverride ?: buildWiredDownloader()) {
+            runBlocking { settingsRepo.getConcurrency() }
+        }
     }
 
     /** Builds the Chaquopy-backed [TrackDownloader] with the real bridge + store. */

@@ -41,18 +41,22 @@ internal class UserCanceledException : Exception("Download canceled by user")
  * Runs under whichever coroutine calls it (the WorkManager worker in production,
  * a test scope on the JVM). Pure Kotlin + coroutines: no Android APIs.
  *
- * @param concurrency number of tracks to download in parallel (1 = sequential,
- *   the original behaviour). Must be >= 1.
+ * @param concurrencySupplier callable that returns the current concurrency limit.
+ *   Called at the start of each run so runtime settings changes take effect
+ *   immediately without restarting the app.
  */
 class DownloadQueueRunner(
     private val repo: DownloadRepository,
     private val downloader: TrackDownloader,
-    private val concurrency: Int = 1,
+    private val concurrencySupplier: () -> Int = { 1 },
 ) {
 
-    init {
-        require(concurrency >= 1) { "concurrency must be >= 1, was $concurrency" }
-    }
+    /** Convenience constructor for tests (fixed concurrency). */
+    constructor(
+        repo: DownloadRepository,
+        downloader: TrackDownloader,
+        concurrency: Int,
+    ) : this(repo, downloader, { concurrency })
 
     suspend fun run(playlistId: String): RunOutcome =
         run(playlistId, cancellationToken = { false }, onProgress = {}, onSongProgress = { _, _ -> })
@@ -81,6 +85,7 @@ class DownloadQueueRunner(
         onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
 
         var outcome = RunOutcome.COMPLETED
+        val concurrency = concurrencySupplier().coerceAtLeast(1)
         val semaphore = Semaphore(concurrency)
 
         try {

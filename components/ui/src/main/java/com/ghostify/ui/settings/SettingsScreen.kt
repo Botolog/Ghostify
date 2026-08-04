@@ -212,8 +212,8 @@ private fun ConcurrencySetting(state: SettingsUiState, contract: SettingsContrac
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         IconButton(
-            onClick = { contract.setConcurrency((state.concurrentDownloads + 1).coerceAtMost(8)) },
-            enabled = state.concurrentDownloads < 8,
+            onClick = { contract.setConcurrency(state.concurrentDownloads + 1) },
+            enabled = true,
             modifier = Modifier.testTag(SettingsTestTags.CONCURRENCY_PLUS),
         ) {
             Icon(Icons.Filled.Add, contentDescription = "Increase")
