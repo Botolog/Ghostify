@@ -37,34 +37,18 @@ class TrackDownloadBridge(
     private val moduleName: String = DEFAULT_MODULE_NAME
 ) {
 
-    private val lock = Any()
-
-    /** The cached Python `TrackDownloader` (created lazily / per config). */
-    @Volatile private var downloader: PyObject? = null
-
-    /** Config the cached downloader was built with (for cheap reuse checks). */
-    @Volatile private var config: TrackDownloadConfig? = null
-
     /**
-     * Builds (or rebuilds) the Python downloader for [config]. Reuses the cached
-     * downloader when [config] is unchanged. Caller must hold [lock].
+     * Creates a fresh Python `TrackDownloader` for each call. This avoids
+     * serializing on a shared lock — each parallel download gets its own
+     * independent downloader instance so multiple tracks can be fetched
+     * concurrently.
      */
-    private fun requireDownloader(config: TrackDownloadConfig): PyObject? {
-        val current = downloader
-        val cached = this.config
-        if (current != null && cached == config) return current
+    private fun requireDownloader(config: TrackDownloadConfig): PyObject {
         val module = Python.getInstance().getModule(moduleName)
-        // Positional args: output_dir, bitrate, output_template, ffmpeg — these
-        // map 1:1 to `ghostify_dl.make_downloader`'s explicit parameters so no
-        // Chaquopy keyword-argument marshalling is needed (the most robust
-        // cross-version contract).
-        val py = module.callAttr(
+        return module.callAttr(
             "make_downloader",
             config.outputDir, config.bitrate, config.outputTemplate, config.ffmpeg
         )
-        downloader = py
-        this.config = config
-        return py
     }
 
     /**
@@ -85,15 +69,9 @@ class TrackDownloadBridge(
         url: String,
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
         listener: TrackProgressListener? = null
-    ): TrackDownloadResult = synchronized(lock) {
-        try {
+    ): TrackDownloadResult {
+        return try {
             val downloader = requireDownloader(config)
-            if (downloader == null) {
-                return TrackDownloadResult.Failure(
-                    url = url,
-                    error = DownloadError.unknown("The downloader could not be created.")
-                )
-            }
             val hook = if (listener == null) null else HookAdapter(listener)
             val module = Python.getInstance().getModule(moduleName)
             val pyResult = module.callAttr(
@@ -101,10 +79,8 @@ class TrackDownloadBridge(
             )
             parseResult(pyResult, url)
         } catch (e: PyException) {
-            // A typed track/infrastructure failure surfaced from Python.
             failureFromPy(e, url)
         } catch (e: RuntimeException) {
-            // Interpreter not started, module missing, malformed result, etc.
             TrackDownloadResult.Failure(url, DownloadError.unknown(e.message))
         }
     }
@@ -117,9 +93,9 @@ class TrackDownloadBridge(
     fun expectedOutputPath(
         url: String,
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT
-    ): String? = synchronized(lock) {
-        try {
-            val downloader = requireDownloader(config) ?: return null
+    ): String? {
+        return try {
+            val downloader = requireDownloader(config)
             val module = Python.getInstance().getModule(moduleName)
             val py = module.callAttr("expected_output_path", downloader, url)
             PyConverters.string(py)
@@ -138,9 +114,9 @@ class TrackDownloadBridge(
     fun cleanupTemp(
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
         ageSeconds: Double? = null
-    ): Int = synchronized(lock) {
-        try {
-            val downloader = requireDownloader(config) ?: return 0
+    ): Int {
+        return try {
+            val downloader = requireDownloader(config)
             val module = Python.getInstance().getModule(moduleName)
             val py = if (ageSeconds == null) {
                 module.callAttr("cleanup_temp", downloader)
