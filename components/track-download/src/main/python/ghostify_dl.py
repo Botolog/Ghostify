@@ -136,6 +136,19 @@ def extract_spotify_id(url: Any) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _normalize_spotify_url(url: str) -> str:
+    """Convert a ``spotify:track:`` URI to an HTTPS URL.
+
+    spotdl 4.5.2's ``parse_query`` resolves wrong metadata when given the
+    ``spotify:track:`` URI format (it silently falls back to unrelated songs).
+    The ``https://open.spotify.com/track/`` format works correctly.
+    """
+    spotify_id = extract_spotify_id(url)
+    if spotify_id and url.startswith("spotify:"):
+        return f"https://open.spotify.com/track/{spotify_id}"
+    return url
+
+
 def _is_spotify_url(url: str) -> bool:
     return "open.spotify.com" in url or url.startswith("spotify:")
 
@@ -420,7 +433,7 @@ class TrackDownloader:
     def _search(self, url: str) -> List[Song]:
         """Resolve *url* into fully-populated Song objects (Spotify metadata)."""
         return parse_query(
-            query=[url],
+            query=[_normalize_spotify_url(url)],
             threads=self._downloader.settings["threads"],
             use_ytm_data=self._downloader.settings["ytm_data"],
             playlist_numbering=self._downloader.settings["playlist_numbering"],
