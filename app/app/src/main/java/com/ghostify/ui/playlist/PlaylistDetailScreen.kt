@@ -215,7 +215,7 @@ private fun ActionBar(
         ) {
             Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Play all")
+            Text("Play")
         }
 
         if (state.isDownloadingAll) {
@@ -247,7 +247,7 @@ private fun ActionBar(
             ) {
                 Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Download all")
+                Text("Download")
             }
         }
 
@@ -260,7 +260,7 @@ private fun ActionBar(
         ) {
             Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text(if (state.isSyncing) "Syncing…" else "Re-sync")
+            Text(if (state.isSyncing) "Syncing…" else "Sync")
         }
     }
 

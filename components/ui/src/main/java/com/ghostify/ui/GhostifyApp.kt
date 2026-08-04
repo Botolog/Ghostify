@@ -1,7 +1,10 @@
 package com.ghostify.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -99,9 +102,13 @@ fun GhostifyApp(
             }
 
             // Spotify-style now-playing bar. Persistent across every screen except the full
-            // player; hidden while nothing is loaded.
+            // player; hidden while nothing is loaded. Bottom padding keeps it above the
+            // system navigation bar.
             if (currentRoute != Routes.PLAYER && !playerState.empty) {
-                MiniPlayer(contract = deps.player)
+                MiniPlayer(
+                    contract = deps.player,
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
+                )
             }
         }
     }
