@@ -4,7 +4,8 @@
 
   minSdk 26 / targetSdk 35. Chaquopy needs no manifest entries of its own.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Network: Spotify public metadata fetch + YouTube audio resolution/download. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -71,6 +72,15 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <!-- WorkManager's foreground service backs long-running download workers.
+             Its type must be redeclared here so it survives manifest merging
+             (targetSdk 34+ throws InvalidForegroundServiceTypeException if a
+             worker requests dataSync without the type being declared). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
     </application>
 
