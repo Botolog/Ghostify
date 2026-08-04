@@ -34,6 +34,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,6 +103,25 @@ fun SettingsScreen(
 
             SectionHeader("Storage")
             CacheSetting(state = state, contract = contract)
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            val context = LocalContext.current
+            val versionName = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            } catch (_: Exception) { null }
+            val versionCode = try {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+            } catch (_: Exception) { 0L }
+            Text(
+                text = "Ghostify v${versionName ?: "?"} ($versionCode)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(top = 24.dp)
+                    .testTag("setting_version"),
+            )
         }
     }
 }
