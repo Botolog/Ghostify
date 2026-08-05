@@ -2,6 +2,7 @@ package com.ghostify.background
 
 import android.content.Intent
 import android.content.IntentFilter
+import android.util.Log
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
@@ -11,6 +12,7 @@ import com.ghostify.R
 import com.ghostify.background.core.AudioFocusController
 import com.ghostify.background.core.FocusPolicy
 import com.ghostify.player.PlaybackEngine
+import timber.log.Timber
 
 /**
  * Foreground `MediaSessionService` that is the single source of truth for audio
@@ -51,24 +53,46 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        // Set before any session is added so every session gets the same
-        // foreground notification (with the Stop button).
-        setMediaNotificationProvider(
-            PlaybackNotificationProvider(this, R.drawable.ic_notification)
-        )
+        Timber.i("PlaybackService.onCreate: START")
+        try {
+            Timber.i("PlaybackService.onCreate: setting notification provider")
+            setMediaNotificationProvider(
+                PlaybackNotificationProvider(this, R.drawable.ic_notification)
+            )
+            Timber.i("PlaybackService.onCreate: notification provider set, calling initSessionAndPlayer")
+        } catch (t: Throwable) {
+            Timber.e(t, "PlaybackService.onCreate: notification provider FAILED")
+            throw t
+        }
+        initSessionAndPlayer()
+        Timber.i("PlaybackService.onCreate: DONE")
     }
 
-    /** Hands out the shared process-wide session, wiring focus policy around it. */
+    /** Hands out the session created eagerly in [onCreate]. */
     override fun onGetSession(
         controllerInfo: MediaSession.ControllerInfo,
     ): MediaSession {
-        var s = session
-        if (s == null) {
+        Timber.i("PlaybackService.onGetSession: START, session=${session != null}")
+        val s = session ?: throw IllegalStateException("Session not created in onCreate")
+        Timber.i("PlaybackService.onGetSession: returning session")
+        return s
+    }
+
+    private fun initSessionAndPlayer() {
+        if (session != null) return
+        Timber.i("initSessionAndPlayer: START")
+        try {
+            Timber.i("initSessionAndPlayer: calling PlaybackEngine.exoPlayer(this)")
             val p = PlaybackEngine.exoPlayer(this)
+            Timber.i("initSessionAndPlayer: ExoPlayer obtained, creating PlayerControlAdapter")
             val control = PlayerControlAdapter(p)
+            Timber.i("initSessionAndPlayer: PlayerControlAdapter created, creating AudioFocusController")
             val focus = AudioFocusController(AndroidAudioFocusDriver(this), control, FocusPolicy())
+            Timber.i("initSessionAndPlayer: AudioFocusController created, setting focusController")
             control.focusController = focus
+            Timber.i("initSessionAndPlayer: creating AudioBecomingNoisyReceiver")
             val noisy = AudioBecomingNoisyReceiver(control)
+            Timber.i("initSessionAndPlayer: AudioBecomingNoisyReceiver created, adding player listener")
 
             p.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -76,9 +100,6 @@ class PlaybackService : MediaSessionService() {
                 }
 
                 override fun onPlaybackStateChanged(state: Int) {
-                    // IDLE reached after we were playing == user pressed Stop or the
-                    // queue finished. Media3 dismisses the notification on idle; we
-                    // additionally stop the foreground service so it can't linger (T-097).
                     if (state == Player.STATE_IDLE && playbackEverStarted) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         focusController?.abandon()
@@ -87,20 +108,28 @@ class PlaybackService : MediaSessionService() {
                 }
             })
 
-            s = PlaybackEngine.session(this, MainActivity::class.java)
-
-            session = s
+            Timber.i("initSessionAndPlayer: calling PlaybackEngine.session(this, MainActivity)")
+            session = PlaybackEngine.session(this, MainActivity::class.java)
+            Timber.i("initSessionAndPlayer: session created, assigning fields")
             player = p
             focusController = focus
             noisyReceiver = noisy
+            Timber.i("initSessionAndPlayer: registering noisy receiver")
             registerReceiver(noisy, IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY))
             playbackEverStarted = false
+            Timber.i("initSessionAndPlayer: DONE - session=${session != null}, player=${player != null}")
+        } catch (t: Throwable) {
+            Timber.e(t, "initSessionAndPlayer: CRASHED at step")
+            throw t
         }
-        return s
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
-        super.onStartCommand(intent, flags, startId)
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Timber.i("PlaybackService.onStartCommand: START, intent=$intent, flags=$flags, startId=$startId")
+        val result = super.onStartCommand(intent, flags, startId)
+        Timber.i("PlaybackService.onStartCommand: returning $result")
+        return result
+    }
 
     /**
      * A foreground media service must keep playing after the Recents swipe
@@ -109,14 +138,14 @@ class PlaybackService : MediaSessionService() {
      * notification and foreground state already survive task removal.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        Timber.i("PlaybackService.onTaskRemoved: START")
         // Intentionally empty — keep the foreground service alive.
     }
 
     override fun onDestroy() {
+        Timber.i("PlaybackService.onDestroy: START")
         noisyReceiver?.let { unregisterReceiver(it) }
         focusController?.abandon()
-        // The shared player/session are owned by PlaybackEngine and must NOT be
-        // released here; the UI controller may still be using them.
         super.onDestroy()
     }
 }

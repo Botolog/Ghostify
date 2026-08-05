@@ -1,5 +1,7 @@
 package com.ghostify.recovery
 
+import timber.log.Timber
+
 /**
  * Pure, deterministic computation of the state resets needed after a killed process.
  *
@@ -16,6 +18,7 @@ package com.ghostify.recovery
 object KilledProcessRecoveryLogic {
 
     fun plan(songs: List<SongState>, playlists: List<PlaylistState>): RecoveryPlan {
+        Timber.i("KilledProcessRecoveryLogic.plan: START")
         val songResets = songs.asSequence()
             .filter { it.status == SongStatus.QUEUED || it.status == SongStatus.DOWNLOADING }
             .map { SongReset(it.id) }
@@ -31,10 +34,16 @@ object KilledProcessRecoveryLogic {
             }
             .toList()
 
-        return RecoveryPlan(songResets, playlistResets)
+        val result = RecoveryPlan(songResets, playlistResets)
+        Timber.i("KilledProcessRecoveryLogic.plan: returning $result")
+        return result
     }
 
     /** True when a second recovery pass would change nothing (idempotency check). */
-    fun isStable(songs: List<SongState>, playlists: List<PlaylistState>): Boolean =
-        plan(songs, playlists).isEmpty
+    fun isStable(songs: List<SongState>, playlists: List<PlaylistState>): Boolean {
+        Timber.i("KilledProcessRecoveryLogic.isStable: START")
+        val result = plan(songs, playlists).isEmpty
+        Timber.i("KilledProcessRecoveryLogic.isStable: returning $result")
+        return result
+    }
 }

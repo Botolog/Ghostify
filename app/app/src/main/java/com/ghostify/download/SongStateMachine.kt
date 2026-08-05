@@ -1,5 +1,7 @@
 package com.ghostify.download
 
+import timber.log.Timber
+
 /**
  * Enforces the legal download status transitions (T-044):
  *
@@ -34,14 +36,27 @@ object SongStateMachine {
         DownloadStatus.DOWNLOADED to emptySet(),
     )
 
-    fun canTransition(from: DownloadStatus, to: DownloadStatus): Boolean =
-        transitions[from]?.contains(to) == true
+    fun canTransition(from: DownloadStatus, to: DownloadStatus): Boolean {
+        Timber.i("SongStateMachine.canTransition: START")
+        val result = transitions[from]?.contains(to) == true
+        Timber.i("SongStateMachine.canTransition: returning $result")
+        return result
+    }
 
     fun requireTransition(from: DownloadStatus, to: DownloadStatus): DownloadStatus {
-        if (!canTransition(from, to)) throw IllegalStateTransition(from, to)
+        Timber.i("SongStateMachine.requireTransition: START")
+        if (!canTransition(from, to)) {
+            Timber.e("SongStateMachine: transition FAILED $from -> $to")
+            throw IllegalStateTransition(from, to)
+        }
+        Timber.d("SongStateMachine: state changed to $to")
         return to
     }
 
-    fun legalTargets(from: DownloadStatus): Set<DownloadStatus> =
-        transitions[from] ?: emptySet()
+    fun legalTargets(from: DownloadStatus): Set<DownloadStatus> {
+        Timber.i("SongStateMachine.legalTargets: START")
+        val result = transitions[from] ?: emptySet()
+        Timber.i("SongStateMachine.legalTargets: returning $result")
+        return result
+    }
 }

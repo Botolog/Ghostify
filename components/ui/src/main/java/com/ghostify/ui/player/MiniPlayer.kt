@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.ghostify.ui.player
 
 import androidx.compose.foundation.layout.Column
@@ -15,23 +17,27 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.ghostify.ui.contract.PlayerContract
@@ -177,6 +183,7 @@ fun MiniPlayer(
 private fun MiniSeekBar(state: PlayerUiState, contract: PlayerContract) {
     if (state.durationMs > 0) {
         val maxMs = state.durationMs
+        val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
         Slider(
             value = state.positionMs.coerceIn(0L, maxMs).toFloat(),
             onValueChange = { contract.seekTo(it.toLong()) },
@@ -184,7 +191,25 @@ private fun MiniSeekBar(state: PlayerUiState, contract: PlayerContract) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(26.dp)
+                .padding(horizontal = 14.dp)
                 .testTag(MiniPlayerTestTags.SEEK),
+            track = { sliderState ->
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier = Modifier.height(4.dp),
+                    thumbTrackGapSize = 0.dp,
+                    colors = SliderDefaults.colors(
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    ),
+                )
+            },
+            thumb = {
+                SliderDefaults.Thumb(
+                    interactionSource = interactionSource,
+                    thumbSize = DpSize(4.dp, 4.dp),
+                )
+            },
         )
     } else {
         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())

@@ -6,6 +6,7 @@ import com.ghostify.data.db.dao.SongDao
 import com.ghostify.data.db.entity.PlaylistEntity
 import com.ghostify.data.db.entity.SongEntity
 import kotlinx.coroutines.flow.Flow
+import timber.log.Timber
 
 /**
  * Coordinates playlists and their songs.
@@ -19,22 +20,51 @@ class PlaylistRepository(
     private val transactions: TransactionRunner
 ) {
 
-    fun observePlaylists(): Flow<List<PlaylistEntity>> = playlistDao.observeAll()
+    fun observePlaylists(): Flow<List<PlaylistEntity>> {
+        Timber.i("PlaylistRepository.observePlaylists: START")
+        val result = playlistDao.observeAll()
+        Timber.i("PlaylistRepository.observePlaylists: returning $result")
+        return result
+    }
 
-    fun observePlaylist(id: String): Flow<PlaylistEntity?> = playlistDao.observeById(id)
+    fun observePlaylist(id: String): Flow<PlaylistEntity?> {
+        Timber.i("PlaylistRepository.observePlaylist: START")
+        val result = playlistDao.observeById(id)
+        Timber.i("PlaylistRepository.observePlaylist: returning $result")
+        return result
+    }
 
-    fun observeSongs(playlistId: String): Flow<List<SongEntity>> =
-        songDao.observeSongsForPlaylist(playlistId)
+    fun observeSongs(playlistId: String): Flow<List<SongEntity>> {
+        Timber.i("PlaylistRepository.observeSongs: START")
+        val result = songDao.observeSongsForPlaylist(playlistId)
+        Timber.i("PlaylistRepository.observeSongs: returning $result")
+        return result
+    }
 
-    suspend fun getPlaylist(id: String): PlaylistEntity? = playlistDao.getById(id)
+    suspend fun getPlaylist(id: String): PlaylistEntity? {
+        Timber.i("PlaylistRepository.getPlaylist: START")
+        val result = playlistDao.getById(id)
+        Timber.i("PlaylistRepository.getPlaylist: returning $result")
+        return result
+    }
 
     /** Looks a saved playlist up by its Spotify id (used by the Add-dialog duplicate check). */
-    suspend fun getBySpotifyId(spotifyId: String): PlaylistEntity? = playlistDao.getBySpotifyId(spotifyId)
+    suspend fun getBySpotifyId(spotifyId: String): PlaylistEntity? {
+        Timber.i("PlaylistRepository.getBySpotifyId: START")
+        val result = playlistDao.getBySpotifyId(spotifyId)
+        Timber.i("PlaylistRepository.getBySpotifyId: returning $result")
+        return result
+    }
 
-    suspend fun getSongs(playlistId: String): List<SongEntity> =
-        songDao.getSongsForPlaylist(playlistId)
+    suspend fun getSongs(playlistId: String): List<SongEntity> {
+        Timber.i("PlaylistRepository.getSongs: START")
+        val result = songDao.getSongsForPlaylist(playlistId)
+        Timber.i("PlaylistRepository.getSongs: returning $result")
+        return result
+    }
 
     suspend fun savePlaylist(playlist: PlaylistEntity) {
+        Timber.i("PlaylistRepository.savePlaylist: START")
         playlistDao.insert(playlist)
     }
 
@@ -46,6 +76,7 @@ class PlaylistRepository(
      * removed inside the same transaction so `spotify_id` UNIQUE never trips.
      */
     suspend fun savePlaylistWithSongs(playlist: PlaylistEntity, songs: List<SongEntity>) {
+        Timber.i("PlaylistRepository.savePlaylistWithSongs: START")
         transactions.withinTransaction {
             playlistDao.getBySpotifyId(playlist.spotifyId)?.let { existing ->
                 songDao.deleteSongsForPlaylist(existing.id)
@@ -57,16 +88,19 @@ class PlaylistRepository(
     }
 
     suspend fun updatePlaylist(playlist: PlaylistEntity) {
+        Timber.i("PlaylistRepository.updatePlaylist: START")
         playlistDao.update(playlist)
     }
 
     /** Deletes the playlist; tracks are removed via the FK ON DELETE CASCADE. */
     suspend fun deletePlaylist(playlistId: String) {
+        Timber.i("PlaylistRepository.deletePlaylist: START")
         playlistDao.deleteById(playlistId)
     }
 
     /** Recomputes and stores `track_count` from the live songs rows (used by re-sync). */
     suspend fun refreshTrackCount(playlistId: String) {
+        Timber.i("PlaylistRepository.refreshTrackCount: START")
         transactions.withinTransaction {
             val playlist = playlistDao.getById(playlistId) ?: return@withinTransaction
             playlistDao.update(playlist.copy(trackCount = songDao.countForPlaylist(playlistId)))

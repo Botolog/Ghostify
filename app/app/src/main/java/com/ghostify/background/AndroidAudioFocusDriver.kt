@@ -9,6 +9,7 @@ import android.os.Looper
 import com.ghostify.background.core.AudioFocusDriver
 import com.ghostify.background.core.AudioFocusLoss
 import com.ghostify.background.core.AudioFocusRequestResult
+import timber.log.Timber
 
 /**
  * Android `AudioManager`-backed [AudioFocusDriver]. Bridges the framework's
@@ -24,6 +25,7 @@ class AndroidAudioFocusDriver(context: Context) : AudioFocusDriver {
     private var listener: AudioFocusDriver.AudioFocusChangeListener? = null
 
     override fun requestFocus(listener: AudioFocusDriver.AudioFocusChangeListener): AudioFocusRequestResult {
+        Timber.i("AndroidAudioFocusDriver.requestFocus: START")
         this.listener = listener
         val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(
@@ -39,14 +41,17 @@ class AndroidAudioFocusDriver(context: Context) : AudioFocusDriver {
             )
             .build()
         val result = audioManager.requestAudioFocus(focusRequest)
-        return if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        val decision = if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             AudioFocusRequestResult.GRANTED
         } else {
             AudioFocusRequestResult.DENIED
         }
+        Timber.i("AndroidAudioFocusDriver.requestFocus: returning $decision")
+        return decision
     }
 
     override fun abandon() {
+        Timber.i("AndroidAudioFocusDriver.abandon: START")
         // Re-request a throwaway focus request to register then abandon via the API 26
         // path; abandonAudioFocusRequest is the matching counterpart.
         val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -59,8 +64,8 @@ class AndroidAudioFocusDriver(context: Context) : AudioFocusDriver {
             .build()
         try {
             audioManager.abandonAudioFocusRequest(focusRequest)
-        } catch (_: IllegalArgumentException) {
-            // Focus was never held (e.g. denied) — nothing to release.
+        } catch (t: IllegalArgumentException) {
+            Timber.e(t, "AndroidAudioFocusDriver: abandon FAILED")
         }
     }
 }

@@ -14,6 +14,7 @@ data class QueueItem(
     val durationMs: Long?,
     val filePath: String,
     val indexInQueue: Int,
+    val coverUrl: String? = null,
 ) {
     val mediaId: String
         get() = songId

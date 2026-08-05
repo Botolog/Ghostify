@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 /**
  * Minimal app-side base for the UI-contract ViewModels.
@@ -26,6 +27,7 @@ abstract class ContractViewModel {
 
     /** Cancels every coroutine started in this VM (called at teardown). */
     fun clear() {
+        Timber.d("ContractViewModel.clear: START")
         scope.cancel()
     }
 }

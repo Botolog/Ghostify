@@ -1,5 +1,7 @@
 package com.ghostify.background.core
 
+import timber.log.Timber
+
 /**
  * Android `AudioManager` focus-loss codes modelled as a pure enum so the focus
  * *policy* (T-099) is JVM-testable. The integer values mirror the platform's
@@ -57,15 +59,20 @@ class FocusPolicy {
         wasPlaying: Boolean,
         isDucking: Boolean,
         pausedByTransient: Boolean,
-    ): FocusAction = when (loss) {
-        AudioFocusLoss.GAIN -> when {
-            isDucking -> FocusAction.RESTORE_VOLUME
-            pausedByTransient -> FocusAction.RESUME
-            else -> FocusAction.NOOP
+    ): FocusAction {
+        Timber.i("FocusPolicy.decide: START")
+        val result = when (loss) {
+            AudioFocusLoss.GAIN -> when {
+                isDucking -> FocusAction.RESTORE_VOLUME
+                pausedByTransient -> FocusAction.RESUME
+                else -> FocusAction.NOOP
+            }
+            AudioFocusLoss.LOSS -> if (wasPlaying) FocusAction.PAUSE else FocusAction.NOOP
+            AudioFocusLoss.LOSS_TRANSIENT -> if (wasPlaying) FocusAction.PAUSE else FocusAction.NOOP
+            AudioFocusLoss.LOSS_TRANSIENT_CAN_DUCK -> if (wasPlaying) FocusAction.DUCK else FocusAction.NOOP
+            AudioFocusLoss.UNKNOWN -> FocusAction.NOOP
         }
-        AudioFocusLoss.LOSS -> if (wasPlaying) FocusAction.PAUSE else FocusAction.NOOP
-        AudioFocusLoss.LOSS_TRANSIENT -> if (wasPlaying) FocusAction.PAUSE else FocusAction.NOOP
-        AudioFocusLoss.LOSS_TRANSIENT_CAN_DUCK -> if (wasPlaying) FocusAction.DUCK else FocusAction.NOOP
-        AudioFocusLoss.UNKNOWN -> FocusAction.NOOP
+        Timber.i("FocusPolicy.decide: returning $result")
+        return result
     }
 }

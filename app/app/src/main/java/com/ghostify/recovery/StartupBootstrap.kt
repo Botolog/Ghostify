@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 /**
  * Orders cold-start work so the two resilience guarantees of the app hold:
@@ -24,6 +25,7 @@ class StartupBootstrap(
     private val scope: CoroutineScope,
 ) {
     fun onColdStart() {
+        Timber.i("StartupBootstrap.onColdStart: START")
         crashHandler.install()
         scope.launch {
             val report = recovery.recover()
@@ -44,13 +46,18 @@ class RecoveryGate {
     val isRecovered: StateFlow<Boolean> = _isRecovered
 
     fun open(report: RecoveryReport) {
+        Timber.i("RecoveryGate.open: START")
         lastReport = report
         _isRecovered.value = true
+        Timber.d("RecoveryGate: state changed to RECOVERED")
     }
 
     /** Suspends until recovery finished and returns the report. */
     suspend fun await(): RecoveryReport {
+        Timber.i("RecoveryGate.await: START")
         _isRecovered.first { it }
-        return lastReport ?: RecoveryReport(RecoveryPlan())
+        val result = lastReport ?: RecoveryReport(RecoveryPlan())
+        Timber.i("RecoveryGate.await: returning $result")
+        return result
     }
 }

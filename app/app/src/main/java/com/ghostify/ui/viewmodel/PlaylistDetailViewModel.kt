@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import timber.log.Timber
 
 /**
  * Backs the Playlist detail screen: playlist metadata, the ordered track list
@@ -43,6 +44,7 @@ class PlaylistDetailViewModel(
     private val error = MutableStateFlow<String?>(null)
 
     init {
+        Timber.i("PlaylistDetailViewModel: init")
         launch {
             combine(
                 repo.observePlaylist(playlistId),
@@ -54,6 +56,7 @@ class PlaylistDetailViewModel(
                 mapToUi(playlist, songs, progress, isSyncing, loadError)
             }
                 .catch { e ->
+                    Timber.e(e, "PlaylistDetailViewModel: playlist stream FAILED")
                     _state.update {
                         it.copy(loading = false, error = e.message ?: "Could not load the playlist.")
                     }
@@ -63,10 +66,12 @@ class PlaylistDetailViewModel(
     }
 
     override fun downloadAll() {
+        Timber.i("PlaylistDetailViewModel.downloadAll: START")
         downloads.downloadAll(playlistId)
     }
 
     override fun sync() {
+        Timber.i("PlaylistDetailViewModel.sync: START")
         if (syncing.value) return
         launch {
             syncing.value = true
@@ -79,8 +84,10 @@ class PlaylistDetailViewModel(
                 }
                 error.value = null
             } catch (e: SyncException) {
+                Timber.e(e, "PlaylistDetailViewModel.sync: FAILED")
                 error.value = e.message ?: "Sync failed."
             } catch (e: Exception) {
+                Timber.e(e, "PlaylistDetailViewModel.sync: FAILED")
                 error.value = e.message ?: "Sync failed."
             } finally {
                 syncing.value = false
@@ -89,6 +96,7 @@ class PlaylistDetailViewModel(
     }
 
     override fun playAll() {
+        Timber.i("PlaylistDetailViewModel.playAll: START")
         launch {
             val songs = songRepo.getSongs(playlistId)
                 .filter { it.status == SongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
@@ -99,6 +107,7 @@ class PlaylistDetailViewModel(
     }
 
     override fun retryTrack(trackId: String) {
+        Timber.i("PlaylistDetailViewModel.retryTrack: START")
         launch {
             val song = songRepo.getSong(trackId) ?: return@launch
             if (song.playlistId != playlistId) return@launch

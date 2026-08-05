@@ -1,6 +1,7 @@
 package com.ghostify.security
 
 import java.io.File
+import timber.log.Timber
 
 /**
  * Static security scanner for the Ghostify repository. Walks the source tree
@@ -108,17 +109,21 @@ object SecurityScan {
      * (path, line) for stable, reviewable output.
      */
     fun scan(repoRoot: File): List<Finding> {
+        Timber.i("SecurityScan.scan: START")
         val findings = ArrayList<Finding>()
         for (file in walk(repoRoot)) {
             val text = runCatching { file.readText() }.getOrNull() ?: continue
             findings += scanFile(file, text)
         }
-        return findings.sortedWith(compareBy({ it.file.path }, { it.line }, { it.rule }))
+        val result = findings.sortedWith(compareBy({ it.file.path }, { it.line }, { it.rule }))
+        Timber.i("SecurityScan.scan: returning ${result.size} findings")
+        return result
     }
 
     /** Run from the CLI: `SecurityScan.main(<repo-root>)`. Exit 1 on ERROR. */
     @JvmStatic
     fun main(args: Array<String>) {
+        Timber.i("SecurityScan.main: START")
         val root = File(args.firstOrNull() ?: locateRepoRoot())
         val findings = scan(root)
         for (f in findings) {
@@ -191,11 +196,16 @@ object SecurityScan {
 
     /** Find the repo root by walking up to PROJECT.md from CWD. */
     fun locateRepoRoot(): String {
+        Timber.i("SecurityScan.locateRepoRoot: START")
         var dir = File(".").absoluteFile
         while (dir.parentFile != null) {
-            if (File(dir, "PROJECT.md").isFile) return dir.path
+            if (File(dir, "PROJECT.md").isFile) {
+                Timber.i("SecurityScan.locateRepoRoot: returning ${dir.path}")
+                return dir.path
+            }
             dir = dir.parentFile
         }
+        Timber.i("SecurityScan.locateRepoRoot: returning .")
         return "."
     }
 }

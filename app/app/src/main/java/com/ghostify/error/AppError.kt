@@ -1,5 +1,7 @@
 package com.ghostify.error
 
+import timber.log.Timber
+
 /**
  * Machine-readable, stable error code.
  *
@@ -52,12 +54,17 @@ sealed class AppError(
     val userMessageResKey: String
         get() = "error_" + code.name.lowercase()
 
-    fun toUserMessage(): UserMessage = UserMessage(
-        text = userMessage,
-        resKey = userMessageResKey,
-        retriable = retriable,
-        actionLabel = actionHint,
-    )
+    fun toUserMessage(): UserMessage {
+        Timber.i("AppError.toUserMessage: START")
+        val result = UserMessage(
+            text = userMessage,
+            resKey = userMessageResKey,
+            retriable = retriable,
+            actionLabel = actionHint,
+        )
+        Timber.i("AppError.toUserMessage: returning $result")
+        return result
+    }
 
     override fun toString(): String = "AppError(code=$code, detail=$detail)"
 
@@ -70,7 +77,8 @@ sealed class AppError(
          */
         private fun sanitizeCause(cause: Throwable?): Throwable? = try {
             if (cause == null) null else cause.toString().let { cause }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            Timber.e(t, "AppError: sanitizeCause FAILED")
             null
         }
     }

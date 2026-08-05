@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 /**
  * Default [TrackDownloader] used in production. It delegates the actual spotdl
@@ -25,20 +26,25 @@ class SpotdlTrackDownloader(
 ) : TrackDownloader {
 
     override suspend fun download(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult {
+        Timber.i("SpotdlTrackDownloader.download: START for song=${song.id}")
         currentCoroutineContext().ensureActive()
-        return try {
+        val result = try {
             call.invoke(song, onProgress)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
+            Timber.e(e, "SpotdlTrackDownloader: download FAILED for song=${song.id}")
             TrackDownloadResult(
                 songId = song.id,
                 error = DownloadError.Generic(e.message ?: "Download failed"),
             )
         }
+        Timber.i("SpotdlTrackDownloader.download: returning ${if (result.isSuccess) "SUCCESS" else "FAILED"}")
+        return result
     }
 
     override suspend fun cancel(songId: String) {
+        Timber.i("SpotdlTrackDownloader.cancel: START")
         // The Python bridge is told to abort via its own channel; not needed for
         // the queue's correctness since coroutine cancellation interrupts the
         // download (the wrapper's suspend call is cancellable).
@@ -64,6 +70,7 @@ class ChaquopySpotdlCall(
 ) : SpotdlCall {
 
     override suspend fun invoke(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult {
+        Timber.i("ChaquopySpotdlCall.invoke: START for song=${song.id}")
         currentCoroutineContext().ensureActive()
         val bitrate = settings.getBitrate()
             .toIntOrNull()
@@ -89,7 +96,7 @@ class ChaquopySpotdlCall(
                 // The download call itself returns the final result.
             }
         }
-        return withContext(Dispatchers.IO) {
+        val result = withContext(Dispatchers.IO) {
             when (val result = bridge.downloadBlocking(url, config, listener)) {
                 is com.ghostify.trackdownload.TrackDownloadResult.Downloaded ->
                     TrackDownloadResult(songId = song.id, filePath = result.outputPath)
@@ -101,6 +108,8 @@ class ChaquopySpotdlCall(
                     TrackDownloadResult(songId = song.id, error = mapError(result.error))
             }
         }
+        Timber.i("ChaquopySpotdlCall.invoke: returning ${if (result.isSuccess) "SUCCESS" else "FAILED"}")
+        return result
     }
 
     private fun mapError(

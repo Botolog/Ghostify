@@ -2,6 +2,7 @@ package com.ghostify.security
 
 import java.io.File
 import javax.xml.XMLConstants
+import timber.log.Timber
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -57,12 +58,16 @@ object ManifestAudit {
 
     /** Audit a manifest file. Returns an empty list when the manifest is clean. */
     fun auditFile(file: File): List<Issue> {
+        Timber.i("ManifestAudit.auditFile: START")
         if (!file.exists()) return listOf(Issue(R_EXPORTED_COMPONENT, "missing manifest: ${file.path}"))
-        return audit(file.readText(), file.name)
+        val result = audit(file.readText(), file.name)
+        Timber.i("ManifestAudit.auditFile: returning ${result.size} issues")
+        return result
     }
 
     /** Audit manifest XML text. Returns an empty list when clean. */
     fun audit(manifestXml: String, source: String = "AndroidManifest.xml"): List<Issue> {
+        Timber.i("ManifestAudit.audit: START")
         val issues = ArrayList<Issue>()
         val doc = parse(manifestXml)
         if (doc == null) {
@@ -73,9 +78,11 @@ object ManifestAudit {
 
         if (app.getAttribute("android:usesCleartextTraffic") == "true") {
             issues += Issue(R_CLEARTEXT_MANIFEST, "android:usesCleartextTraffic=\"true\" allows cleartext HTTP (T-171)")
+            Timber.w("ManifestAudit: cleartext traffic enabled in manifest")
         }
         if (app.getAttribute("android:debuggable") == "true") {
             issues += Issue(R_DEBUGGABLE, "android:debuggable=\"true\" must never ship")
+            Timber.e("ManifestAudit: debuggable=true found in manifest")
         }
 
         for (i in 0 until doc.getElementsByTagName("uses-permission").length) {
@@ -83,6 +90,7 @@ object ManifestAudit {
             val name = perm.attributes?.getNamedItem("android:name")?.nodeValue ?: continue
             if (name in STORAGE_PERMISSIONS) {
                 issues += Issue(R_STORAGE_PERMISSION, "broad storage permission $name exports app data surface (T-169)")
+                Timber.w("ManifestAudit: storage permission $name declared")
             }
         }
 
@@ -99,15 +107,18 @@ object ManifestAudit {
                         R_EXPORTED_COMPONENT,
                         "$tag $name is android:exported=\"true\" without an allowlisted reason (T-169)",
                     )
+                    Timber.w("ManifestAudit: $tag $name is exported without allowlist")
                 }
                 if (tag == "provider" && exported != "false") {
                     issues += Issue(
                         R_PROVIDER,
                         "provider $name must be android:exported=\"false\" or removed (T-169)",
                     )
+                    Timber.e("ManifestAudit: provider $name is exported")
                 }
             }
         }
+        Timber.i("ManifestAudit.audit: returning ${issues.size} issues")
         return issues
     }
 
@@ -140,7 +151,8 @@ object ManifestAudit {
             isNamespaceAware = false
         }
         factory.newDocumentBuilder().parse(manifestXml.byteInputStream())
-    } catch (_: Exception) {
+    } catch (t: Exception) {
+        Timber.e(t, "ManifestAudit: parse FAILED")
         null
     }
 }

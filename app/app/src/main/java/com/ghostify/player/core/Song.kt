@@ -30,6 +30,7 @@ data class Song(
     val durationMs: Long?,
     val filePath: String?,
     val status: SongStatus,
+    val coverUrl: String? = null,
 ) {
     /**
      * A song is playable only when its row says DOWNLOADED *and* a local file path is present.

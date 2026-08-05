@@ -1,5 +1,6 @@
 package com.ghostify.player.core
 
+import timber.log.Timber
 import java.io.File
 
 /**
@@ -44,6 +45,7 @@ class PlayerQueueBuilder(
      * @param startSongId optional song to start from; falls back to the first item.
      */
     fun build(songs: List<Song>, startSongId: String? = null): QueueBuildResult {
+        Timber.i("PlayerQueueBuilder.build: START songs=${songs.size}, startSongId=$startSongId")
         val items = songs
             .filter(Song::isDownloaded)
             .mapNotNull { song ->
@@ -59,12 +61,14 @@ class PlayerQueueBuilder(
                         durationMs = song.durationMs?.takeIf { it > 0L },
                         filePath = path,
                         indexInQueue = -1, // assigned below
+                        coverUrl = song.coverUrl,
                     )
                 }
             }
             .mapIndexed { index, item -> item.copy(indexInQueue = index) }
 
         if (items.isEmpty()) {
+            Timber.i("PlayerQueueBuilder.build: returning NothingToPlay")
             return QueueBuildResult.NothingToPlay
         }
 
@@ -73,6 +77,7 @@ class PlayerQueueBuilder(
             ?.takeIf { it >= 0 }
             ?: 0
 
+        Timber.i("PlayerQueueBuilder.build: returning Ready items=${items.size}, startIndex=$startIndex")
         return QueueBuildResult.Ready(items = items, startIndex = startIndex)
     }
 }

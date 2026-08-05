@@ -1,8 +1,8 @@
 package com.ghostify.python
 
 import android.content.Context
-import android.util.Log
 import java.io.File
+import timber.log.Timber
 
 /**
  * Locates the bundled static ffmpeg binary and makes it exec()-able by Python
@@ -36,7 +36,6 @@ import java.io.File
  */
 internal object FfmpegLocator {
 
-    private const val TAG = "FfmpegLocator"
     private const val BUNDLED_NAME = "libffmpeg.so"
 
     @Volatile
@@ -44,7 +43,11 @@ internal object FfmpegLocator {
 
     /** Returns the bundled executable, run in place from the APK lib dir. */
     fun ensureExecutable(context: Context): File {
-        cached?.let { return it }
+        Timber.i("FfmpegLocator.ensureExecutable: START")
+        cached?.let {
+            Timber.i("FfmpegLocator.ensureExecutable: returning cached ${it.path}")
+            return it
+        }
         val nativeDir = File(context.applicationInfo.nativeLibraryDir)
         val bundled = File(nativeDir, BUNDLED_NAME)
         require(bundled.isFile) {
@@ -52,11 +55,10 @@ internal object FfmpegLocator {
                 "src/main/jniLibs/<abi>/$BUNDLED_NAME with matching ndk.abiFilters"
         }
         if (!bundled.canExecute()) {
-            // apk_data_file artifacts are normally executable; be defensive.
             bundled.setExecutable(true, false)
         }
         cached = bundled
-        Log.i(TAG, "Running bundled ffmpeg in place: ${bundled.path}")
+        Timber.i("FfmpegLocator.ensureExecutable: returning ${bundled.path}")
         return bundled
     }
 

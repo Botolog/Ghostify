@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
+import timber.log.Timber
 
 /**
  * Backs the Library screen.
@@ -38,6 +39,7 @@ class LibraryViewModel(
     override val state: StateFlow<LibraryUiState> = _state.asStateFlow()
 
     init {
+        Timber.i("LibraryViewModel: init")
         launch {
             repo.observePlaylists()
                 .flatMapLatest { playlists ->
@@ -52,6 +54,7 @@ class LibraryViewModel(
                     }
                 }
                 .catch { e ->
+                    Timber.e(e, "LibraryViewModel: playlist stream FAILED")
                     _state.update { it.copy(loading = false) }
                 }
                 .collect { rows ->
@@ -61,15 +64,18 @@ class LibraryViewModel(
     }
 
     override fun onAddClick() {
+        Timber.i("LibraryViewModel.onAddClick: START")
         _state.update { it.copy(isAddDialogOpen = true) }
     }
 
     override fun onOpenSettings() {
+        Timber.i("LibraryViewModel.onOpenSettings: START")
         // Navigation to Settings is owned by the screen's callback; nothing to do.
     }
 
     /** Non-contract hook used by the Add-dialog wiring to close itself. */
     fun closeAddDialog() {
+        Timber.i("LibraryViewModel.closeAddDialog: START")
         _state.update { it.copy(isAddDialogOpen = false) }
     }
 

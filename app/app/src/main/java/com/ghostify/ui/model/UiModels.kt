@@ -61,7 +61,7 @@ data class NowPlaying(
     val title: String,
     val artist: String,
     val album: String,
-    val coverUrl: String?,
+    val coverUrl: Any?,
 )
 
 /** Cache stats shown on the Settings screen. */

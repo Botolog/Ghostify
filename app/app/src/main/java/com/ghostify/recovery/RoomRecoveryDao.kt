@@ -3,6 +3,7 @@ package com.ghostify.recovery
 import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Transaction
+import timber.log.Timber
 
 /**
  * Room implementation of [RecoveryDao] against the schema in PROJECT.md §4.
@@ -37,6 +38,8 @@ interface RoomRecoveryDao : RecoveryDao {
 
     @Transaction
     override fun applyPlan(plan: RecoveryPlan) {
+        Timber.i("RoomRecoveryDao.applyPlan: START")
         super.applyPlan(plan)
+        Timber.d("RoomRecoveryDao: state changed to PLAN_APPLIED")
     }
 }

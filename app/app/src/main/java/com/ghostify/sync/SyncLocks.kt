@@ -2,6 +2,7 @@ package com.ghostify.sync
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 
 /**
  * Serializes re-syncs per playlist.
@@ -24,7 +25,10 @@ class SyncLocks {
     private val locks = HashMap<String, Mutex>()
 
     suspend fun <T> withPlaylistLock(playlistId: String, block: suspend () -> T): T {
+        Timber.i("SyncLocks.withPlaylistLock: START playlistId=$playlistId")
         val lock = guard.withLock { locks.getOrPut(playlistId) { Mutex() } }
-        return lock.withLock { block() }
+        val result = lock.withLock { block() }
+        Timber.i("SyncLocks.withPlaylistLock: returning result")
+        return result
     }
 }

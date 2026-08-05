@@ -3,6 +3,7 @@ package com.ghostify.sync
 import com.ghostify.data.db.entity.SongEntity
 import com.ghostify.data.model.SongStatus
 import com.ghostify.python.PlaylistTrack
+import timber.log.Timber
 
 /**
  * The pure re-sync diff (PROJECT.md §6.2): given the current Spotify track list
@@ -36,6 +37,7 @@ object SyncDiff {
         now: () -> Long,
         newId: () -> String,
     ): SyncPlan {
+        Timber.i("SyncDiff.compute: START playlistId=$playlistId remoteCount=${remoteTracks.size} storedCount=${stored.size}")
         val storedById = stored.associate { it.spotifyId to it }
         val inserts = ArrayList<SongEntity>()
         val updates = ArrayList<SongEntity>()
@@ -80,7 +82,7 @@ object SyncDiff {
             }
         }
 
-        return SyncPlan(
+        val plan = SyncPlan(
             inserts = inserts,
             updates = updates,
             deleteSpotifyIds = deleteSpotifyIds,
@@ -88,6 +90,8 @@ object SyncDiff {
             enqueueIds = enqueueIds,
             finalTrackCount = remoteTracks.size,
         )
+        Timber.i("SyncDiff.compute: returning plan(inserts=${plan.inserts.size}, updates=${plan.updates.size}, deletes=${plan.deleteSpotifyIds.size}, enqueues=${plan.enqueueIds.size})")
+        return plan
     }
 
     private fun SongEntity.isInFlight(): Boolean =

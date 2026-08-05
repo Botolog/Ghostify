@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -31,7 +32,11 @@ class InlineDownloadExecutor(
     private val jobs = ConcurrentHashMap<String, Job>()
 
     override fun execute(playlistId: String): Boolean {
-        if (jobs.containsKey(playlistId)) return false
+        Timber.i("InlineDownloadExecutor.execute: START")
+        if (jobs.containsKey(playlistId)) {
+            Timber.i("InlineDownloadExecutor.execute: returning false (already running)")
+            return false
+        }
         // UNDISPATCHED: the run registers itself as active synchronously, so
         // duplicate presses and early cancels can never race a not-yet-started run.
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -41,14 +46,21 @@ class InlineDownloadExecutor(
         // No stale entries: a finished run (whether completed or cancelled) is
         // removed from the active map.
         job.invokeOnCompletion { jobs.remove(playlistId, job) }
+        Timber.i("InlineDownloadExecutor.execute: returning true")
         return true
     }
 
     override fun cancel(playlistId: String) {
+        Timber.i("InlineDownloadExecutor.cancel: START")
         // Cancelling the run coroutine interrupts an in-flight `TrackDownloader`
         // call; the runner's CancellationException handler restores consistent state.
         jobs.remove(playlistId)?.cancel()
     }
 
-    fun isRunning(playlistId: String): Boolean = jobs.containsKey(playlistId)
+    fun isRunning(playlistId: String): Boolean {
+        Timber.i("InlineDownloadExecutor.isRunning: START")
+        val result = jobs.containsKey(playlistId)
+        Timber.i("InlineDownloadExecutor.isRunning: returning $result")
+        return result
+    }
 }

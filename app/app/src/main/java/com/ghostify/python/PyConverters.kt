@@ -1,6 +1,7 @@
 package com.ghostify.python
 
 import com.chaquo.python.PyObject
+import timber.log.Timber
 
 /**
  * Hand-rolled conversion of Chaquopy `PyObject` values into plain Java/Kotlin
@@ -85,8 +86,12 @@ object PyConverters {
      *  str → `String`, int → `Long`, float → `Double`, bool → `Boolean`,
      *  None → null. */
     fun toJava(py: PyObject?): Any? {
-        if (py == null) return null
-        return when (kindOf(py)) {
+        Timber.i("PyConverters.toJava: START kind=${kindOf(py)}")
+        if (py == null) {
+            Timber.i("PyConverters.toJava: returning null")
+            return null
+        }
+        val result = when (kindOf(py)) {
             "dict" -> stringMap(py)
             "list", "tuple" -> asList(py).map { toJava(it) }
             "bool" -> boolean(py)
@@ -94,15 +99,22 @@ object PyConverters {
             "float" -> double(py)
             else -> py.toString()
         }
+        Timber.i("PyConverters.toJava: returning $result")
+        return result
     }
 
     /** Deep-converts a Python dict into a `Map<String, Any?>` (string keys). */
     fun stringMap(py: PyObject?): Map<String, Any?> {
-        if (py == null) return emptyMap()
+        Timber.i("PyConverters.stringMap: START")
+        if (py == null) {
+            Timber.i("PyConverters.stringMap: returning emptyMap")
+            return emptyMap()
+        }
         val result = LinkedHashMap<String, Any?>()
         for ((key, value) in asMap(py)) {
             result[key.toString()] = toJava(value)
         }
+        Timber.i("PyConverters.stringMap: returning map(size=${result.size})")
         return result
     }
 }

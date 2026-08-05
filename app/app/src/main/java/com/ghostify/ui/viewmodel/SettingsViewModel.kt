@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import timber.log.Timber
 
 /**
  * Backs the Settings screen. It is the single place that talks to the settings
@@ -35,6 +36,7 @@ class SettingsViewModel(
     override val state: StateFlow<SettingsUiState> = _state.asStateFlow()
 
     init {
+        Timber.i("SettingsViewModel: init")
         launch {
             combine(
                 settings.observeBitrate(),
@@ -50,35 +52,42 @@ class SettingsViewModel(
                     )
                 }
             }
-                .catch { }
+                .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
                 .collect { }
         }
         launch { refreshCacheStats() }
     }
 
     override fun setBitrate(bitrate: Bitrate) {
+        Timber.i("SettingsViewModel.setBitrate: START")
         launch { settings.setBitrate(bitrate.toKbpsString()) }
     }
 
     override fun changeStoragePath() {
+        Timber.i("SettingsViewModel.changeStoragePath: START")
         // v1: media always lives in app-scoped storage (no storage permission);
         // the "Change" control is intentionally inert until a SAF picker ships.
     }
 
     override fun setConcurrency(count: Int) {
+        Timber.i("SettingsViewModel.setConcurrency: START")
         launch { settings.setConcurrency(count.coerceAtLeast(1)) }
     }
 
     override fun setAutoDownload(enabled: Boolean) {
+        Timber.i("SettingsViewModel.setAutoDownload: START")
         launch { settings.setAutoDownload(enabled) }
     }
 
     override fun clearCache() {
+        Timber.i("SettingsViewModel.clearCache: START")
         launch {
             _state.update { it.copy(isClearingCache = true) }
             try {
                 val known = collectAllSongPaths()
                 musicStore.clearOrphans(known)
+            } catch (e: Exception) {
+                Timber.e(e, "SettingsViewModel.clearCache: FAILED")
             } finally {
                 _state.update { it.copy(isClearingCache = false) }
             }

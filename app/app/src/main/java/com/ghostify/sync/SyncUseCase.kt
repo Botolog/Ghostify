@@ -5,6 +5,7 @@ import com.ghostify.data.db.dao.PlaylistDao
 import com.ghostify.data.db.dao.SongDao
 import com.ghostify.data.model.SongStatus
 import java.util.UUID
+import timber.log.Timber
 
 /**
  * Re-sync / redownload diff (PROJECT.md §6.2).
@@ -41,8 +42,12 @@ class SyncUseCase(
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
-    suspend fun syncPlaylist(playlistId: String): SyncResult =
-        locks.withPlaylistLock(playlistId) { doSync(playlistId) }
+    suspend fun syncPlaylist(playlistId: String): SyncResult {
+        Timber.i("SyncUseCase.syncPlaylist: START playlistId=$playlistId")
+        val result = locks.withPlaylistLock(playlistId) { doSync(playlistId) }
+        Timber.i("SyncUseCase.syncPlaylist: returning $result")
+        return result
+    }
 
     private suspend fun doSync(playlistId: String): SyncResult {
         val playlist = playlists.getById(playlistId)

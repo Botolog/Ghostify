@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 /**
  * Drives the "Add playlist" flow: paste URL -> validate -> fetch metadata ->
@@ -48,6 +49,7 @@ class AddPlaylistViewModel(
     private var fetchedMetadata: PlaylistMetadata? = null
 
     override fun onUrlChange(url: String) {
+        Timber.i("AddPlaylistViewModel.onUrlChange: START")
         fetchedSpotifyId = null
         fetchedMetadata = null
         _state.update {
@@ -63,6 +65,7 @@ class AddPlaylistViewModel(
     }
 
     override fun fetch(playlistId: String) {
+        Timber.i("AddPlaylistViewModel.fetch: START")
         if (_state.value.isFetching) return
         launch {
             _state.update {
@@ -79,14 +82,17 @@ class AddPlaylistViewModel(
             }
             when (result) {
                 is PlaylistFetchResult.Success -> onFetchSuccess(playlistId, result.metadata)
-                is PlaylistFetchResult.Failure -> _state.update {
-                    it.copy(
-                        isFetching = false,
-                        fetchError = listOfNotNull(
-                            result.error.message,
-                            result.error.retryHint,
-                        ).joinToString("\n"),
-                    )
+                is PlaylistFetchResult.Failure -> {
+                    Timber.e("AddPlaylistViewModel.fetch: FAILED: ${result.error.code} - ${result.error.message}")
+                    _state.update {
+                        it.copy(
+                            isFetching = false,
+                            fetchError = listOfNotNull(
+                                result.error.message,
+                                result.error.retryHint,
+                            ).joinToString("\n"),
+                        )
+                    }
                 }
             }
         }
@@ -107,6 +113,7 @@ class AddPlaylistViewModel(
     }
 
     override fun onSave() {
+        Timber.i("AddPlaylistViewModel.onSave: START")
         val metadata = fetchedMetadata ?: return
         val spotifyId = fetchedSpotifyId ?: return
         if (_state.value.isFetching) return
@@ -144,6 +151,7 @@ class AddPlaylistViewModel(
                 }
                 onClosed()
             } catch (e: Exception) {
+                Timber.e(e, "AddPlaylistViewModel.onSave: FAILED")
                 _state.update {
                     it.copy(fetchError = e.message ?: "Could not save the playlist.")
                 }
@@ -152,6 +160,7 @@ class AddPlaylistViewModel(
     }
 
     override fun onDismiss() {
+        Timber.i("AddPlaylistViewModel.onDismiss: START")
         onClosed()
     }
 }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 enum class RunOutcome {
     /** Nothing to download. */
@@ -58,8 +59,12 @@ class DownloadQueueRunner(
         concurrency: Int,
     ) : this(repo, downloader, { concurrency })
 
-    suspend fun run(playlistId: String): RunOutcome =
-        run(playlistId, cancellationToken = { false }, onProgress = {}, onSongProgress = { _, _ -> })
+    suspend fun run(playlistId: String): RunOutcome {
+        Timber.i("DownloadQueueRunner.run(short): START")
+        val result = run(playlistId, cancellationToken = { false }, onProgress = {}, onSongProgress = { _, _ -> })
+        Timber.i("DownloadQueueRunner.run(short): returning $result")
+        return result
+    }
 
     suspend fun run(
         playlistId: String,
@@ -67,18 +72,22 @@ class DownloadQueueRunner(
         onProgress: (DownloadProgress) -> Unit = {},
         onSongProgress: (songId: String, fraction: Float) -> Unit = { _, _ -> },
     ): RunOutcome {
+        Timber.i("DownloadQueueRunner.run: START for playlist=$playlistId")
         recoverInFlight(playlistId)
 
         val selected = DownloadSelector.select(repo.songsFor(playlistId))
         if (selected.isEmpty()) {
+            Timber.i("DownloadQueueRunner.run: no songs selected, returning IDLE")
             withContext(NonCancellable) {
                 repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
+                Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
                 onProgress(snapshot(repo, playlistId, DownloadRunState.IDLE))
             }
             return RunOutcome.IDLE
         }
 
         repo.setPlaylistStatus(playlistId, PlaylistStatus.DOWNLOADING)
+        Timber.d("DownloadQueueRunner: state changed to DOWNLOADING for playlist=$playlistId")
         onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
 
         repo.setStatuses(selected.map { it.id }, DownloadStatus.QUEUED)
@@ -97,6 +106,7 @@ class DownloadQueueRunner(
                             if (cancellationToken()) throw UserCanceledException()
 
                             repo.setStatus(song.id, DownloadStatus.DOWNLOADING)
+                            Timber.d("DownloadQueueRunner: song ${song.id} state changed to DOWNLOADING")
                             val current = repo.getSong(song.id) ?: song
                             onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
 
@@ -107,6 +117,7 @@ class DownloadQueueRunner(
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Throwable) {
+                                Timber.e(e, "DownloadQueueRunner: download FAILED for song ${song.id}")
                                 TrackDownloadResult(
                                     songId = song.id,
                                     error = DownloadError.Generic(e.message ?: "Download failed"),
@@ -114,12 +125,18 @@ class DownloadQueueRunner(
                             }
 
                             when {
-                                result.error is DownloadError.Canceled ->
+                                result.error is DownloadError.Canceled -> {
                                     repo.setStatus(song.id, DownloadStatus.CANCELED, error = result.error.message)
-                                result.isSuccess ->
+                                    Timber.d("DownloadQueueRunner: song ${song.id} state changed to CANCELED")
+                                }
+                                result.isSuccess -> {
                                     repo.setStatus(song.id, DownloadStatus.DOWNLOADED, filePath = result.filePath)
-                                else ->
+                                    Timber.d("DownloadQueueRunner: song ${song.id} state changed to DOWNLOADED")
+                                }
+                                else -> {
                                     repo.setStatus(song.id, DownloadStatus.FAILED, error = result.error?.message)
+                                    Timber.d("DownloadQueueRunner: song ${song.id} state changed to FAILED")
+                                }
                             }
                             onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
                         }
@@ -129,21 +146,26 @@ class DownloadQueueRunner(
                 if (cancellationToken()) throw UserCanceledException()
             }
         } catch (e: UserCanceledException) {
+            Timber.i("DownloadQueueRunner.run: user cancelled")
             outcome = RunOutcome.CANCELED
             withContext(NonCancellable) {
                 cleanupOnCancel(repo, playlistId)
                 repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
+                Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
             }
         } catch (e: CancellationException) {
+            Timber.i("DownloadQueueRunner.run: coroutine cancelled")
             withContext(NonCancellable) {
                 cleanupOnCancel(repo, playlistId)
                 repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
+                Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
             }
             throw e
         }
 
         withContext(NonCancellable) {
             repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
+            Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
             onProgress(
                 snapshot(
                     repo,
@@ -152,6 +174,7 @@ class DownloadQueueRunner(
                 ),
             )
         }
+        Timber.i("DownloadQueueRunner.run: returning $outcome")
         return outcome
     }
 

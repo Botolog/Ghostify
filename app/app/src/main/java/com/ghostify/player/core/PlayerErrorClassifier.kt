@@ -1,5 +1,7 @@
 package com.ghostify.player.core
 
+import timber.log.Timber
+
 /** What the controller should do when a playable item fails. */
 enum class ErrorAction {
     /** The current media item is unplayable — skip it and keep playing. */
@@ -62,10 +64,13 @@ object PlayerErrorClassifier {
     )
 
     fun classify(errorCode: Int): ErrorAction {
-        return when {
+        Timber.i("PlayerErrorClassifier.classify: START errorCode=$errorCode")
+        val result = when {
             errorCode in stopCodes -> ErrorAction.STOP_PLAYBACK
             errorCode in FIRST_SKIPPABLE..LAST_SKIPPABLE -> ErrorAction.SKIP_CURRENT
             else -> ErrorAction.STOP_PLAYBACK
         }
+        Timber.i("PlayerErrorClassifier.classify: returning $result")
+        return result
     }
 }

@@ -1,6 +1,7 @@
 package com.ghostify.error
 
 import java.io.FileNotFoundException
+import timber.log.Timber
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ConnectException
@@ -29,25 +30,30 @@ object ErrorMapper {
     fun map(error: AppError): AppError = error
 
     fun map(throwable: Throwable): AppError {
+        Timber.i("ErrorMapper.map: START")
         return when (throwable) {
             is AppError -> throwable
             is CancellationException -> CancelledError(causeOf = throwable)
             else -> try {
                 classify(throwable)
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                Timber.e(t, "ErrorMapper: classify FAILED")
                 UnknownError(detail = "mapper failure", causeOf = throwable)
             }
         }
     }
 
     /** Classify an HTTP status code into a typed error (used by the API layer). */
-    fun map(statusCode: Int, detail: String? = null, cause: Throwable? = null): AppError = when (statusCode) {
+    fun map(statusCode: Int, detail: String? = null, cause: Throwable? = null): AppError {
+        Timber.i("ErrorMapper.map: START")
+        return when (statusCode) {
         400 -> InvalidUrlError(detail = detail ?: "HTTP 400", causeOf = cause)
         401 -> ApiError(statusCode = statusCode, detail = detail ?: "HTTP 401", causeOf = cause)
         403 -> PrivatePlaylistError(detail = detail ?: "HTTP 403", causeOf = cause)
         404 -> NotFoundError(detail = detail ?: "HTTP 404", causeOf = cause)
         429 -> RateLimitError(detail = detail, causeOf = cause)
         else -> ApiError(statusCode = statusCode, detail = detail, causeOf = cause)
+        }
     }
 
     private fun classify(t: Throwable): AppError {

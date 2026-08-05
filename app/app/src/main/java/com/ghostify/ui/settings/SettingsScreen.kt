@@ -1,5 +1,8 @@
 package com.ghostify.ui.settings
 
+import android.content.ClipData
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -38,6 +42,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import com.ghostify.GhostifyApplication
 import com.ghostify.ui.contract.SettingsContract
 import com.ghostify.ui.contract.SettingsContract.SettingsUiState
 import com.ghostify.ui.model.Bitrate
@@ -103,6 +109,10 @@ fun SettingsScreen(
 
             SectionHeader("Storage")
             CacheSetting(state = state, contract = contract)
+            Spacer(modifier = Modifier.height(24.dp))
+
+            SectionHeader("Debug")
+            DebugSetting()
 
             Spacer(modifier = Modifier.weight(1f))
 
@@ -274,5 +284,48 @@ private fun CacheSetting(state: SettingsUiState, contract: SettingsContract) {
                 Text("Clear cache")
             }
         }
+    }
+}
+
+@Composable
+private fun DebugSetting() {
+    val context = LocalContext.current
+    val app = context.applicationContext as GhostifyApplication
+
+    OutlinedButton(
+        onClick = {
+            val tree = app.fileLoggingTree
+            val files = tree.logFiles()
+            if (files.isEmpty()) {
+                Toast.makeText(context, "No log files yet", Toast.LENGTH_SHORT).show()
+                return@OutlinedButton
+            }
+            val uris = files.map { f ->
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", f)
+            }
+            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "text/plain"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Share logs"))
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Share logs")
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    OutlinedButton(
+        onClick = {
+            app.fileLoggingTree.clearLogs()
+            Toast.makeText(context, "Logs cleared", Toast.LENGTH_SHORT).show()
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Clear logs")
     }
 }

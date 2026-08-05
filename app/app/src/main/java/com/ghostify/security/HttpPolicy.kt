@@ -1,6 +1,7 @@
 package com.ghostify.security
 
 import java.net.URI
+import timber.log.Timber
 
 /**
  * Thrown when a caller tries to open a non-HTTPS connection (T-171).
@@ -25,8 +26,11 @@ object HttpPolicy {
 
     /** True only for `https://` URLs (case-insensitive scheme). */
     fun isHttps(url: String): Boolean {
+        Timber.i("HttpPolicy.isHttps: START")
         val scheme = SCHEME.find(url)?.groupValues?.get(1)?.lowercase() ?: return false
-        return scheme == "https"
+        val result = scheme == "https"
+        Timber.i("HttpPolicy.isHttps: returning $result")
+        return result
     }
 
     /**
@@ -34,7 +38,9 @@ object HttpPolicy {
      * The normalized URL is returned so callers log/send the exact same string.
      */
     fun requireHttps(url: String): String {
+        Timber.i("HttpPolicy.requireHttps: START")
         if (!isHttps(url)) throw HttpsRequiredException(url)
+        Timber.i("HttpPolicy.requireHttps: returning $url")
         return url
     }
 
@@ -43,11 +49,19 @@ object HttpPolicy {
      * Credentials embedded in a URL must never be retained or logged.
      */
     fun stripUserInfo(url: String): String {
+        Timber.i("HttpPolicy.stripUserInfo: START")
         return try {
             val u = URI(url)
-            if (u.userInfo == null) url
-            else URI(u.scheme, null, u.host, u.port, u.path, u.query, u.fragment).toString()
-        } catch (_: Exception) {
+            if (u.userInfo == null) {
+                Timber.i("HttpPolicy.stripUserInfo: returning $url")
+                url
+            } else {
+                val result = URI(u.scheme, null, u.host, u.port, u.path, u.query, u.fragment).toString()
+                Timber.i("HttpPolicy.stripUserInfo: returning $result")
+                result
+            }
+        } catch (t: Exception) {
+            Timber.e(t, "HttpPolicy: stripUserInfo FAILED")
             url
         }
     }

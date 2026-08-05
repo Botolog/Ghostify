@@ -4,6 +4,7 @@ import com.chaquo.python.PyException
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.ghostify.python.PyConverters
+import timber.log.Timber
 
 /**
  * Kotlin bridge to the `ghostify_dl` Python module (Chaquopy) for single-track
@@ -70,6 +71,7 @@ class TrackDownloadBridge(
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
         listener: TrackProgressListener? = null
     ): TrackDownloadResult {
+        Timber.i("TrackDownloadBridge.downloadBlocking: START")
         return try {
             val downloader = requireDownloader(config)
             val hook = if (listener == null) null else HookAdapter(listener)
@@ -77,10 +79,14 @@ class TrackDownloadBridge(
             val pyResult = module.callAttr(
                 "download", downloader, url, hook, hook, hook
             )
-            parseResult(pyResult, url)
+            val result = parseResult(pyResult, url)
+            Timber.i("TrackDownloadBridge.downloadBlocking: returning $result")
+            result
         } catch (e: PyException) {
+            Timber.e(e, "TrackDownloadBridge: download operation FAILED")
             failureFromPy(e, url)
         } catch (e: RuntimeException) {
+            Timber.e(e, "TrackDownloadBridge: download operation FAILED")
             TrackDownloadResult.Failure(url, DownloadError.unknown(e.message))
         }
     }
@@ -94,14 +100,19 @@ class TrackDownloadBridge(
         url: String,
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT
     ): String? {
+        Timber.i("TrackDownloadBridge.expectedOutputPath: START")
         return try {
             val downloader = requireDownloader(config)
             val module = Python.getInstance().getModule(moduleName)
             val py = module.callAttr("expected_output_path", downloader, url)
-            PyConverters.string(py)
+            val result = PyConverters.string(py)
+            Timber.i("TrackDownloadBridge.expectedOutputPath: returning $result")
+            result
         } catch (e: PyException) {
+            Timber.e(e, "TrackDownloadBridge: expectedOutputPath operation FAILED")
             null
         } catch (e: RuntimeException) {
+            Timber.e(e, "TrackDownloadBridge: expectedOutputPath operation FAILED")
             null
         }
     }
@@ -115,6 +126,7 @@ class TrackDownloadBridge(
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
         ageSeconds: Double? = null
     ): Int {
+        Timber.i("TrackDownloadBridge.cleanupTemp: START")
         return try {
             val downloader = requireDownloader(config)
             val module = Python.getInstance().getModule(moduleName)
@@ -123,10 +135,14 @@ class TrackDownloadBridge(
             } else {
                 module.callAttr("cleanup_temp", downloader, ageSeconds)
             }
-            PyConverters.int(py) ?: 0
+            val result = PyConverters.int(py) ?: 0
+            Timber.i("TrackDownloadBridge.cleanupTemp: returning $result")
+            result
         } catch (e: PyException) {
+            Timber.e(e, "TrackDownloadBridge: cleanupTemp operation FAILED")
             0
         } catch (e: RuntimeException) {
+            Timber.e(e, "TrackDownloadBridge: cleanupTemp operation FAILED")
             0
         }
     }

@@ -53,6 +53,7 @@ internal fun SongEntity.toPlayerSong(): PlayerSong = PlayerSong(
     durationMs = durationMs.toLong(),
     filePath = filePath,
     status = PlayerSongStatus.fromValue(status.name),
+    coverUrl = coverUrl,
 )
 
 /** Builds the Add-dialog preview from a fetched playlist's metadata. */

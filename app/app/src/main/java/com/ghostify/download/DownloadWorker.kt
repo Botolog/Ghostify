@@ -13,6 +13,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import timber.log.Timber
 
 /**
  * WorkManager worker that executes a single playlist's download run.
@@ -34,17 +35,20 @@ class DownloadWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
+        Timber.i("DownloadWorker.doWork: START")
         val playlistId = inputData.getString(KEY_PLAYLIST_ID)
             ?: return Result.failure(workDataOf(KEY_ERROR to "missing playlist_id"))
 
         try {
             setForeground(createForegroundInfo())
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            Timber.e(t, "DownloadWorker: foreground promotion FAILED")
             // Foreground promotion is best-effort; the download must still run.
         }
 
         val manager = DownloadProvider.get(applicationContext).manager()
         val outcome = manager.runSynchronously(playlistId)
+        Timber.i("DownloadWorker.doWork: returning $outcome")
         return when (outcome) {
             RunOutcome.IDLE, RunOutcome.COMPLETED, RunOutcome.CANCELED -> Result.success()
         }
@@ -78,10 +82,14 @@ class DownloadWorker(
         private const val NOTIFICATION_ID = 4100
         private const val CHANNEL_ID = "ghostify_downloads"
 
-        fun buildRequest(playlistId: String) =
-            OneTimeWorkRequestBuilder<DownloadWorker>()
+        fun buildRequest(playlistId: String): androidx.work.OneTimeWorkRequest {
+            Timber.i("DownloadWorker.buildRequest: START")
+            val result = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .setInputData(Data.Builder().putString(KEY_PLAYLIST_ID, playlistId).build())
                 .build()
+            Timber.i("DownloadWorker.buildRequest: returning request")
+            return result
+        }
 
         private fun ensureChannel(context: Context) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

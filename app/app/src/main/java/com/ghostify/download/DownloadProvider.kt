@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
+import timber.log.Timber
 
 /**
  * Minimal manual-DI entry point used by [DownloadWorker] to reach the shared
@@ -56,27 +57,43 @@ class DownloadProvider private constructor(
         }
     }
 
-    fun manager(): DownloadManager = manager
+    fun manager(): DownloadManager {
+        Timber.i("DownloadProvider.manager: START")
+        val result = manager
+        Timber.i("DownloadProvider.manager: returning manager")
+        return result
+    }
 
-    fun recovery(): DownloadRecovery = DownloadRecovery(repo)
+    fun recovery(): DownloadRecovery {
+        Timber.i("DownloadProvider.recovery: START")
+        val result = DownloadRecovery(repo)
+        Timber.i("DownloadProvider.recovery: returning recovery")
+        return result
+    }
 
     companion object {
         @Volatile
         private var instance: DownloadProvider? = null
 
-        fun get(context: Context): DownloadProvider =
-            instance ?: synchronized(this) {
+        fun get(context: Context): DownloadProvider {
+            Timber.i("DownloadProvider.get: START")
+            val result = instance ?: synchronized(this) {
                 instance ?: DownloadProvider(context).also { instance = it }
             }
+            Timber.i("DownloadProvider.get: returning provider")
+            return result
+        }
 
         /** Test seam: inject fakes so instrumentation tests exercise the real worker. */
         fun overrideForTesting(context: Context, repo: DownloadRepository, downloader: TrackDownloader) {
+            Timber.i("DownloadProvider.overrideForTesting: START")
             synchronized(this) {
                 instance = DownloadProvider(context, repo, downloader)
             }
         }
 
         fun reset() {
+            Timber.i("DownloadProvider.reset: START")
             synchronized(this) {
                 instance = null
             }
@@ -87,7 +104,10 @@ class DownloadProvider private constructor(
 /** Points the download component at the canonical Room-backed repository. */
 object SpotdlDataWiring {
     fun buildRepository(app: Context): DownloadRepository {
+        Timber.i("SpotdlDataWiring.buildRepository: START")
         val db = com.ghostify.data.db.AppDatabase.get(app)
-        return com.ghostify.download.data.RoomDownloadRepository(db.songDao(), db.playlistDao())
+        val result = com.ghostify.download.data.RoomDownloadRepository(db.songDao(), db.playlistDao())
+        Timber.i("SpotdlDataWiring.buildRepository: returning repository")
+        return result
     }
 }

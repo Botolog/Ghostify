@@ -4,6 +4,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.ghostify.background.core.AudioFocusController
 import com.ghostify.background.core.PlaybackControl
 import com.ghostify.background.core.PlayDecision
+import timber.log.Timber
 
 /**
  * Adapts an [ExoPlayer] to the [PlaybackControl] contract the background
@@ -31,6 +32,7 @@ class PlayerControlAdapter(
     override val isLoading: Boolean get() = player.isLoading
 
     override fun play() {
+        Timber.i("PlayerControlAdapter.play: START")
         if (focusController?.requestFocus() == PlayDecision.GRANTED) {
             player.play()
         } else {
@@ -39,14 +41,19 @@ class PlayerControlAdapter(
         }
     }
 
-    override fun pause() = player.pause()
+    override fun pause() {
+        Timber.i("PlayerControlAdapter.pause: START")
+        player.pause()
+    }
 
     override fun stop() {
+        Timber.i("PlayerControlAdapter.stop: START")
         player.stop()
         focusController?.abandon()
     }
 
     override fun setDucking(duck: Boolean) {
+        Timber.i("PlayerControlAdapter.setDucking: START, duck=$duck")
         player.volume = if (duck) DUCK_VOLUME else FULL_VOLUME
     }
 

@@ -1,5 +1,7 @@
 package com.ghostify.player.core
 
+import timber.log.Timber
+
 /**
  * Maps a raw [PlayerSnapshot] (read off the Media3 player) into a [PlayerUiState] for the UI.
  * Pure and unit-testable: shuffle/repeat mapping, duration normalisation and buffering
@@ -13,6 +15,7 @@ object PlayerStateMapper {
         nothingToPlay: Boolean,
         lastError: PlayerError?,
     ): PlayerUiState {
+        Timber.i("PlayerStateMapper.toUiState: START")
         val playbackStatus = PlaybackStatus.fromPlayerState(snapshot.playbackState)
 
         // "Buffering" while ready-but-loading (e.g. waiting for the next chunk) feels stalled;
@@ -26,7 +29,7 @@ object PlayerStateMapper {
 
         val currentItem = buildCurrentItem(snapshot, queue)
 
-        return PlayerUiState(
+        val result = PlayerUiState(
             playbackStatus = playbackStatus,
             isPlaying = snapshot.isPlaying,
             isBuffering = isBuffering,
@@ -45,6 +48,8 @@ object PlayerStateMapper {
             volume = snapshot.volume,
             lastError = lastError,
         )
+        Timber.i("PlayerStateMapper.toUiState: returning playbackStatus=${result.playbackStatus}, isPlaying=${result.isPlaying}")
+        return result
     }
 
     private fun buildCurrentItem(snapshot: PlayerSnapshot, queue: List<QueueItem>): CurrentItem? {
@@ -60,6 +65,7 @@ object PlayerStateMapper {
             artist = snapshot.currentArtist ?: fallback?.artist,
             album = snapshot.currentAlbum ?: fallback?.album,
             artworkBytes = snapshot.artworkBytes,
+            coverUrl = fallback?.coverUrl,
         )
     }
 }
@@ -72,8 +78,14 @@ object DurationNormalizer {
      * embedded in the queue item metadata; 0 when nothing is known yet.
      */
     fun normalize(playerDurationMs: Long, metadataDurationMs: Long?): Long {
-        if (playerDurationMs > 0L) return playerDurationMs
+        Timber.i("DurationNormalizer.normalize: START playerDurationMs=$playerDurationMs, metadataDurationMs=$metadataDurationMs")
+        if (playerDurationMs > 0L) {
+            Timber.i("DurationNormalizer.normalize: returning $playerDurationMs")
+            return playerDurationMs
+        }
         val meta = metadataDurationMs
-        return if (meta != null && meta > 0L) meta else 0L
+        val result = if (meta != null && meta > 0L) meta else 0L
+        Timber.i("DurationNormalizer.normalize: returning $result")
+        return result
     }
 }

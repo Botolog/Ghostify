@@ -12,6 +12,7 @@ import com.ghostify.data.db.entity.PlaylistEntity
 import com.ghostify.data.db.entity.SettingEntity
 import com.ghostify.data.db.entity.SongEntity
 import com.ghostify.recovery.RoomRecoveryDao
+import timber.log.Timber
 
 @Database(
     entities = [PlaylistEntity::class, SongEntity::class, SettingEntity::class],
@@ -26,7 +27,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recoveryDao(): RoomRecoveryDao
 
     /** Atomic multi-statement writes backed by SQLite transactions. */
-    fun transactionRunner(): TransactionRunner = AppDatabaseTransactionRunner(this)
+    fun transactionRunner(): TransactionRunner {
+        Timber.i("AppDatabase.transactionRunner: START")
+        val result = AppDatabaseTransactionRunner(this)
+        Timber.i("AppDatabase.transactionRunner: returning $result")
+        return result
+    }
 
     companion object {
 
@@ -34,23 +40,31 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var instance: AppDatabase? = null
 
-        fun get(context: Context): AppDatabase =
-            instance ?: synchronized(this) {
+        fun get(context: Context): AppDatabase {
+            Timber.i("AppDatabase.get: START")
+            val result = instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     DB_NAME,
                 ).addMigrations(*Migrations.ALL).build().also { instance = it }
             }
+            Timber.i("AppDatabase.get: returning $result")
+            return result
+        }
 
         /**
          * In-memory database for tests and previews. Note: intentionally not exposed to
          * production callers — the real app opens a file-backed database.
          */
-        fun inMemory(context: Context): AppDatabase =
-            Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+        fun inMemory(context: Context): AppDatabase {
+            Timber.i("AppDatabase.inMemory: START")
+            val result = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
                 .addMigrations(*Migrations.ALL)
                 .build()
+            Timber.i("AppDatabase.inMemory: returning $result")
+            return result
+        }
 
         private const val DB_NAME = "ghostify.db"
     }
@@ -61,6 +75,10 @@ abstract class AppDatabase : RoomDatabase() {
  * member `withTransaction` cannot shadow `androidx.room.withTransaction`.
  */
 private class AppDatabaseTransactionRunner(private val db: AppDatabase) : TransactionRunner {
-    override suspend fun <R> withinTransaction(block: suspend () -> R): R =
-        db.withTransaction { block() }
+    override suspend fun <R> withinTransaction(block: suspend () -> R): R {
+        Timber.i("AppDatabaseTransactionRunner.withinTransaction: START")
+        val result = db.withTransaction { block() }
+        Timber.i("AppDatabaseTransactionRunner.withinTransaction: returning $result")
+        return result
+    }
 }

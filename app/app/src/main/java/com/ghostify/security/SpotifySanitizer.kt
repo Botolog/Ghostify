@@ -1,5 +1,7 @@
 package com.ghostify.security
 
+import timber.log.Timber
+
 /**
  * Sanitizes log lines against full Spotify URLs and track metadata (T-170).
  *
@@ -51,6 +53,7 @@ object SpotifySanitizer {
      * Spotify/YouTube URL replaced by a safe reference. Idempotent.
      */
     fun sanitize(text: String, level: SanitizeLevel): String {
+        Timber.i("SpotifySanitizer.sanitize: START")
         var out = text
         out = OPEN_SPOTIFY.replace(out) { m ->
             val resource = m.groupValues[1]
@@ -72,6 +75,7 @@ object SpotifySanitizer {
         out = BARE_SPOTIFY_URI.replace(out) { m ->
             if (level == SanitizeLevel.PROD) "spotify:${m.value.substringAfter(':').substringBefore(':')}" else m.value
         }
+        Timber.i("SpotifySanitizer.sanitize: returning $out")
         return out
     }
 
@@ -81,17 +85,23 @@ object SpotifySanitizer {
      * Keeps `title - artist [id]`, truncated, never the full URL.
      */
     fun trackRef(trackTitle: String?, artists: String?, spotifyUrl: String?, level: SanitizeLevel): String? {
+        Timber.i("SpotifySanitizer.trackRef: START")
         if (level == SanitizeLevel.PROD) return null
         val title = (trackTitle ?: "?").trim().take(40)
         val artist = (artists ?: "?").trim().take(40)
         val id = shortIdOf(spotifyUrl)
-        return if (id != null) "$title - $artist [$id]" else "$title - $artist"
+        val result = if (id != null) "$title - $artist [$id]" else "$title - $artist"
+        Timber.i("SpotifySanitizer.trackRef: returning $result")
+        return result
     }
 
     /** The last path segment of a Spotify URL (the track/playlist id), or null. */
     fun shortIdOf(spotifyUrl: String?): String? {
+        Timber.i("SpotifySanitizer.shortIdOf: START")
         if (spotifyUrl == null) return null
         val m = OPEN_SPOTIFY.find(spotifyUrl) ?: return null
-        return m.value.substringAfterLast('/').substringBefore('?').substringBefore('#').trimEnd('/').ifEmpty { null }
+        val result = m.value.substringAfterLast('/').substringBefore('?').substringBefore('#').trimEnd('/').ifEmpty { null }
+        Timber.i("SpotifySanitizer.shortIdOf: returning $result")
+        return result
     }
 }

@@ -3,6 +3,7 @@ package com.ghostify.python
 import com.chaquo.python.PyException
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
+import timber.log.Timber
 
 /**
  * Kotlin bridge to the `ghostify_dl` Python module (Chaquopy).
@@ -38,6 +39,7 @@ class PlaylistMetadataBridge(
      *   `spotify:playlist:...` URI.
      */
     fun fetchPlaylistBlocking(spotifyId: String): PlaylistFetchResult {
+        Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: START spotifyId=$spotifyId")
         synchronized(this) {
             return try {
                 val python = Python.getInstance()
@@ -45,12 +47,14 @@ class PlaylistMetadataBridge(
                 val result = module.callAttr(
                     "fetch_playlist", spotifyId, toPyOptions(python, options)
                 )
-                parseSuccess(result)
+                val parsed = parseSuccess(result)
+                Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: returning $parsed")
+                parsed
             } catch (e: PyException) {
+                Timber.e(e, "PlaylistMetadataBridge: fetchPlaylistBlocking FAILED")
                 parsePyException(e)
             } catch (e: RuntimeException) {
-                // e.g. Python not started, interpreter unavailable, malformed
-                // result. Never let a raw bridge failure escape (T-021).
+                Timber.e(e, "PlaylistMetadataBridge: fetchPlaylistBlocking FAILED (RuntimeException)")
                 PlaylistFetchResult.Failure(PlaylistFetchError.unknown(e.message))
             }
         }

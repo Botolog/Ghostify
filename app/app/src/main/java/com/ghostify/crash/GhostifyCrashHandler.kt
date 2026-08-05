@@ -1,6 +1,7 @@
 package com.ghostify.crash
 
 import com.ghostify.error.ErrorMapper
+import timber.log.Timber
 
 /**
  * Top-level uncaught-exception handler.
@@ -26,12 +27,14 @@ class GhostifyCrashHandler(
 ) : Thread.UncaughtExceptionHandler {
 
     override fun uncaughtException(thread: Thread, throwable: Throwable) {
+        Timber.e(throwable, "GhostifyCrashHandler.uncaughtException: START")
         runCatching { ErrorMapper.map(throwable) }
         runCatching { reporter.report(Crash(thread, throwable, System.currentTimeMillis())) }
         previous?.uncaughtException(thread, throwable)
     }
 
     fun install() {
+        Timber.i("GhostifyCrashHandler.install: START")
         Thread.setDefaultUncaughtExceptionHandler(this)
     }
 }

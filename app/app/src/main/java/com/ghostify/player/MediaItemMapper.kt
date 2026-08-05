@@ -4,6 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.ghostify.player.core.QueueItem
+import timber.log.Timber
 
 /**
  * Converts a [QueueItem] into the [MediaItem] handed to ExoPlayer.
@@ -15,6 +16,7 @@ import com.ghostify.player.core.QueueItem
 object MediaItemMapper {
 
     fun toMediaItem(item: QueueItem, artworkBytes: ByteArray?): MediaItem {
+        Timber.i("MediaItemMapper.toMediaItem: START mediaId=${item.mediaId}")
         val metadataBuilder = MediaMetadata.Builder()
             .setTitle(item.title)
             .setArtist(item.artist)
@@ -25,10 +27,12 @@ object MediaItemMapper {
             metadataBuilder.setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
         }
 
-        return MediaItem.Builder()
+        val result = MediaItem.Builder()
             .setMediaId(item.mediaId)
             .setUri(item.filePath)
             .setMediaMetadata(metadataBuilder.build())
             .build()
+        Timber.i("MediaItemMapper.toMediaItem: returning ${result.mediaId}")
+        return result
     }
 }

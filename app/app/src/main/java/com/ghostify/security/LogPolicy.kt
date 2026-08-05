@@ -1,6 +1,7 @@
 package com.ghostify.security
 
 import java.io.PrintStream
+import timber.log.Timber
 
 /**
  * Ghostify logging policy — the single gateway through which every log line in
@@ -49,8 +50,10 @@ class LogPolicy private constructor(
                 System.err.println("${level.name}/$tag: $msg")
             },
         ): LogPolicy {
+            Timber.i("LogPolicy.setup: START")
             val policy = LogPolicy(isDebug, sink)
             instance = policy
+            Timber.d("LogPolicy: state changed to configured (isDebug=$isDebug)")
             return policy
         }
 
@@ -77,6 +80,7 @@ class LogPolicy private constructor(
      *   sanitized to PROD strictness even in debug builds.
      */
     fun log(level: LogLevel, tag: String, message: String, sensitive: Boolean = false) {
+        Timber.i("LogPolicy.log: START")
         if (level.isVerbose() && !isDebug) return
         val levelForSanitize = if (isDebug && !sensitive) SanitizeLevel.DEBUG else SanitizeLevel.PROD
         val redacted = SecretRedactor.redact(message)
@@ -85,11 +89,11 @@ class LogPolicy private constructor(
         out?.println("${level.name}/$tag: $sanitized")
     }
 
-    fun v(tag: String, message: String, sensitive: Boolean = false) = log(LogLevel.VERBOSE, tag, message, sensitive)
-    fun d(tag: String, message: String, sensitive: Boolean = false) = log(LogLevel.DEBUG, tag, message, sensitive)
-    fun i(tag: String, message: String, sensitive: Boolean = false) = log(LogLevel.INFO, tag, message, sensitive)
-    fun w(tag: String, message: String, sensitive: Boolean = false) = log(LogLevel.WARN, tag, message, sensitive)
-    fun e(tag: String, message: String, sensitive: Boolean = false) = log(LogLevel.ERROR, tag, message, sensitive)
+    fun v(tag: String, message: String, sensitive: Boolean = false): Unit { Timber.i("LogPolicy.v: START"); log(LogLevel.VERBOSE, tag, message, sensitive) }
+    fun d(tag: String, message: String, sensitive: Boolean = false): Unit { Timber.i("LogPolicy.d: START"); log(LogLevel.DEBUG, tag, message, sensitive) }
+    fun i(tag: String, message: String, sensitive: Boolean = false): Unit { Timber.i("LogPolicy.i: START"); log(LogLevel.INFO, tag, message, sensitive) }
+    fun w(tag: String, message: String, sensitive: Boolean = false): Unit { Timber.i("LogPolicy.w: START"); log(LogLevel.WARN, tag, message, sensitive) }
+    fun e(tag: String, message: String, sensitive: Boolean = false): Unit { Timber.i("LogPolicy.e: START"); log(LogLevel.ERROR, tag, message, sensitive) }
 
     /**
      * Build a debug-only message for a track. Keeps a truncated `title - artist`
@@ -97,8 +101,11 @@ class LogPolicy private constructor(
      * callers can skip building the string entirely.
      */
     fun debugTrackRef(trackTitle: String?, artists: String?, spotifyUrl: String?): String? {
+        Timber.i("LogPolicy.debugTrackRef: START")
         if (!isDebug) return null
-        return SpotifySanitizer.trackRef(trackTitle, artists, spotifyUrl, SanitizeLevel.DEBUG)
+        val result = SpotifySanitizer.trackRef(trackTitle, artists, spotifyUrl, SanitizeLevel.DEBUG)
+        Timber.i("LogPolicy.debugTrackRef: returning $result")
+        return result
     }
 }
 

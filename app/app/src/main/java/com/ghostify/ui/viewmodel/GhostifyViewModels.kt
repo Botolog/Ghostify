@@ -14,6 +14,7 @@ import com.ghostify.ui.contract.PlayerContract
 import com.ghostify.ui.contract.PlaylistDetailContract
 import com.ghostify.ui.contract.SettingsContract
 import com.ghostify.ui.util.PlaylistUrlValidator
+import timber.log.Timber
 import java.util.UUID
 
 /**
@@ -54,16 +55,29 @@ class GhostifyViewModels(
 
     private val detailCache = HashMap<String, PlaylistDetailViewModel>()
 
-    fun library(): LibraryContract = library
+    fun library(): LibraryContract {
+        Timber.i("GhostifyViewModels.library: START")
+        return library
+    }
 
-    fun addPlaylist(): AddPlaylistContract = addPlaylist
+    fun addPlaylist(): AddPlaylistContract {
+        Timber.i("GhostifyViewModels.addPlaylist: START")
+        return addPlaylist
+    }
 
-    fun player(): PlayerContract = playerVm
+    fun player(): PlayerContract {
+        Timber.i("GhostifyViewModels.player: START")
+        return playerVm
+    }
 
-    fun settings(): SettingsContract = settingsVm
+    fun settings(): SettingsContract {
+        Timber.i("GhostifyViewModels.settings: START")
+        return settingsVm
+    }
 
-    fun detailFor(playlistId: String): PlaylistDetailContract =
-        detailCache.getOrPut(playlistId) {
+    fun detailFor(playlistId: String): PlaylistDetailContract {
+        Timber.i("GhostifyViewModels.detailFor: START")
+        return detailCache.getOrPut(playlistId) {
             PlaylistDetailViewModel(
                 playlistId = playlistId,
                 repo = repo,
@@ -73,9 +87,11 @@ class GhostifyViewModels(
                 player = player,
             )
         }
+    }
 
     /** Cancels every VM coroutine; call when the hosting activity is destroyed. */
     fun clear() {
+        Timber.i("GhostifyViewModels.clear: START")
         library.clear()
         addPlaylist.clear()
         playerVm.clear()

@@ -14,6 +14,7 @@ import com.ghostify.data.repo.SettingsRepository
 import com.ghostify.data.repo.SongRepository
 import com.ghostify.download.DownloadManager
 import com.ghostify.file.MusicStore
+import com.ghostify.logging.FileLoggingTree
 import com.ghostify.player.PlayerController
 import com.ghostify.python.FfmpegLocator
 import com.ghostify.python.PlaylistMetadataBridge
@@ -26,6 +27,7 @@ import com.ghostify.ui.viewmodel.GhostifyViewModels
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import timber.log.Timber
 
 /**
  * Application entry point, owned by this (release) component.
@@ -54,8 +56,17 @@ class GhostifyApplication : Application() {
     /** Process-wide composition root, built lazily on first access. */
     val container: GhostifyContainer by lazy { GhostifyContainer(this) }
 
+    lateinit var fileLoggingTree: FileLoggingTree
+        private set
+
     override fun onCreate() {
         super.onCreate()
+
+        // Timber file logging — must be planted before anything else logs.
+        fileLoggingTree = FileLoggingTree(this)
+        Timber.plant(fileLoggingTree)
+        if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
+
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val crashMarker = PrefsCrashMarker(this)
         startPythonRuntime()
@@ -66,6 +77,7 @@ class GhostifyApplication : Application() {
             scope = scope,
         ).onColdStart()
         crashMarker.markCleanStartup()
+        Timber.i("Application started")
     }
 
     private fun startPythonRuntime() {

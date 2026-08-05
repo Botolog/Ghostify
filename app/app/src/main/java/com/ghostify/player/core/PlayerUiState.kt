@@ -7,6 +7,7 @@ data class CurrentItem(
     val artist: String?,
     val album: String?,
     val artworkBytes: ByteArray?,
+    val coverUrl: String? = null,
 )
 
 /** Last non-recoverable player error surfaced to the UI (null while healthy). */

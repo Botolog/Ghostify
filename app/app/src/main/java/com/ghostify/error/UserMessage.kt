@@ -1,5 +1,7 @@
 package com.ghostify.error
 
+import timber.log.Timber
+
 /**
  * A user-facing message. Never carries a raw [Throwable].
  *
@@ -26,4 +28,9 @@ data class UserMessage(
 }
 
 /** Convenience for UI boundaries: any failure becomes a readable message, never a raw exception. */
-fun Throwable.toUserMessage(): UserMessage = ErrorMapper.map(this).toUserMessage()
+fun Throwable.toUserMessage(): UserMessage {
+    Timber.i("Throwable.toUserMessage: START")
+    val result = ErrorMapper.map(this).toUserMessage()
+    Timber.i("Throwable.toUserMessage: returning $result")
+    return result
+}

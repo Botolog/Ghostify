@@ -1,11 +1,16 @@
 package com.ghostify.player
 
 import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionToken
+import com.ghostify.background.PlaybackService
 import com.ghostify.player.core.ErrorAction
 import com.ghostify.player.core.PlaybackConstants
 import com.ghostify.player.core.PlayerError
@@ -31,6 +36,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 /**
  * The app's single playback controller.
@@ -52,6 +58,7 @@ import kotlinx.coroutines.withContext
  *   the player screen.
  */
 class PlayerController private constructor(
+    private val context: Context,
     private val exoPlayer: ExoPlayer,
     private val queueBuilder: PlayerQueueBuilder,
     private val artworkExtractor: ArtworkExtractor,
@@ -86,9 +93,11 @@ class PlayerController private constructor(
      * @param startSongId optional song to start from (by `songs.id`); defaults to the first item.
      */
     fun playPlaylist(songs: List<Song>, startSongId: String? = null) {
+        Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId")
         scope.launch(Dispatchers.IO) {
             when (val result = queueBuilder.build(songs, startSongId)) {
                 is QueueBuildResult.NothingToPlay -> withContext(Dispatchers.Main.immediate) {
+                    Timber.w("playPlaylist: nothing to play")
                     nothingToPlay = true
                     lastError = null
                     artworkByMediaId.clear()
@@ -105,6 +114,7 @@ class PlayerController private constructor(
 
                 is QueueBuildResult.Ready -> {
                     val mediaItems = buildMediaItems(result.items)
+                    Timber.i("playPlaylist: ${result.items.size} playable items, starting at ${result.startIndex}")
                     withContext(Dispatchers.Main.immediate) {
                         nothingToPlay = false
                         lastError = null
@@ -115,6 +125,7 @@ class PlayerController private constructor(
                         exoPlayer.play()
                         _state.update { it.copy(queue = result.items) }
                         publishSnapshot()
+                        startPlaybackService()
                     }
                 }
             }
@@ -139,18 +150,36 @@ class PlayerController private constructor(
 
     // --- Transport controls ----------------------------------------------------------
 
-    fun play() = exoPlayer.play()
-    fun pause() = exoPlayer.pause()
-    fun togglePlayPause() = if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+    fun play() {
+        Timber.i("PlayerController.play: START")
+        exoPlayer.play()
+    }
+
+    fun pause() {
+        Timber.i("PlayerController.pause: START")
+        exoPlayer.pause()
+    }
+
+    fun togglePlayPause() {
+        Timber.i("PlayerController.togglePlayPause: START")
+        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+    }
 
     /** Next song (restarts the current one when it is the last with repeat off). */
-    fun next() = exoPlayer.seekToNext()
+    fun next() {
+        Timber.i("PlayerController.next: START")
+        exoPlayer.seekToNext()
+    }
 
     /** Previous song (restarts the current one if it started less than 3s ago). */
-    fun previous() = exoPlayer.seekToPrevious()
+    fun previous() {
+        Timber.i("PlayerController.previous: START")
+        exoPlayer.seekToPrevious()
+    }
 
     /** Jumps to a specific queue position (by playlist-order index). */
     fun skipToMediaItem(index: Int) {
+        Timber.i("PlayerController.skipToMediaItem: START index=$index")
         if (index !in 0 until exoPlayer.mediaItemCount) return
         ensurePrepared()
         exoPlayer.seekToDefaultPosition(index)
@@ -158,34 +187,41 @@ class PlayerController private constructor(
 
     /** Seeks the current song to [positionMs] and keeps playing. */
     fun seekTo(positionMs: Long) {
+        Timber.i("PlayerController.seekTo: START positionMs=$positionMs")
         if (exoPlayer.mediaItemCount == 0) return
         ensurePrepared()
         exoPlayer.seekTo(positionMs.coerceAtLeast(0L))
     }
 
     fun setShuffleEnabled(enabled: Boolean) {
+        Timber.i("PlayerController.setShuffleEnabled: START enabled=$enabled")
         exoPlayer.shuffleModeEnabled = enabled
     }
 
     fun toggleShuffle() {
+        Timber.i("PlayerController.toggleShuffle: START")
         exoPlayer.shuffleModeEnabled = !exoPlayer.shuffleModeEnabled
     }
 
     fun setRepeatMode(mode: RepeatMode) {
+        Timber.i("PlayerController.setRepeatMode: START mode=$mode")
         exoPlayer.repeatMode = mode.media3Value
     }
 
     /** Cycles repeat OFF -> ALL -> ONE -> OFF. */
     fun toggleRepeatMode() {
+        Timber.i("PlayerController.toggleRepeatMode: START")
         exoPlayer.repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode).next().media3Value
     }
 
     /** @param volume 0.0 (mute) .. 1.0 (full). */
     fun setVolume(volume: Float) {
+        Timber.i("PlayerController.setVolume: START volume=$volume")
         exoPlayer.volume = volume.coerceIn(0f, 1f)
     }
 
     fun release() {
+        Timber.i("PlayerController.release: START")
         tickerJob?.cancel()
         exoPlayer.removeListener(this)
         scope.cancel()
@@ -193,17 +229,48 @@ class PlayerController private constructor(
 
     // --- Player.Listener -------------------------------------------------------------
 
-    override fun onPlaybackStateChanged(playbackState: Int) = publishSnapshot()
-    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = publishSnapshot()
-    override fun onIsPlayingChanged(isPlaying: Boolean) = publishSnapshot()
-    override fun onIsLoadingChanged(isLoading: Boolean) = publishSnapshot()
-    override fun onRepeatModeChanged(repeatMode: Int) = publishSnapshot()
-    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) = publishSnapshot()
-    override fun onVolumeChanged(volume: Float) = publishSnapshot()
+    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        Timber.d("PlayerController.onMediaItemTransition: mediaId=${mediaItem?.mediaId}, reason=$reason")
+        publishSnapshot()
+    }
 
-    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = publishSnapshot()
+    override fun onPlaybackStateChanged(playbackState: Int) {
+        Timber.d("PlayerController.onPlaybackStateChanged: state=$playbackState")
+        publishSnapshot()
+    }
+
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        Timber.d("PlayerController.onPlayWhenReadyChanged: playWhenReady=$playWhenReady, reason=$reason")
+        publishSnapshot()
+    }
+
+    override fun onIsPlayingChanged(isPlaying: Boolean) {
+        Timber.d("PlayerController.onIsPlayingChanged: isPlaying=$isPlaying")
+        publishSnapshot()
+    }
+
+    override fun onIsLoadingChanged(isLoading: Boolean) {
+        Timber.d("PlayerController.onIsLoadingChanged: isLoading=$isLoading")
+        publishSnapshot()
+    }
+
+    override fun onRepeatModeChanged(repeatMode: Int) {
+        Timber.d("PlayerController.onRepeatModeChanged: repeatMode=$repeatMode")
+        publishSnapshot()
+    }
+
+    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+        Timber.d("PlayerController.onShuffleModeEnabledChanged: shuffleModeEnabled=$shuffleModeEnabled")
+        publishSnapshot()
+    }
+
+    override fun onVolumeChanged(volume: Float) {
+        Timber.d("PlayerController.onVolumeChanged: volume=$volume")
+        publishSnapshot()
+    }
 
     override fun onPlayerError(error: PlaybackException) {
+        Timber.e(error, "PlayerController.onPlayerError: errorCode=${error.errorCode}")
         lastError = PlayerError(error.errorCode, error.message)
         when (PlayerErrorClassifier.classify(error.errorCode)) {
             ErrorAction.SKIP_CURRENT -> skipUnplayableItem()
@@ -222,6 +289,7 @@ class PlayerController private constructor(
      * last item stops playback cleanly instead of crashing.
      */
     private fun skipUnplayableItem() {
+        Timber.d("PlayerController.skipUnplayableItem: START")
         val count = exoPlayer.mediaItemCount
         if (count == 0) return
         val currentIndex = exoPlayer.currentMediaItemIndex
@@ -244,13 +312,38 @@ class PlayerController private constructor(
     }
 
     private fun ensurePrepared() {
+        Timber.d("PlayerController.ensurePrepared: START")
         if (exoPlayer.playbackState == Player.STATE_IDLE && exoPlayer.mediaItemCount > 0) {
             exoPlayer.prepare()
         }
     }
 
+    private fun startPlaybackService() {
+        Timber.i("startPlaybackService: starting PlaybackService")
+        val intent = Intent(context, PlaybackService::class.java)
+        ContextCompat.startForegroundService(context, intent)
+        // Create a MediaController to bind to the service. This triggers
+        // onGetSession() → addSession() → notification appears.
+        val sessionToken = SessionToken(
+            context,
+            android.content.ComponentName(context, PlaybackService::class.java)
+        )
+        Timber.i("startPlaybackService: calling MediaController.Builder.buildAsync")
+        val future = MediaController.Builder(context, sessionToken).buildAsync()
+        future.addListener({
+            try {
+                val controller = future.get()
+                Timber.i("startPlaybackService: MediaController connected OK, controller=${controller.javaClass.simpleName}")
+            } catch (t: Throwable) {
+                Timber.e(t, "startPlaybackService: MediaController FAILED to connect")
+            }
+        }, { it.run() })
+        Timber.i("startPlaybackService: MediaController buildAsync called")
+    }
+
     /** Reads the player and pushes a fresh [PlayerUiState]. Must run on the main thread. */
     private fun publishSnapshot() {
+        Timber.d("PlayerController.publishSnapshot: START")
         val currentItem = exoPlayer.currentMediaItem
         val snapshot = PlayerSnapshot(
             playbackState = exoPlayer.playbackState,
@@ -313,13 +406,21 @@ class PlayerController private constructor(
             sessionActivityClass: Class<*>? = null,
             scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
         ): PlayerController {
+            Timber.i("PlayerController.create: START")
+            val appCtx = context.applicationContext
+            Timber.i("PlayerController.create: getting ExoPlayer")
+            val player = PlaybackEngine.exoPlayer(context)
+            Timber.i("PlayerController.create: ExoPlayer obtained, getting session")
+            val sess = PlaybackEngine.session(context, sessionActivityClass)
+            Timber.i("PlayerController.create: session obtained, building controller")
             return PlayerController(
-                exoPlayer = PlaybackEngine.exoPlayer(context),
+                context = appCtx,
+                exoPlayer = player,
                 queueBuilder = queueBuilder,
                 artworkExtractor = artworkExtractor,
-                session = PlaybackEngine.session(context, sessionActivityClass),
+                session = sess,
                 scope = scope,
-            )
+            ).also { Timber.i("PlayerController.create: DONE") }
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.ghostify.security
 
+import timber.log.Timber
+
 /**
  * Detects and redacts credential-shaped values anywhere they could appear:
  * log messages, stored strings, error payloads, Python/Kotlin source. This is
@@ -97,6 +99,7 @@ object SecretRedactor {
      * scanner, R1). Empty when the text carries no secret-like data.
      */
     fun find(text: String): List<SecretMatch> {
+        Timber.i("SecretRedactor.find: START")
         val out = ArrayList<SecretMatch>()
         for (m in ASSIGNMENT.findAll(text)) {
             val key = normalizeKey(m.groupValues[1])
@@ -130,11 +133,17 @@ object SecretRedactor {
         for (m in PEM_BLOCK.findAll(text)) {
             out.add(SecretMatch("private_key", m.groupValues[0], m.range.first, m.range.last + 1))
         }
+        Timber.i("SecretRedactor.find: returning ${out.size} matches")
         return out
     }
 
     /** True when [value] is a real-looking secret (not a placeholder / empty). */
-    fun looksLikeSecret(value: String): Boolean = looksLikeSecret(value, quoted = true)
+    fun looksLikeSecret(value: String): Boolean {
+        Timber.i("SecretRedactor.looksLikeSecret: START")
+        val result = looksLikeSecret(value, quoted = true)
+        Timber.i("SecretRedactor.looksLikeSecret: returning $result")
+        return result
+    }
 
     internal fun looksLikeSecret(value: String, quoted: Boolean): Boolean {
         if (EMPTY_LIKE.matches(value)) return false
@@ -170,6 +179,7 @@ object SecretRedactor {
      * stored strings never leak the value itself. Idempotent.
      */
     fun redact(text: String): String {
+        Timber.i("SecretRedactor.redact: START")
         if (text.isEmpty()) return text
         val sb = StringBuilder(text)
         for (m in find(text).sortedByDescending { it.start }) {
@@ -178,6 +188,8 @@ object SecretRedactor {
         sb.replace(0, sb.length, QUERY_SECRET.replace(sb.toString()) { match ->
             match.groupValues[1] + "=[REDACTED]"
         })
-        return sb.toString()
+        val result = sb.toString()
+        Timber.i("SecretRedactor.redact: returning $result")
+        return result
     }
 }

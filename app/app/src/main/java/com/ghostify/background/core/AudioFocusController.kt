@@ -1,5 +1,7 @@
 package com.ghostify.background.core
 
+import timber.log.Timber
+
 /**
  * Explicit, testable audio-focus controller (T-099).
  *
@@ -38,17 +40,21 @@ class AudioFocusController(
 
     /** Call exactly once when requesting focus to begin playback. */
     fun requestFocus(): PlayDecision {
+        Timber.i("AudioFocusController.requestFocus: START")
         val result = driver.requestFocus(focusListener)
-        return if (result.isGranted) {
+        val decision = if (result.isGranted) {
             hasFocus = true
             PlayDecision.GRANTED
         } else {
             PlayDecision.DENIED
         }
+        Timber.i("AudioFocusController.requestFocus: returning $decision")
+        return decision
     }
 
     /** Release focus (call when stopping playback / tearing down the player). */
     fun abandon() {
+        Timber.i("AudioFocusController.abandon: START")
         if (hasFocus) {
             driver.abandon()
             hasFocus = false
@@ -59,6 +65,7 @@ class AudioFocusController(
 
     private fun handleFocusChange(loss: AudioFocusLoss) {
         val action = policy.decide(loss, control.isPlaying, isDucking, pausedByTransient)
+        Timber.d("AudioFocusController: state changed to $action (loss=$loss)")
         when (action) {
             FocusAction.PAUSE -> {
                 val playingBefore = control.isPlaying

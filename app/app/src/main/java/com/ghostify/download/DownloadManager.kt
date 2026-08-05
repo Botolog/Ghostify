@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -47,6 +48,7 @@ class DownloadManager(
      * (Hilt / application init). Falls back to an inline executor if none is set.
      */
     fun bindExecutor(executor: DownloadExecutor) {
+        Timber.i("DownloadManager.bindExecutor: START")
         executorRef.set(executor)
     }
 
@@ -58,18 +60,27 @@ class DownloadManager(
      *   executor rejected the request (T-054).
      */
     fun downloadAll(playlistId: String): Boolean {
-        if (executions.contains(playlistId)) return false
+        Timber.i("DownloadManager.downloadAll: START")
+        if (executions.contains(playlistId)) {
+            Timber.i("DownloadManager.downloadAll: returning false (already running)")
+            return false
+        }
         val token = AtomicBoolean(false)
-        if (tokens.putIfAbsent(playlistId, token) != null) return false
+        if (tokens.putIfAbsent(playlistId, token) != null) {
+            Timber.i("DownloadManager.downloadAll: returning false (token exists)")
+            return false
+        }
         val executor = executorRef.get() ?: defaultInlineExecutor
         val started = try {
             executor.execute(playlistId)
         } catch (t: Throwable) {
+            Timber.e(t, "DownloadManager: execute FAILED")
             false
         }
         if (!started) {
             tokens.remove(playlistId)
         }
+        Timber.i("DownloadManager.downloadAll: returning $started")
         return started
     }
 
@@ -78,7 +89,12 @@ class DownloadManager(
      * run leaves no PENDING tracks behind, `downloadAll` naturally picks up only
      * the FAILED ones; PENDING tracks that arrive later are also picked up.
      */
-    fun retry(playlistId: String): Boolean = downloadAll(playlistId)
+    fun retry(playlistId: String): Boolean {
+        Timber.i("DownloadManager.retry: START")
+        val result = downloadAll(playlistId)
+        Timber.i("DownloadManager.retry: returning $result")
+        return result
+    }
 
     /**
      * Cancels the active run for [playlistId] (T-049). The in-flight track ends
@@ -86,6 +102,7 @@ class DownloadManager(
      * the run terminates — no zombie worker.
      */
     fun cancel(playlistId: String) {
+        Timber.i("DownloadManager.cancel: START")
         tokens[playlistId]?.set(true)
         executorRef.get()?.cancel(playlistId)
         // If the run never actually started (e.g. cancelled before launch), the
@@ -95,16 +112,21 @@ class DownloadManager(
         }
     }
 
-    fun isRunning(playlistId: String): Boolean =
-        executions.contains(playlistId) || tokens.containsKey(playlistId)
+    fun isRunning(playlistId: String): Boolean {
+        Timber.i("DownloadManager.isRunning: START")
+        val result = executions.contains(playlistId) || tokens.containsKey(playlistId)
+        Timber.i("DownloadManager.isRunning: returning $result")
+        return result
+    }
 
     /**
      * Live progress flow. Derived from the authoritative repository snapshot, so
      * it is correct before, during and after a run, including FAILED songs and
      * process death.
      */
-    fun observeProgress(playlistId: String): Flow<DownloadProgress> =
-        combine(repo.observeSongs(playlistId), runState, fractions) { songs, runs, fracs ->
+    fun observeProgress(playlistId: String): Flow<DownloadProgress> {
+        Timber.i("DownloadManager.observeProgress: START")
+        val flow = combine(repo.observeSongs(playlistId), runState, fractions) { songs, runs, fracs ->
             DownloadProgressCalculator.fromSongs(
                 playlistId = playlistId,
                 songs = songs.sortedBy { it.position },
@@ -112,21 +134,32 @@ class DownloadManager(
                 fractions = fracs[playlistId] ?: emptyMap(),
             )
         }.distinctUntilChanged()
+        Timber.i("DownloadManager.observeProgress: returning flow")
+        return flow
+    }
 
     /**
      * Executes a run in the calling coroutine (used by the WorkManager worker).
      * Deduplicated against concurrent runs for the same playlist.
      */
     suspend fun runSynchronously(playlistId: String): RunOutcome {
-        if (!executions.add(playlistId)) return RunOutcome.IDLE
+        Timber.i("DownloadManager.runSynchronously: START")
+        if (!executions.add(playlistId)) {
+            Timber.i("DownloadManager.runSynchronously: returning IDLE (already running)")
+            return RunOutcome.IDLE
+        }
         val token = tokens.getOrPut(playlistId) { AtomicBoolean(false) }
         runState.update { it + (playlistId to DownloadRunState.RUNNING) }
+        Timber.d("DownloadManager: state changed to RUNNING for $playlistId")
         fractions.update { it - playlistId }
-        try {
-            return runner.run(
+        val result = try {
+            runner.run(
                 playlistId = playlistId,
                 cancellationToken = { token.get() },
-                onProgress = { p -> runState.update { it + (playlistId to p.state) } },
+                onProgress = { p ->
+                    runState.update { it + (playlistId to p.state) }
+                    Timber.d("DownloadManager: state changed to ${p.state} for $playlistId")
+                },
                 onSongProgress = { songId, fraction ->
                     fractions.update { map ->
                         val current = map[playlistId].orEmpty()
@@ -134,10 +167,15 @@ class DownloadManager(
                     }
                 },
             )
+        } catch (t: Throwable) {
+            Timber.e(t, "DownloadManager: runSynchronously FAILED")
+            throw t
         } finally {
             executions.remove(playlistId)
             tokens.remove(playlistId)
             runState.update { it - playlistId }
         }
+        Timber.i("DownloadManager.runSynchronously: returning $result")
+        return result
     }
 }

@@ -5,6 +5,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
+import timber.log.Timber
 
 /**
  * Default Media3 notification provider + a guaranteed **Stop** button (T-097/T-100).
@@ -31,15 +32,18 @@ class PlaybackNotificationProvider(
         commandButtons: com.google.common.collect.ImmutableList<CommandButton>,
         showCompact: Boolean,
     ): com.google.common.collect.ImmutableList<CommandButton> {
+        Timber.i("PlaybackNotificationProvider.getMediaButtons: START")
         val defaults = super.getMediaButtons(session, commands, commandButtons, showCompact)
         val stopButton = CommandButton.Builder(CommandButton.ICON_STOP)
             .setPlayerCommand(Player.COMMAND_STOP)
             .setDisplayName(STOP_LABEL)
             .build()
-        return com.google.common.collect.ImmutableList.builder<CommandButton>()
+        val result = com.google.common.collect.ImmutableList.builder<CommandButton>()
             .addAll(defaults)
             .add(stopButton)
             .build()
+        Timber.i("PlaybackNotificationProvider.getMediaButtons: returning ${result.size} buttons")
+        return result
     }
 
     companion object {

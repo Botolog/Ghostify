@@ -2,6 +2,7 @@ package com.ghostify.data.db
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import timber.log.Timber
 
 /**
  * Schema history.
@@ -43,6 +44,7 @@ object Migrations {
 
     val MIGRATION_1_2: Migration = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_1_2.migrate")
             MIGRATION_1_2_STATEMENTS.forEach { db.execSQL(it) }
         }
     }
@@ -54,6 +56,7 @@ object Migrations {
 
     val MIGRATION_2_3: Migration = object : Migration(2, 3) {
         override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_2_3.migrate")
             MIGRATION_2_3_STATEMENTS.forEach { db.execSQL(it) }
         }
     }

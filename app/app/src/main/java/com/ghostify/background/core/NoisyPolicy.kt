@@ -1,5 +1,7 @@
 package com.ghostify.background.core
 
+import timber.log.Timber
+
 /**
  * Pure policy for "audio becoming noisy" — i.e. a wired headset unplugging or the
  * A2DP link dropping. The platform broadcasts [ACTION_AUDIO_BECOMING_NOISY] and
@@ -11,5 +13,10 @@ package com.ghostify.background.core
 object NoisyPolicy {
     const val ACTION_AUDIO_BECOMING_NOISY: String = "android.media.AUDIO_BECOMING_NOISY"
 
-    fun shouldPause(intentAction: String?): Boolean = intentAction == ACTION_AUDIO_BECOMING_NOISY
+    fun shouldPause(intentAction: String?): Boolean {
+        Timber.i("NoisyPolicy.shouldPause: START")
+        val result = intentAction == ACTION_AUDIO_BECOMING_NOISY
+        Timber.i("NoisyPolicy.shouldPause: returning $result")
+        return result
+    }
 }

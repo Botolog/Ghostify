@@ -2,6 +2,7 @@ package com.ghostify.download
 
 import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkManager
+import timber.log.Timber
 
 /**
  * WorkManager-backed [DownloadExecutor]. Downloads are enqueued as **unique work**
@@ -12,16 +13,19 @@ import androidx.work.WorkManager
 class DownloadScheduler(private val workManager: WorkManager) : DownloadExecutor {
 
     override fun execute(playlistId: String): Boolean {
+        Timber.i("DownloadScheduler.execute: START")
         val request = DownloadWorker.buildRequest(playlistId)
         workManager.enqueueUniqueWork(
             uniqueName(playlistId),
             ExistingWorkPolicy.KEEP,
             request,
         )
+        Timber.i("DownloadScheduler.execute: returning true")
         return true
     }
 
     override fun cancel(playlistId: String) {
+        Timber.i("DownloadScheduler.cancel: START")
         workManager.cancelUniqueWork(uniqueName(playlistId))
     }
 

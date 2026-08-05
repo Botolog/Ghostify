@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.ghostify.background.core.NoisyPolicy
 import com.ghostify.background.core.PlaybackControl
+import timber.log.Timber
 
 /**
  * Pauses playback when the audio output becomes noisy (wired headset unplugged,
@@ -19,6 +20,7 @@ class AudioBecomingNoisyReceiver(
 ) : BroadcastReceiver() {
 
     override fun onReceive(context: Context?, intent: Intent?) {
+        Timber.i("AudioBecomingNoisyReceiver.onReceive: START")
         if (intent == null) return
         if (NoisyPolicy.shouldPause(intent.action)) {
             control.pause()

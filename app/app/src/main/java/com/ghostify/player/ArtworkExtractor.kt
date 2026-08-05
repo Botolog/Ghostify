@@ -1,6 +1,7 @@
 package com.ghostify.player
 
 import android.media.MediaMetadataRetriever
+import timber.log.Timber
 
 /**
  * Extracts embedded album art (front cover) from an audio file's tags.
@@ -23,13 +24,18 @@ fun interface ArtworkExtractor {
 class MediaMetadataRetrieverArtworkExtractor : ArtworkExtractor {
 
     override fun extractArtwork(filePath: String): ByteArray? {
+        Timber.i("ArtworkExtractor.extractArtwork: START filePath=$filePath")
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(filePath)
-            retriever.embeddedPicture
-        } catch (_: RuntimeException) {
+            val picture = retriever.embeddedPicture
+            Timber.i("ArtworkExtractor.extractArtwork: returning ${picture?.size} bytes")
+            picture
+        } catch (t: RuntimeException) {
+            Timber.e(t, "ArtworkExtractor: extractArtwork FAILED")
             null
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            Timber.e(t, "ArtworkExtractor: extractArtwork FAILED")
             null
         } finally {
             runCatching { retriever.release() }
