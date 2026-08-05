@@ -19,6 +19,18 @@ interface PlaylistDetailContract {
     /** Queue all DOWNLOADED tracks for playback. */
     fun playAll()
 
+    /** Play the playlist starting from a specific song. */
+    fun playFromSong(songId: String)
+
+    /** Download a single track. */
+    fun downloadSong(trackId: String)
+
+    /** Reorder a song within the playlist. */
+    fun reorderSong(songId: String, newPosition: Int)
+
+    /** Delete a single song from the playlist. */
+    fun deleteSong(trackId: String)
+
     /** Re-download a single track (from FAILED tap or long-press). */
     fun retryTrack(trackId: String)
 

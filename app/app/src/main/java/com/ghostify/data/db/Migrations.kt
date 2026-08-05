@@ -61,5 +61,17 @@ object Migrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+    /** The v3 -> v4 DDL. Adds user-defined sort order to playlists. */
+    val MIGRATION_3_4_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE playlists ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+    )
+
+    val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_3_4.migrate")
+            MIGRATION_3_4_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 }

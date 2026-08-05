@@ -106,4 +106,16 @@ class PlaylistRepository(
             playlistDao.update(playlist.copy(trackCount = songDao.countForPlaylist(playlistId)))
         }
     }
+
+    /** Reorder a playlist to a new position. All other playlists shift accordingly. */
+    suspend fun reorderPlaylist(playlistId: String, newSortOrder: Int) {
+        Timber.i("PlaylistRepository.reorderPlaylist: START $playlistId -> $newSortOrder")
+        playlistDao.setSortOrder(playlistId, newSortOrder)
+    }
+
+    /** Reorder a song within a playlist. */
+    suspend fun reorderSong(songId: String, newPosition: Int) {
+        Timber.i("PlaylistRepository.reorderSong: START $songId -> $newPosition")
+        songDao.setPosition(songId, newPosition)
+    }
 }

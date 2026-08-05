@@ -1,6 +1,7 @@
 package com.ghostify.ui.library
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,11 +34,19 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -44,12 +59,14 @@ import com.ghostify.ui.contract.LibraryContract.LibraryUiState
 import com.ghostify.ui.model.PlaylistUi
 import com.ghostify.ui.util.ProgressBadge
 import com.ghostify.ui.util.TimeFormat
+import kotlinx.coroutines.launch
 
 object LibraryTestTags {
     const val LIST = "library_list"
     const val EMPTY = "library_empty"
     const val FAB = "library_fab"
     const val SETTINGS = "library_settings"
+    const val SHUTDOWN = "library_shutdown"
     const val COVER = "playlist_cover"
     const val NAME = "playlist_name"
     const val COUNT = "playlist_count"
@@ -59,14 +76,6 @@ object LibraryTestTags {
     fun item(playlistId: String) = "playlist_item_$playlistId"
 }
 
-/**
- * Library home screen.
- *
- * @param onOpenPlaylist navigation callback — wired to the NavController by the app root.
- * @param addDialog slot rendered whenever [LibraryUiState.isAddDialogOpen] is true; the app
- *   root supplies the real [com.ghostify.ui.add.AddPlaylistDialog], tests supply a fake host.
- * @param now injected clock for deterministic "last synced" rendering in tests.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
@@ -78,12 +87,21 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by contract.state.collectAsState()
+    var showShutdownDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("Library") },
+                navigationIcon = {
+                    IconButton(
+                        onClick = { showShutdownDialog = true },
+                        modifier = Modifier.testTag(LibraryTestTags.SHUTDOWN),
+                    ) {
+                        Icon(Icons.Filled.PowerSettingsNew, contentDescription = "Shutdown")
+                    }
+                },
                 actions = {
                     IconButton(
                         onClick = {
@@ -115,13 +133,39 @@ fun LibraryScreen(
 
                 state.playlists.isEmpty() -> EmptyLibrary()
 
-                else -> PlaylistList(state = state, onOpenPlaylist = onOpenPlaylist, now = now)
+                else -> PlaylistList(
+                    state = state,
+                    contract = contract,
+                    onOpenPlaylist = onOpenPlaylist,
+                    now = now,
+                )
             }
         }
     }
 
     if (state.isAddDialogOpen) {
         addDialog()
+    }
+
+    if (showShutdownDialog) {
+        AlertDialog(
+            onDismissRequest = { showShutdownDialog = false },
+            title = { Text("Shutdown") },
+            text = { Text("Close Ghostify completely? Playback will stop.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showShutdownDialog = false
+                    contract.shutdownApp()
+                }) {
+                    Text("Shutdown")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showShutdownDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 
@@ -148,9 +192,11 @@ private fun EmptyLibrary() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PlaylistList(
     state: LibraryUiState,
+    contract: LibraryContract,
     onOpenPlaylist: (String) -> Unit,
     now: () -> Long,
 ) {
@@ -161,26 +207,82 @@ private fun PlaylistList(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
     ) {
         items(state.playlists, key = { it.id }) { playlist ->
-            PlaylistRow(
-                playlist = playlist,
-                onClick = { onOpenPlaylist(playlist.id) },
-                now = now,
+            val dismissState = rememberSwipeToDismissBoxState(
+                confirmValueChange = { value ->
+                    if (value == SwipeToDismissBoxValue.EndToStart) {
+                        contract.deletePlaylist(playlist.id)
+                        true
+                    } else false
+                }
             )
+
+            SwipeToDismissBox(
+                state = dismissState,
+                backgroundContent = {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.CenterEnd,
+                    ) {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = "Delete",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+                enableDismissFromStartToEnd = false,
+            ) {
+                PlaylistRow(
+                    playlist = playlist,
+                    onClick = { onOpenPlaylist(playlist.id) },
+                    onMoveUp = {
+                        val idx = state.playlists.indexOfFirst { it.id == playlist.id }
+                        if (idx > 0) {
+                            val above = state.playlists[idx - 1]
+                            contract.reorderPlaylist(playlist.id, idx - 1)
+                            contract.reorderPlaylist(above.id, idx)
+                        }
+                    },
+                    onMoveDown = {
+                        val idx = state.playlists.indexOfFirst { it.id == playlist.id }
+                        if (idx < state.playlists.lastIndex) {
+                            val below = state.playlists[idx + 1]
+                            contract.reorderPlaylist(playlist.id, idx + 1)
+                            contract.reorderPlaylist(below.id, idx)
+                        }
+                    },
+                    isFirst = state.playlists.firstOrNull()?.id == playlist.id,
+                    isLast = state.playlists.lastOrNull()?.id == playlist.id,
+                    now = now,
+                )
+            }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlaylistRow(
     playlist: PlaylistUi,
     onClick: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    isFirst: Boolean,
+    isLast: Boolean,
     now: () -> Long,
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .testTag(LibraryTestTags.item(playlist.id))
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { showMenu = true },
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -220,6 +322,33 @@ private fun PlaylistRow(
         }
 
         DownloadBadge(playlist = playlist)
+
+        Box {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = "More",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+            ) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Move up") },
+                    onClick = { showMenu = false; onMoveUp() },
+                    enabled = !isFirst,
+                    leadingIcon = { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null) },
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Move down") },
+                    onClick = { showMenu = false; onMoveDown() },
+                    enabled = !isLast,
+                    leadingIcon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null) },
+                )
+            }
+        }
     }
 }
 

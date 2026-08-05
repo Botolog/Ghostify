@@ -20,6 +20,15 @@ interface LibraryContract {
     /** User pressed the Settings action in the top bar. */
     fun onOpenSettings()
 
+    /** Reorder a playlist to a new position in the list. */
+    fun reorderPlaylist(playlistId: String, newSortOrder: Int)
+
+    /** Delete a playlist and all its songs. */
+    fun deletePlaylist(playlistId: String)
+
+    /** Kill the entire app process. */
+    fun shutdownApp()
+
     data class LibraryUiState(
         val playlists: List<PlaylistUi> = emptyList(),
         val loading: Boolean = true,

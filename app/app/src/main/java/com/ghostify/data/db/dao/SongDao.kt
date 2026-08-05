@@ -82,4 +82,7 @@ interface SongDao {
 
     @Query("SELECT COUNT(*) FROM songs WHERE playlist_id = :playlistId AND status = :status")
     suspend fun countForPlaylistByStatus(playlistId: String, status: SongStatus): Int
+
+    @Query("UPDATE songs SET position = :position WHERE id = :id")
+    suspend fun setPosition(id: String, position: Int)
 }

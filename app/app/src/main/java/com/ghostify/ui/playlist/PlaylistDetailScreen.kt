@@ -2,7 +2,6 @@ package com.ghostify.ui.playlist
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassEmpty
@@ -34,9 +34,12 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -160,7 +163,10 @@ private fun PlaylistContent(
             contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             items(state.tracks, key = { it.id }) { track ->
-                TrackRow(track = track, onRetry = { contract.retryTrack(track.id) })
+                TrackRowWithSwipe(
+                    track = track,
+                    contract = contract,
+                )
             }
         }
     }
@@ -276,10 +282,58 @@ private fun ActionBar(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TrackRowWithSwipe(
+    track: TrackUi,
+    contract: PlaylistDetailContract,
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                contract.deleteSong(track.id)
+                true
+            } else false
+        }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = "Delete",
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        enableDismissFromStartToEnd = false,
+    ) {
+        TrackRow(
+            track = track,
+            onPlay = { contract.playFromSong(track.id) },
+            onDownload = { contract.downloadSong(track.id) },
+            onRetry = { contract.retryTrack(track.id) },
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TrackRow(track: TrackUi, onRetry: () -> Unit) {
+private fun TrackRow(
+    track: TrackUi,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    onRetry: () -> Unit,
+) {
     val isFailed = track.status == SongStatus.FAILED
+    val isDownloaded = track.status == SongStatus.DOWNLOADED
     val rowBackground =
         if (isFailed) MaterialTheme.colorScheme.errorContainer else Color.Transparent
 
@@ -289,7 +343,13 @@ private fun TrackRow(track: TrackUi, onRetry: () -> Unit) {
             .background(rowBackground)
             .testTag(PlaylistDetailTestTags.track(track.id))
             .combinedClickable(
-                onClick = { if (isFailed) onRetry() },
+                onClick = {
+                    when {
+                        isDownloaded -> onPlay()
+                        isFailed -> onRetry()
+                        else -> onDownload()
+                    }
+                },
                 onLongClick = onRetry,
             )
             .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -309,11 +369,21 @@ private fun TrackRow(track: TrackUi, onRetry: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (isFailed) {
-                Text(
+            when {
+                isFailed -> Text(
                     text = "Failed — tap to retry",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error,
+                )
+                !isDownloaded -> Text(
+                    text = "Tap to download",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                else -> Text(
+                    text = "Tap to play from here",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
         }

@@ -39,5 +39,9 @@ data class PlaylistEntity(
     val createdAt: Long = System.currentTimeMillis(),
 
     @androidx.room.ColumnInfo(name = "last_synced_at")
-    val lastSyncedAt: Long? = null
+    val lastSyncedAt: Long? = null,
+
+    /** User-defined sort position (lower = higher in list). Falls back to created_at. */
+    @androidx.room.ColumnInfo(name = "sort_order", defaultValue = "0")
+    val sortOrder: Int = 0
 )

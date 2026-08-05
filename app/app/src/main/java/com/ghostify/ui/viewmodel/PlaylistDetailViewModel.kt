@@ -116,6 +116,39 @@ class PlaylistDetailViewModel(
         }
     }
 
+    override fun playFromSong(songId: String) {
+        Timber.i("PlaylistDetailViewModel.playFromSong: START $songId")
+        launch {
+            val songs = songRepo.getSongs(playlistId)
+                .filter { it.status == SongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
+                .sortedBy { it.position }
+                .map { it.toPlayerSong() }
+            player.playPlaylist(songs, startSongId = songId)
+        }
+    }
+
+    override fun downloadSong(trackId: String) {
+        Timber.i("PlaylistDetailViewModel.downloadSong: START $trackId")
+        launch {
+            songRepo.setStatus(listOf(trackId), SongStatus.PENDING)
+            downloads.downloadAll(playlistId)
+        }
+    }
+
+    override fun reorderSong(songId: String, newPosition: Int) {
+        Timber.i("PlaylistDetailViewModel.reorderSong: START $songId -> $newPosition")
+        launch { repo.reorderSong(songId, newPosition) }
+    }
+
+    override fun deleteSong(trackId: String) {
+        Timber.i("PlaylistDetailViewModel.deleteSong: START $trackId")
+        launch {
+            val song = songRepo.getSong(trackId) ?: return@launch
+            songRepo.delete(song)
+            repo.refreshTrackCount(playlistId)
+        }
+    }
+
     private fun mapToUi(
         playlist: com.ghostify.data.db.entity.PlaylistEntity?,
         songs: List<com.ghostify.data.db.entity.SongEntity>,

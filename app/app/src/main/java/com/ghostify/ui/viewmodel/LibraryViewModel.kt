@@ -73,6 +73,21 @@ class LibraryViewModel(
         // Navigation to Settings is owned by the screen's callback; nothing to do.
     }
 
+    override fun reorderPlaylist(playlistId: String, newSortOrder: Int) {
+        Timber.i("LibraryViewModel.reorderPlaylist: START $playlistId -> $newSortOrder")
+        launch { repo.reorderPlaylist(playlistId, newSortOrder) }
+    }
+
+    override fun deletePlaylist(playlistId: String) {
+        Timber.i("LibraryViewModel.deletePlaylist: START $playlistId")
+        launch { repo.deletePlaylist(playlistId) }
+    }
+
+    override fun shutdownApp() {
+        Timber.i("LibraryViewModel.shutdownApp: START")
+        android.os.Process.killProcess(android.os.Process.myPid())
+    }
+
     /** Non-contract hook used by the Add-dialog wiring to close itself. */
     fun closeAddDialog() {
         Timber.i("LibraryViewModel.closeAddDialog: START")
