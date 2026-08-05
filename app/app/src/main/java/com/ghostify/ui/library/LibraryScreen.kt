@@ -323,6 +323,8 @@ private fun PlaylistRow(
 
         DownloadBadge(playlist = playlist)
 
+        Spacer(modifier = Modifier.width(4.dp))
+
         Box {
             IconButton(onClick = { showMenu = true }) {
                 Icon(

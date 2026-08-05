@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassEmpty
@@ -34,12 +33,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -163,9 +159,11 @@ private fun PlaylistContent(
             contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             items(state.tracks, key = { it.id }) { track ->
-                TrackRowWithSwipe(
+                TrackRow(
                     track = track,
-                    contract = contract,
+                    onPlay = { contract.playFromSong(track.id) },
+                    onDownload = { contract.downloadSong(track.id) },
+                    onRetry = { contract.retryTrack(track.id) },
                 )
             }
         }
@@ -278,48 +276,6 @@ private fun ActionBar(
             modifier = Modifier
                 .padding(horizontal = 16.dp, vertical = 4.dp)
                 .testTag(PlaylistDetailTestTags.PLAY_ALL_HINT),
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TrackRowWithSwipe(
-    track: TrackUi,
-    contract: PlaylistDetailContract,
-) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                contract.deleteSong(track.id)
-                true
-            } else false
-        }
-    )
-
-    SwipeToDismissBox(
-        state = dismissState,
-        backgroundContent = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.error,
-                )
-            }
-        },
-        enableDismissFromStartToEnd = false,
-    ) {
-        TrackRow(
-            track = track,
-            onPlay = { contract.playFromSong(track.id) },
-            onDownload = { contract.downloadSong(track.id) },
-            onRetry = { contract.retryTrack(track.id) },
         )
     }
 }
