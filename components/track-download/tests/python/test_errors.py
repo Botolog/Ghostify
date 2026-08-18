@@ -42,14 +42,54 @@ class ErrorMappingTest(unittest.TestCase):
             g._kind_from_error_text("url - Generic: odd"), g.ErrorKind.UNKNOWN
         )
 
+    def test_kind_from_error_text_yt_dlp_patterns(self):
+        self.assertEqual(
+            g._kind_from_error_text(
+                "url - AudioProviderError: yt-dlp download error - https://youtube.com/v=x"
+            ),
+            g.ErrorKind.AUDIO_UNAVAILABLE,
+        )
+        self.assertEqual(
+            g._kind_from_error_text(
+                "url - AudioProviderError: HTTP Error 403: Forbidden"
+            ),
+            g.ErrorKind.AUDIO_UNAVAILABLE,
+        )
+        self.assertEqual(
+            g._kind_from_error_text(
+                "url - AudioProviderError: This video is not available"
+            ),
+            g.ErrorKind.AUDIO_UNAVAILABLE,
+        )
+        self.assertEqual(
+            g._kind_from_error_text("Some YouTube downloads require Deno"),
+            g.ErrorKind.AUDIO_UNAVAILABLE,
+        )
+        self.assertEqual(
+            g._kind_from_error_text(
+                "https://open.spotify.com/track/xxx - LookupError: No results found for song: X"
+            ),
+            g.ErrorKind.SEARCH_FAILED,
+        )
+
     def test_kind_for_exceptions(self):
         self.assertEqual(g._kind_for(OSError("x")), g.ErrorKind.IO)
-        self.assertEqual(
-            g._kind_for(KeyboardInterrupt()), g.ErrorKind.INTERRUPTED
-        )
+        self.assertEqual(g._kind_for(KeyboardInterrupt()), g.ErrorKind.INTERRUPTED)
         self.assertEqual(
             g._kind_for(TrackDownloadError(g.ErrorKind.NO_TRACK, "x")),
             g.ErrorKind.NO_TRACK,
+        )
+
+    def test_kind_for_spotdl_exception_types(self):
+        from spotdl.providers.audio.base import AudioProviderError
+
+        self.assertEqual(
+            g._kind_for(AudioProviderError("YT-DLP download error")),
+            g.ErrorKind.AUDIO_UNAVAILABLE,
+        )
+        self.assertEqual(
+            g._kind_for(LookupError("No results found for song")),
+            g.ErrorKind.SEARCH_FAILED,
         )
 
     def test_error_to_dict(self):
@@ -73,7 +113,9 @@ class ErrorMappingTest(unittest.TestCase):
 
     def test_extract_spotify_id(self):
         self.assertEqual(
-            g.extract_spotify_id("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?si=x"),
+            g.extract_spotify_id(
+                "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?si=x"
+            ),
             "4cOdK2wGLETKBW3PvgPWqT",
         )
         self.assertEqual(

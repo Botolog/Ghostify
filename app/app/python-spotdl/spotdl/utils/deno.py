@@ -27,6 +27,8 @@ __all__ = [
     "get_deno_path",
     "get_local_deno",
     "get_local_deno_yt_dlp_options",
+    "get_node_path",
+    "is_js_runtime_available",
     "warn_if_deno_missing",
     "download_deno",
 ]
@@ -119,30 +121,61 @@ def get_local_deno() -> Optional[Path]:
 
 def get_local_deno_yt_dlp_options() -> Dict[str, Dict[str, Dict[str, str]]]:
     """
-    Get yt-dlp options that point to spotDL's local Deno binary.
+    Get yt-dlp js_runtimes options for any available JavaScript runtime.
+
+    Checks for Deno (on PATH or in the spotdl config dir) first, then falls
+    back to Node.js (on PATH). A JS runtime is required by yt-dlp to process
+    YouTube's n-sig (throttling parameter) — without one, YouTube returns
+    HTTP 403 Forbidden for downloads.
 
     ### Returns
-    - yt-dlp js_runtimes options or an empty dict if local Deno is unavailable.
+    - yt-dlp js_runtimes options dict or an empty dict if no JS runtime is available.
     """
+    deno_path = get_deno_path()
+    if deno_path is not None and os.access(deno_path, os.X_OK):
+        return {"js_runtimes": {"deno": {"path": str(deno_path.absolute())}}}
 
-    local_deno = get_local_deno()
-    if local_deno is None or not os.access(local_deno, os.X_OK):
-        return {}
+    node_path = get_node_path()
+    if node_path is not None and os.access(node_path, os.X_OK):
+        return {"js_runtimes": {"node": {"path": str(node_path)}}}
 
-    return {"js_runtimes": {"deno": {"path": str(local_deno.absolute())}}}
+    return {}
+
+
+def get_node_path() -> Optional[str]:
+    """
+    Get path to a Node.js binary on PATH.
+
+    ### Returns
+    - Path to the node executable or None if not found.
+    """
+    return shutil.which("node") or shutil.which("nodejs")
+
+
+def is_js_runtime_available() -> bool:
+    """
+    Check if any JavaScript runtime (Deno or Node.js) is available.
+
+    ### Returns
+    - True if a JS runtime is available, False otherwise.
+    """
+    if is_deno_installed():
+        return True
+    return get_node_path() is not None
 
 
 def warn_if_deno_missing() -> None:
     """
-    Warn if Deno is unavailable for yt-dlp downloads.
+    Warn if no JavaScript runtime (Deno or Node.js) is available for yt-dlp downloads.
     """
 
-    if is_deno_installed():
+    if is_deno_installed() or get_node_path() is not None:
         return
 
     logger.warning(
-        "Some YouTube downloads require Deno. Run spotdl --download-deno "
-        "or install Deno system-wide."
+        "Some YouTube downloads require a JavaScript runtime (Deno or Node.js). "
+        "Install Deno system-wide or add Node.js (>=22) to PATH, e.g. via "
+        "`spotdl --download-deno` or your package manager."
     )
 
 
@@ -188,8 +221,7 @@ def download_deno() -> Path:
         response = getattr(error, "response", None)
         status_code = getattr(response, "status_code", "unknown")
         raise DenoError(
-            f"Failed to download Deno archive from {deno_url} "
-            f"(status: {status_code})."
+            f"Failed to download Deno archive from {deno_url} (status: {status_code})."
         ) from error
 
     deno_archive = archive_response.content
