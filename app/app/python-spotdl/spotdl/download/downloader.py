@@ -379,6 +379,10 @@ class Downloader:
         """
         Search for a song using all available providers.
 
+        If a provider raises an exception (e.g. AudioProviderError because a
+        candidate YouTube video is unavailable), the error is logged and the
+        next provider is tried instead of aborting the entire search.
+
         ### Arguments
         - song: The song to search for.
 
@@ -387,7 +391,18 @@ class Downloader:
         """
 
         for audio_provider in self.audio_providers:
-            url = audio_provider.search(song, self.settings["only_verified_results"])
+            try:
+                url = audio_provider.search(
+                    song, self.settings["only_verified_results"]
+                )
+            except Exception as exc:  # noqa: BLE001 - try next provider
+                logger.debug(
+                    "%s failed to find %s: %s",
+                    audio_provider.name,
+                    song.display_name,
+                    exc,
+                )
+                continue
             if url:
                 return url
 
@@ -616,8 +631,10 @@ class Downloader:
                     # Get the most recent duplicate song path and remove the rest
                     most_recent_duplicate = max(
                         dup_song_paths,
-                        key=lambda dup_song_path: dup_song_path.stat().st_mtime
-                        and dup_song_path.suffix == output_file.suffix,
+                        key=lambda dup_song_path: (
+                            dup_song_path.stat().st_mtime
+                            and dup_song_path.suffix == output_file.suffix
+                        ),
                     )
 
                     # Remove the rest of the duplicate song paths

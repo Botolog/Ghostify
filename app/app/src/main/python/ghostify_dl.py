@@ -928,6 +928,8 @@ _KNOWN_EXCEPTION_KINDS = {
     "SongNotFoundError": ErrorKind.SEARCH_FAILED,
     "SpotifyError": ErrorKind.METADATA_FAILED,
     "DownloaderError": ErrorKind.SEARCH_FAILED,
+    "AudioProviderError": ErrorKind.AUDIO_UNAVAILABLE,
+    "LookupError": ErrorKind.SEARCH_FAILED,
     "FFmpegError": ErrorKind.CONVERSION_FAILED,
     "MetadataError": ErrorKind.TAGGING_FAILED,
 }
@@ -961,6 +963,19 @@ def _kind_from_error_text(message: str) -> str:
         return ErrorKind.METADATA_FAILED
     if "ffmpeg" in lowered and "error" in lowered:
         return ErrorKind.CONVERSION_FAILED
+    # yt-dlp / YouTube download errors: video unavailable, age-restricted,
+    # geo-blocked, 403 forbidden, or a missing JS runtime (Deno/Node.js).
+    if (
+        "yt-dlp download error" in lowered
+        or "http error 403" in lowered
+        or "this video is not available" in lowered
+        or "age-restricted" in lowered
+        or "sign in to confirm" in lowered
+        or "region-blocked" in lowered
+        or "no supported javascript runtime" in lowered
+        or "require deno" in lowered
+    ):
+        return ErrorKind.AUDIO_UNAVAILABLE
     return ErrorKind.UNKNOWN
 
 
@@ -1046,7 +1061,7 @@ class TrackDownloader:
             "bitrate": self.bitrate,
             "overwrite": "skip",
             "scan_for_songs": False,
-            "audio_providers": audio_providers or ["youtube-music", "youtube"],
+            "audio_providers": audio_providers or ["youtube", "youtube-music"],
             "lyrics_providers": lyrics_providers or ["synced"],
             "ffmpeg": ffmpeg,
             "threads": 1,
