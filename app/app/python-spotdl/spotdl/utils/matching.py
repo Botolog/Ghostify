@@ -303,8 +303,9 @@ def calc_main_artist_match(song: Song, result: Result) -> float:
     if not result.artists:
         return main_artist_match
 
-    song_artists, result_artists = list(map(slugify, song.artists)), list(
-        map(slugify, result.artists)
+    song_artists, result_artists = (
+        list(map(slugify, song.artists)),
+        list(map(slugify, result.artists)),
     )
     sorted_song_artists, sorted_result_artists = based_sort(
         song_artists, result_artists
@@ -391,8 +392,9 @@ def calc_artists_match(song: Song, result: Result) -> float:
 
 def artists_match_fixup1(song: Song, result: Result, score: float) -> float:
     """
-    Multiple fixes to the artists score for
-    not verified results to improve the accuracy
+    Multiple fixes to the artists score to improve
+    the accuracy, especially when the result's artist
+    metadata is incomplete (e.g. only the main artist).
 
     ### Arguments
     - song: song to match
@@ -403,8 +405,8 @@ def artists_match_fixup1(song: Song, result: Result, score: float) -> float:
     - new score
     """
 
-    # If we have a verified result, we don't have to fix anything
-    if result.verified or score > 50:
+    # Don't fix if the score is already good enough
+    if score > 50:
         return score
 
     # If we didn't find any artist match,

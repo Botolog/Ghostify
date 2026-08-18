@@ -2,11 +2,15 @@ package com.ghostify.background
 
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Process
 import android.util.Log
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.ListenableFuture
 import com.ghostify.MainActivity
 import com.ghostify.R
 import com.ghostify.background.core.AudioFocusController
@@ -109,7 +113,25 @@ class PlaybackService : MediaSessionService() {
             })
 
             Timber.i("initSessionAndPlayer: calling PlaybackEngine.session(this, MainActivity)")
-            session = PlaybackEngine.session(this, MainActivity::class.java)
+            session = PlaybackEngine.session(this, MainActivity::class.java, object : MediaSession.Callback {
+                override fun onCustomCommand(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    customCommand: SessionCommand,
+                    args: android.os.Bundle,
+                ): ListenableFuture<SessionResult> {
+                    if (customCommand.customAction == PlaybackNotificationProvider.ACTION_SHUTDOWN) {
+                        Timber.i("PlaybackService: shutdown command received, killing process")
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        player?.stop()
+                        session?.release()
+                        Process.killProcess(Process.myPid())
+                    }
+                    return com.google.common.util.concurrent.Futures.immediateFuture(
+                        SessionResult(SessionResult.RESULT_SUCCESS)
+                    )
+                }
+            })
             Timber.i("initSessionAndPlayer: session created, assigning fields")
             player = p
             focusController = focus

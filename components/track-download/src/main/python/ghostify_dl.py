@@ -380,6 +380,7 @@ class TrackDownloader:
         ffmpeg: str = "ffmpeg",
         audio_providers: Optional[List[str]] = None,
         lyrics_providers: Optional[List[str]] = None,
+        yt_dlp_args: Optional[str] = None,
         max_filename_length: int = 255,
         temp_sweep_age: float = DEFAULT_TEMP_SWEEP_AGE,
         duration_tolerance: float = DEFAULT_DURATION_TOLERANCE,
@@ -407,8 +408,10 @@ class TrackDownloader:
             "bitrate": self.bitrate,
             "overwrite": "skip",
             "scan_for_songs": False,
-            "audio_providers": audio_providers or ["youtube", "youtube-music"],
+            "audio_providers": audio_providers or ["youtube-music", "youtube"],
             "lyrics_providers": lyrics_providers or ["synced"],
+            "yt_dlp_args": yt_dlp_args
+            or "--extractor-args youtube:player_client=android",
             "ffmpeg": ffmpeg,
             "threads": 1,
             "filter_results": True,
@@ -891,6 +894,7 @@ def make_downloader(
     ffmpeg: str = "ffmpeg",
     audio_providers: Optional[List[str]] = None,
     lyrics_providers: Optional[List[str]] = None,
+    yt_dlp_args: Optional[str] = None,
     **kwargs: Any,
 ) -> TrackDownloader:
     """Build a :class:`TrackDownloader`.
@@ -908,6 +912,7 @@ def make_downloader(
         ffmpeg=ffmpeg,
         audio_providers=audio_providers,
         lyrics_providers=lyrics_providers,
+        yt_dlp_args=yt_dlp_args,
         **kwargs,
     )
 

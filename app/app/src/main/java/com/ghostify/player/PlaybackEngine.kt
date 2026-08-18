@@ -49,8 +49,16 @@ object PlaybackEngine {
      * Returns THE [MediaSession], built on the shared player. [sessionActivityClass]
      * is only used the first time the session is created; later calls are no-ops for
      * the activity because the session already exists.
+     *
+     * [callback] is set during the first creation only; callers that need a
+     * callback must supply it on the first call (the MediaSession.Builder API
+     * requires the callback to be set before `build()`).
      */
-    fun session(context: Context, sessionActivityClass: Class<*>?): MediaSession {
+    fun session(
+        context: Context,
+        sessionActivityClass: Class<*>?,
+        callback: MediaSession.Callback? = null,
+    ): MediaSession {
         Timber.i("PlaybackEngine.session: called, existing=${session != null}")
         session?.let { return it }
         val appContext = context.applicationContext
@@ -67,7 +75,10 @@ object PlaybackEngine {
             session ?: run {
                 Timber.i("PlaybackEngine.session: building MediaSession with player")
                 val s = MediaSession.Builder(appContext, exoPlayer(context))
-                    .apply { sessionActivity?.let(::setSessionActivity) }
+                    .apply {
+                        sessionActivity?.let(::setSessionActivity)
+                        callback?.let { setCallback(it) }
+                    }
                     .build()
                 session = s
                 Timber.i("PlaybackEngine.session: MediaSession built OK")
