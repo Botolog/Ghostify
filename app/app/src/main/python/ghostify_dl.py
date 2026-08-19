@@ -862,6 +862,13 @@ def _is_spotify_url(url: str) -> bool:
     return "open.spotify.com" in url or url.startswith("spotify:")
 
 
+def _is_youtube_playlist_url(url: str) -> bool:
+    """Detect YouTube playlist URLs (both ``.com`` and music variants)."""
+    if not isinstance(url, str):
+        return False
+    return "youtube.com/playlist?list=" in url or "youtu.be/playlist?list=" in url
+
+
 def sanitize_filename(name: str, separator: str = "-") -> str:
     """Return a filesystem-safe file *name* (no path separators)."""
     if not isinstance(name, str):
@@ -1101,6 +1108,8 @@ class TrackDownloader:
         """Resolve *url* into fully-populated Song objects (Spotify metadata)."""
         from spotdl.utils.search import parse_query
 
+        if _is_youtube_playlist_url(url):
+            return self._search_youtube_playlist(url)
         return parse_query(
             query=[_normalize_spotify_url(url)],
             threads=self._downloader.settings["threads"],
@@ -1111,6 +1120,54 @@ class TrackDownloader:
                 "playlist_retain_track_cover"
             ],
         )
+
+    def _search_youtube_playlist(self, url: str) -> List[Any]:
+        """Resolve a YouTube playlist URL into Song objects via yt-dlp.
+
+        Falls back to direct yt-dlp extraction when ytmusicapi (used by
+        spotdl's ``parse_query``) cannot resolve the playlist.
+        """
+        yt_dlp_args = self._downloader.settings.get("yt_dlp_args") or ""
+        yt_opts: Dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+        }
+        if yt_dlp_args:
+            from spotdl.utils.formatter import args_to_ytdlp_options
+            import shlex
+
+            yt_opts = args_to_ytdlp_options(shlex.split(yt_dlp_args), yt_opts)
+
+        songs: List[Any] = []
+        from yt_dlp import YoutubeDL  # local import: only needed for YouTube playlists
+        from spotdl.types.song import Song
+
+        with YoutubeDL(yt_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info or not info.get("entries"):
+                return songs
+            for entry in info["entries"]:
+                if not entry:
+                    continue
+                video_id = entry.get("id")
+                if not video_id:
+                    continue
+                title = entry.get("title") or entry.get("description") or ""
+                artist = entry.get("uploader") or "Unknown Artist"
+                watch_url = f"https://www.youtube.com/watch?v={video_id}"
+                song = Song.from_missing_data(
+                    name=title,
+                    artist=artist,
+                    artists=[artist],
+                    song_id=video_id,
+                    duration=entry.get("duration") or 0,
+                    url=watch_url,
+                    download_url=watch_url,
+                )
+                songs.append(song)
+        return songs
 
     def _template_joined(self) -> str:
         template = self.output_template
@@ -1318,6 +1375,25 @@ class TrackDownloader:
             raise TrackDownloadError(ErrorKind.NO_TRACK, f"No track found for: {url}")
         song = songs[0]
 
+        return self._download_song(
+            song, url, on_start, on_complete, self._active_progress, result
+        )
+
+    def _download_song(
+        self,
+        song: Any,
+        url: str,
+        on_start: Any,
+        on_complete: Any,
+        active_progress: Any,
+        result_fn: Any,
+    ) -> Dict[str, Any]:
+        """Shared download pipeline for a pre-resolved song.
+
+        Used by both :meth:`download` (single-track) and
+        :meth:`download_playlist` (YouTube playlist) so the exact same
+        validation, sidecar, and cleanup logic applies to every track.
+        """
         # 3) Canonical identity re-check now that we know the real URL.
         hit = self._find_sidecar(song.song_id, song.url)
         if hit is not None:
@@ -1328,13 +1404,15 @@ class TrackDownloader:
                 except (OSError, ValueError):
                     info = {}
                 _fire(on_start, _track_dict(song))
-                _fire(on_complete, result("SKIPPED", str(mp3), song=song, track=info))
-                return result("SKIPPED", str(mp3), song=song, track=info)
+                _fire(
+                    on_complete, result_fn("SKIPPED", str(mp3), song=song, track=info)
+                )
+                return result_fn("SKIPPED", str(mp3), song=song, track=info)
 
         expected = self._output_path_for_song(song)
         existed_before = expected.exists()
 
-        _fire(self._active_progress, 0, "Preparing")
+        _fire(active_progress, 0, "Preparing")
         _fire(on_start, _track_dict(song))
 
         before = self._snapshot_temp()
@@ -1368,8 +1446,95 @@ class TrackDownloader:
         self._write_sidecar(song, path)
 
         # 7) Download complete.
-        _fire(on_complete, result("DOWNLOADED", str(path), song=song))
-        return result("DOWNLOADED", str(path), song=song)
+        _fire(on_complete, result_fn("DOWNLOADED", str(path), song=song))
+        return result_fn("DOWNLOADED", str(path), song=song)
+
+    # -- playlist -------------------------------------------------------------- #
+
+    def download_playlist(
+        self,
+        url: str,
+        on_start: Any = None,
+        on_complete: Any = None,
+        on_progress: Any = None,
+    ) -> List[Dict[str, Any]]:
+        """Download every track from a YouTube playlist URL."""
+        if not isinstance(url, str) or not url.strip():
+            raise TrackDownloadError(ErrorKind.NO_TRACK, "Empty playlist URL")
+        url = url.strip()
+        if not _is_youtube_playlist_url(url):
+            raise TrackDownloadError(
+                ErrorKind.NO_TRACK,
+                f"Expected a YouTube playlist URL, got: {url}",
+            )
+
+        on_start = _as_callable(on_start, _START_NAMES)
+        on_complete = _as_callable(on_complete, _COMPLETE_NAMES)
+        self._active_progress = _as_callable(on_progress, _PROGRESS_NAMES)
+
+        try:
+            songs = self._search(url)
+        except Exception as exc:  # noqa: BLE001
+            raise TrackDownloadError(
+                _kind_for(exc), f"Could not resolve playlist metadata for {url}: {exc}"
+            ) from exc
+
+        if not songs:
+            raise TrackDownloadError(
+                ErrorKind.NO_TRACK, f"No tracks found in playlist: {url}"
+            )
+
+        def playlist_result(
+            status: str,
+            output_path: Optional[str] = None,
+            song: Optional[Any] = None,
+            track: Optional[Dict[str, Any]] = None,
+            error: Optional[str] = None,
+            kind: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            payload: Dict[str, Any] = {
+                "status": status,
+                "url": url,
+                "position": song.song_id if song else None,
+            }
+            payload.update(_track_dict(song) if song is not None else (track or {}))
+            payload["output_path"] = output_path
+            payload["bitrate"] = self.bitrate
+            if output_path and os.path.exists(output_path):
+                try:
+                    payload["file_size"] = os.path.getsize(output_path)
+                except OSError:
+                    payload["file_size"] = None
+            else:
+                payload["file_size"] = None
+            payload["error_type"] = kind
+            payload["error"] = error
+            return payload
+
+        _fire(on_start, {"status": "PLAYLIST", "url": url, "track_count": len(songs)})
+
+        results: List[Dict[str, Any]] = []
+        for song in songs:
+            try:
+                entry = self._download_song(
+                    song,
+                    song.url,
+                    on_start,
+                    on_complete,
+                    self._active_progress,
+                    playlist_result,
+                )
+            except TrackDownloadError as exc:
+                entry = playlist_result(
+                    "FAILED", song=song, error=str(exc), kind=exc.kind
+                )
+            results.append(entry)
+
+        _fire(
+            on_complete,
+            {"status": "PLAYLIST_DONE", "url": url, "track_count": len(results)},
+        )
+        return results
 
     def _remove_failed_artifact(
         self, path: Optional[Path], existed_before: bool
@@ -1525,6 +1690,23 @@ def download(
             "downloader must be a TrackDownloader (create it with make_downloader)"
         )
     return downloader.download(
+        url, on_start=on_start, on_complete=on_complete, on_progress=on_progress
+    )
+
+
+def download_playlist(
+    downloader: TrackDownloader,
+    url: str,
+    on_start: Any = None,
+    on_complete: Any = None,
+    on_progress: Any = None,
+) -> List[Dict[str, Any]]:
+    """Download all tracks from a YouTube playlist via an existing downloader."""
+    if not isinstance(downloader, TrackDownloader):
+        raise TypeError(
+            "downloader must be a TrackDownloader (create it with make_downloader)"
+        )
+    return downloader.download_playlist(
         url, on_start=on_start, on_complete=on_complete, on_progress=on_progress
     )
 

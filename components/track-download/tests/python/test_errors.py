@@ -137,6 +137,39 @@ class ErrorMappingTest(unittest.TestCase):
             td.download("   ")
         self.assertEqual(ctx.exception.kind, g.ErrorKind.NO_TRACK)
 
+    def test_youtube_playlist_url_detection(self):
+        self.assertTrue(
+            g._is_youtube_playlist_url("https://youtube.com/playlist?list=PLabc")
+        )
+        self.assertTrue(
+            g._is_youtube_playlist_url("https://www.youtube.com/playlist?list=PLabc")
+        )
+        self.assertTrue(
+            g._is_youtube_playlist_url("https://youtu.be/playlist?list=PLabc")
+        )
+        self.assertFalse(g._is_youtube_playlist_url("https://youtube.com/watch?v=abc"))
+        self.assertFalse(
+            g._is_youtube_playlist_url("https://open.spotify.com/track/abc")
+        )
+        self.assertFalse(g._is_youtube_playlist_url("spotify:track:abc"))
+        self.assertFalse(g._is_youtube_playlist_url(""))
+        self.assertFalse(g._is_youtube_playlist_url(None))
+
+    def test_download_playlist_rejects_non_youtube_url(self):
+        td = make_downloader(fixtures.temp_output_dir(), bitrate=128)
+        with self.assertRaises(TrackDownloadError) as ctx:
+            td.download_playlist("https://open.spotify.com/track/abc")
+        self.assertEqual(ctx.exception.kind, g.ErrorKind.NO_TRACK)
+
+    def test_download_playlist_rejects_empty_url(self):
+        td = make_downloader(fixtures.temp_output_dir(), bitrate=128)
+        with self.assertRaises(TrackDownloadError) as ctx:
+            td.download_playlist("   ")
+        self.assertEqual(ctx.exception.kind, g.ErrorKind.NO_TRACK)
+
+    def test_download_playlist_api_in_all(self):
+        self.assertIn("download_playlist", g.__all__)
+
 
 if __name__ == "__main__":
     unittest.main()
