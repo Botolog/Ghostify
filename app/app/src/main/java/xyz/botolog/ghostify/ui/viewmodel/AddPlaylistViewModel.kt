@@ -161,6 +161,10 @@ class AddPlaylistViewModel(
                 if (settings.getAutoDownload()) {
                     downloads.downloadAll(playlistEntityId)
                 }
+                _state.value = AddPlaylistUiState()
+                fetchedPlaylistId = null
+                fetchedMetadata = null
+                fetchedOrigin = PlaylistOrigin.SPOTIFY
                 onClosed()
             } catch (e: Exception) {
                 Timber.e(e, "AddPlaylistViewModel.onSave: FAILED")
@@ -173,6 +177,10 @@ class AddPlaylistViewModel(
 
     override fun onDismiss() {
         Timber.i("AddPlaylistViewModel.onDismiss: START")
+        _state.value = AddPlaylistUiState()
+        fetchedPlaylistId = null
+        fetchedMetadata = null
+        fetchedOrigin = PlaylistOrigin.SPOTIFY
         onClosed()
     }
 }
