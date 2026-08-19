@@ -1,5 +1,6 @@
 package com.ghostify.ui.contract
 
+import com.ghostify.data.model.PlaylistOrigin
 import com.ghostify.ui.model.PlaylistPreview
 import kotlinx.coroutines.flow.StateFlow
 
@@ -8,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * The dialog performs first-line URL validation locally (see
  * [com.ghostify.ui.util.PlaylistUrlValidator]) and only calls [fetch] with a validated
- * playlist id; the contract owns the fetch / preview / save flow.
+ * playlist id + origin; the contract owns the fetch / preview / save flow.
  */
 interface AddPlaylistContract {
 
@@ -16,8 +17,8 @@ interface AddPlaylistContract {
 
     fun onUrlChange(url: String)
 
-    /** Validated id obtained from the URL. */
-    fun fetch(playlistId: String)
+    /** Validated id (Spotify id or YouTube URL) obtained from the URL. */
+    fun fetch(playlistId: String, origin: PlaylistOrigin)
 
     fun onSave()
 
@@ -25,6 +26,7 @@ interface AddPlaylistContract {
 
     data class AddPlaylistUiState(
         val url: String = "",
+        val origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
         val isFetching: Boolean = false,
         val preview: PlaylistPreview? = null,
         /** Readable fetch error (private / network / not found). */

@@ -5,6 +5,7 @@ import com.ghostify.data.db.dao.PlaylistDao
 import com.ghostify.data.db.dao.SongDao
 import com.ghostify.data.db.entity.PlaylistEntity
 import com.ghostify.data.db.entity.SongEntity
+import com.ghostify.data.model.PlaylistOrigin
 import kotlinx.coroutines.flow.Flow
 import timber.log.Timber
 
@@ -48,11 +49,25 @@ class PlaylistRepository(
         return result
     }
 
-    /** Looks a saved playlist up by its Spotify id (used by the Add-dialog duplicate check). */
+    /**
+     * Looks a saved Spotify playlist up by its id (used by the Add-dialog
+     * duplicate check). Only matches Spotify-origin rows.
+     */
     suspend fun getBySpotifyId(spotifyId: String): PlaylistEntity? {
         Timber.i("PlaylistRepository.getBySpotifyId: START")
         val result = playlistDao.getBySpotifyId(spotifyId)
         Timber.i("PlaylistRepository.getBySpotifyId: returning $result")
+        return result
+    }
+
+    /**
+     * Looks a saved YouTube playlist up by its URL (used by the Add-dialog
+     * duplicate check). Only matches YouTube-origin rows.
+     */
+    suspend fun getByYtPlaylistId(ytPlaylistId: String): PlaylistEntity? {
+        Timber.i("PlaylistRepository.getByYtPlaylistId: START")
+        val result = playlistDao.getByYtPlaylistId(ytPlaylistId)
+        Timber.i("PlaylistRepository.getByYtPlaylistId: returning $result")
         return result
     }
 
@@ -72,15 +87,24 @@ class PlaylistRepository(
      * The "Add playlist" flow: persist the playlist header and its full track list
      * atomically. `track_count` is derived from the batch, never trusted from callers.
      *
-     * Saving the same Spotify playlist again is idempotent — the previous copy is
-     * removed inside the same transaction so `spotify_id` UNIQUE never trips.
+     * Saving the same playlist again is idempotent — the previous copy is removed
+     * inside the same transaction so the unique `(spotify_id, origin)` index never
+     * trips.
      */
     suspend fun savePlaylistWithSongs(playlist: PlaylistEntity, songs: List<SongEntity>) {
         Timber.i("PlaylistRepository.savePlaylistWithSongs: START")
         transactions.withinTransaction {
-            playlistDao.getBySpotifyId(playlist.spotifyId)?.let { existing ->
-                songDao.deleteSongsForPlaylist(existing.id)
-                playlistDao.deleteById(existing.id)
+            when (playlist.origin) {
+                PlaylistOrigin.SPOTIFY ->
+                    playlistDao.getBySpotifyId(playlist.spotifyId)?.let { existing ->
+                        songDao.deleteSongsForPlaylist(existing.id)
+                        playlistDao.deleteById(existing.id)
+                    }
+                PlaylistOrigin.YOUTUBE ->
+                    playlistDao.getByYtPlaylistId(playlist.spotifyId)?.let { existing ->
+                        songDao.deleteSongsForPlaylist(existing.id)
+                        playlistDao.deleteById(existing.id)
+                    }
             }
             playlistDao.insert(playlist.copy(trackCount = songs.size))
             songDao.insertAll(songs)

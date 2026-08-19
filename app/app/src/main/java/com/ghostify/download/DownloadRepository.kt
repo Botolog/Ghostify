@@ -14,6 +14,8 @@ data class SongRecord(
     val status: DownloadStatus,
     val filePath: String? = null,
     val error: String? = null,
+    /** Resolved YouTube id for this track (YouTube-origin tracks have this set to the video id). */
+    val ytId: String? = null,
 )
 
 /** The subset of the Room `playlists` row the download manager needs. */

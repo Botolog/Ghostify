@@ -80,7 +80,7 @@ fun AddPlaylistDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag(AddPlaylistTestTags.URL_FIELD),
-                    placeholder = { Text("Paste a Spotify playlist link") },
+                    placeholder = { Text("Enter a playlist link") },
                     singleLine = true,
                     isError = urlError != null,
                     supportingText = {
@@ -139,7 +139,7 @@ fun AddPlaylistDialog(
                             is PlaylistUrlResult.Invalid -> urlError = result.message
                             is PlaylistUrlResult.Valid -> {
                                 urlError = null
-                                contract.fetch(result.playlistId)
+                                contract.fetch(result.playlistId, result.origin)
                             }
                         }
                     },

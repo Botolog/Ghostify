@@ -8,6 +8,7 @@ import com.ghostify.ui.contract.SettingsContract
 import com.ghostify.ui.model.Bitrate
 import com.ghostify.ui.model.CacheStats
 import com.ghostify.ui.model.NowPlaying
+import com.ghostify.data.model.PlaylistOrigin
 import com.ghostify.ui.model.PlaylistUi
 import com.ghostify.ui.model.QueueItem
 import com.ghostify.ui.model.TrackUi
@@ -44,14 +45,16 @@ class FakeAddPlaylistContract : AddPlaylistContract {
         MutableStateFlow(AddPlaylistContract.AddPlaylistUiState())
 
     val fetchedIds = mutableListOf<String>()
+    val fetchedOrigins = mutableListOf<PlaylistOrigin>()
     val saveClicks = mutableListOf<Unit>()
 
     override fun onUrlChange(url: String) {
         state.update { it.copy(url = url) }
     }
 
-    override fun fetch(playlistId: String) {
+    override fun fetch(playlistId: String, origin: PlaylistOrigin) {
         fetchedIds += playlistId
+        fetchedOrigins += origin
     }
 
     override fun onSave() {
@@ -233,6 +236,7 @@ object Fixtures {
         trackCount = trackCount,
         downloadedCount = downloaded,
         status = status,
+        origin = PlaylistOrigin.SPOTIFY,
         progressPercent = progress,
         lastSyncedAt = lastSyncedAt,
     )

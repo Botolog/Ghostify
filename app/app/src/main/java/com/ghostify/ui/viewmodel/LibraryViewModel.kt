@@ -106,6 +106,7 @@ class LibraryViewModel(
             trackCount = p.trackCount,
             downloadedCount = downloaded,
             status = if (running) UiPlaylistStatus.DOWNLOADING else p.status.toUi(),
+            origin = p.origin,
             progressPercent = if (running) progress.overallPercent.toInt() else null,
             lastSyncedAt = p.lastSyncedAt,
         )

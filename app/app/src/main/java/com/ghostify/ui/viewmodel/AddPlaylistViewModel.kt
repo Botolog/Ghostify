@@ -2,6 +2,7 @@ package com.ghostify.ui.viewmodel
 
 import com.ghostify.data.db.entity.PlaylistEntity
 import com.ghostify.data.db.entity.SongEntity
+import com.ghostify.data.model.PlaylistOrigin
 import com.ghostify.data.model.PlaylistStatus
 import com.ghostify.data.model.SongStatus
 import com.ghostify.data.repo.PlaylistRepository
@@ -26,8 +27,8 @@ import timber.log.Timber
  * preview -> save. No downloads happen here unless auto-download is on.
  *
  * The dialog performs first-line URL validation and only calls [fetch] with a
- * validated playlist id; this VM owns the fetch / preview / save flow and the
- * duplicate warning.
+ * validated playlist id + origin; this VM owns the fetch / preview / save flow
+ * and the duplicate warning.
  */
 class AddPlaylistViewModel(
     private val validator: (String) -> PlaylistUrlResult,
@@ -42,19 +43,24 @@ class AddPlaylistViewModel(
     private val _state = MutableStateFlow(AddPlaylistUiState())
     override val state: StateFlow<AddPlaylistUiState> = _state.asStateFlow()
 
-    /** Spotify id the current preview was fetched for. */
-    private var fetchedSpotifyId: String? = null
+    /** Spotify id / YouTube URL the current preview was fetched for. */
+    private var fetchedPlaylistId: String? = null
+
+    /** Origin of the current preview. */
+    private var fetchedOrigin: PlaylistOrigin = PlaylistOrigin.SPOTIFY
 
     /** Full metadata of the current preview, kept for the save step. */
     private var fetchedMetadata: PlaylistMetadata? = null
 
     override fun onUrlChange(url: String) {
         Timber.i("AddPlaylistViewModel.onUrlChange: START")
-        fetchedSpotifyId = null
+        fetchedPlaylistId = null
         fetchedMetadata = null
+        fetchedOrigin = PlaylistOrigin.SPOTIFY
         _state.update {
             it.copy(
                 url = url,
+                origin = PlaylistOrigin.SPOTIFY,
                 isFetching = false,
                 preview = null,
                 fetchError = null,
@@ -64,13 +70,15 @@ class AddPlaylistViewModel(
         }
     }
 
-    override fun fetch(playlistId: String) {
-        Timber.i("AddPlaylistViewModel.fetch: START")
+    override fun fetch(playlistId: String, origin: PlaylistOrigin) {
+        Timber.i("AddPlaylistViewModel.fetch: START id=$playlistId origin=$origin")
         if (_state.value.isFetching) return
+        fetchedOrigin = origin
         launch {
             _state.update {
                 it.copy(
                     isFetching = true,
+                    origin = origin,
                     fetchError = null,
                     preview = null,
                     duplicateWarning = null,
@@ -78,7 +86,7 @@ class AddPlaylistViewModel(
                 )
             }
             val result = withContext(Dispatchers.IO) {
-                bridge.fetchPlaylistBlocking(playlistId)
+                bridge.fetchPlaylistBlocking(playlistId, origin)
             }
             when (result) {
                 is PlaylistFetchResult.Success -> onFetchSuccess(playlistId, result.metadata)
@@ -98,10 +106,13 @@ class AddPlaylistViewModel(
         }
     }
 
-    private suspend fun onFetchSuccess(spotifyId: String, metadata: PlaylistMetadata) {
-        fetchedSpotifyId = spotifyId
+    private suspend fun onFetchSuccess(playlistId: String, metadata: PlaylistMetadata) {
+        fetchedPlaylistId = playlistId
         fetchedMetadata = metadata
-        val duplicate = repo.getBySpotifyId(spotifyId) != null
+        val duplicate = when (fetchedOrigin) {
+            PlaylistOrigin.SPOTIFY -> repo.getBySpotifyId(playlistId) != null
+            PlaylistOrigin.YOUTUBE -> repo.getByYtPlaylistId(playlistId) != null
+        }
         _state.update {
             it.copy(
                 isFetching = false,
@@ -115,25 +126,26 @@ class AddPlaylistViewModel(
     override fun onSave() {
         Timber.i("AddPlaylistViewModel.onSave: START")
         val metadata = fetchedMetadata ?: return
-        val spotifyId = fetchedSpotifyId ?: return
+        val playlistId = fetchedPlaylistId ?: return
         if (_state.value.isFetching) return
         launch {
             try {
-                val playlistId = newId()
+                val playlistEntityId = newId()
                 val playlist = PlaylistEntity(
-                    id = playlistId,
-                    spotifyId = spotifyId,
+                    id = playlistEntityId,
+                    spotifyId = if (fetchedOrigin == PlaylistOrigin.YOUTUBE) playlistId else playlistId,
                     name = metadata.name,
                     owner = metadata.owner,
                     coverUrl = metadata.coverUrl,
                     trackCount = metadata.trackCount,
                     status = PlaylistStatus.NEW,
                     createdAt = System.currentTimeMillis(),
+                    origin = fetchedOrigin,
                 )
                 val songs = metadata.tracks.map { t ->
                     SongEntity(
                         id = newId(),
-                        playlistId = playlistId,
+                        playlistId = playlistEntityId,
                         spotifyId = t.spotifyId,
                         title = t.title,
                         artists = t.artists,
@@ -147,7 +159,7 @@ class AddPlaylistViewModel(
                 }
                 repo.savePlaylistWithSongs(playlist, songs)
                 if (settings.getAutoDownload()) {
-                    downloads.downloadAll(playlistId)
+                    downloads.downloadAll(playlistEntityId)
                 }
                 onClosed()
             } catch (e: Exception) {

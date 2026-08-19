@@ -17,14 +17,17 @@ import timber.log.Timber
  *      - the `settings` key/value table.
  * v3 — adds `songs.error` (last download failure reason, consumed by the
  *      download manager's retry UI).
+ * v4 — adds `playlists.sort_order` for user-defined sort position.
+ * v5 — adds `playlists.origin` (Spotify / YouTube) and changes the unique
+ *      index on `spotify_id` to `(spotify_id, origin)` so the same id can
+ *      appear once per origin.
  *
  * The migration is a single Room transaction, so it is atomic: if any step fails
  * SQLite rolls the whole upgrade back and the database is left at the previous
  * version.
  *
- * The statements are kept in one place ([MIGRATION_1_2_STATEMENTS],
- * [MIGRATION_2_3_STATEMENTS]) so the Room [Migration] and the JVM (sqlite-jdbc)
- * migration test share the exact same SQL.
+ * The statements are kept in one place ([MIGRATION_*_STATEMENTS]) so the Room
+ * [Migration] and the JVM (sqlite-jdbc) migration test share the exact same SQL.
  */
 object Migrations {
 
@@ -73,5 +76,22 @@ object Migrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+    /** The v4 -> v5 DDL. Adds `origin` column and remaps the unique index. */
+    val MIGRATION_4_5_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE playlists ADD COLUMN origin TEXT NOT NULL DEFAULT 'SPOTIFY'",
+        // Drop the old single-column unique index and recreate as (spotify_id, origin).
+        "DROP INDEX index_playlists_spotify_id",
+        "CREATE UNIQUE INDEX index_playlists_spotify_id_origin ON playlists (spotify_id, origin)",
+    )
+
+    val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_4_5.migrate")
+            MIGRATION_4_5_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(
+        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5
+    )
 }

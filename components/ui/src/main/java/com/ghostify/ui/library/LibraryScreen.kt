@@ -34,6 +34,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.ghostify.ui.contract.LibraryContract
 import com.ghostify.ui.contract.LibraryContract.LibraryUiState
+import com.ghostify.ui.model.PlaylistOrigin
 import com.ghostify.ui.model.PlaylistUi
 import com.ghostify.ui.util.ProgressBadge
 import com.ghostify.ui.util.TimeFormat
@@ -176,6 +178,20 @@ private fun PlaylistRow(
     onClick: () -> Unit,
     now: () -> Long,
 ) {
+    val originTint = when (playlist.origin) {
+        PlaylistOrigin.SPOTIFY -> Color(0x0834E876)
+        PlaylistOrigin.YOUTUBE -> Color(0x08E53935)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(originTint)
+            .testTag(LibraryTestTags.item(playlist.id))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

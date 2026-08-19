@@ -13,6 +13,9 @@ enum class PlaylistStatus { NEW, READY, DOWNLOADING, ERROR }
 
 enum class SongStatus { PENDING, QUEUED, DOWNLOADING, DOWNLOADED, FAILED }
 
+/** Where a playlist was fetched from — drives UI tinting. */
+enum class PlaylistOrigin { SPOTIFY, YOUTUBE }
+
 /** A playlist row on the Library screen. */
 data class PlaylistUi(
     val id: String,
@@ -22,63 +25,10 @@ data class PlaylistUi(
     val trackCount: Int,
     val downloadedCount: Int,
     val status: PlaylistStatus,
+    /** Origin of the playlist (Spotify / YouTube) — drives row tinting. */
+    val origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
     /** Explicit overall download progress (0..100) emitted by the download flow, if in flight. */
     val progressPercent: Int? = null,
     /** Epoch ms; null = never synced. */
     val lastSyncedAt: Long? = null,
 )
-
-/** A single track row on the Playlist detail screen. */
-data class TrackUi(
-    val id: String,
-    val spotifyId: String,
-    val title: String,
-    val artists: String,
-    val album: String,
-    val durationMs: Long,
-    val status: SongStatus,
-    val position: Int,
-)
-
-/** Metadata preview shown in the Add-playlist dialog before saving. */
-data class PlaylistPreview(
-    val name: String,
-    val owner: String,
-    val coverUrl: String?,
-    val trackCount: Int,
-)
-
-/** A single item in the Player's queue drawer. */
-data class QueueItem(
-    val title: String,
-    val artist: String,
-    val durationMs: Long,
-    val isCurrent: Boolean = false,
-)
-
-/** The now-playing track on the Player screen. */
-data class NowPlaying(
-    val title: String,
-    val artist: String,
-    val album: String,
-    val coverUrl: String?,
-)
-
-/** Cache stats shown on the Settings screen. */
-data class CacheStats(
-    val fileCount: Int,
-    val sizeBytes: Long,
-) {
-    val sizeText: String
-        get() {
-            val mb = sizeBytes / (1024.0 * 1024.0)
-            return if (mb >= 1) "%.1f MB".format(mb) else "${sizeBytes / 1024} KB"
-        }
-}
-
-/** Download bitrate options (kbps). */
-enum class Bitrate(val kbps: Int, val label: String) {
-    LOW(128, "128 kbps"),
-    MEDIUM(192, "192 kbps"),
-    HIGH(320, "320 kbps"),
-}

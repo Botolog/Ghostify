@@ -101,6 +101,7 @@ class RoomDownloadRepository(
         status = status.toDownloadStatus(),
         filePath = filePath,
         error = error,
+        ytId = ytId,
     )
 }
 

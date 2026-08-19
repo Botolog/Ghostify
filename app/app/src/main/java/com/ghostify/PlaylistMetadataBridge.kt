@@ -3,6 +3,7 @@ package com.ghostify.python
 import com.chaquo.python.PyException
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
+import com.ghostify.data.model.PlaylistOrigin
 import timber.log.Timber
 
 /**
@@ -10,7 +11,8 @@ import timber.log.Timber
  *
  * Responsibilities
  * ----------------
- * 1. Invoke `ghostify_dl.fetch_playlist(spotify_id, options)`.
+ * 1. Invoke `ghostify_dl.fetch_playlist(spotify_id, options)` for Spotify playlists,
+ *    or `ghostify_dl.fetch_playlist_youtube(url, options)` for YouTube playlists.
  * 2. Convert the Python result dict into the typed [PlaylistMetadata] model.
  * 3. Map every Python-side failure to a [PlaylistFetchError] — never a raw
  *    crash (T-021). Python raises `GhostifyError` whose message is
@@ -32,20 +34,28 @@ class PlaylistMetadataBridge(
 ) {
 
     /**
-     * Fetches playlist metadata. Never throws: every outcome is a
-     * [PlaylistFetchResult].
+     * Fetches playlist metadata for the given id / URL and origin.
+     * Never throws: every outcome is a [PlaylistFetchResult].
      *
-     * @param spotifyId playlist id, `open.spotify.com/playlist/...` URL or
-     *   `spotify:playlist:...` URI.
+     * @param playlistId playlist id (Spotify) or playlist URL (YouTube).
+     * @param origin where the playlist originated from.
      */
-    fun fetchPlaylistBlocking(spotifyId: String): PlaylistFetchResult {
-        Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: START spotifyId=$spotifyId")
+    fun fetchPlaylistBlocking(
+        playlistId: String,
+        origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
+    ): PlaylistFetchResult {
+        val pythonFn = if (origin == PlaylistOrigin.YOUTUBE) {
+            "fetch_playlist_youtube"
+        } else {
+            "fetch_playlist"
+        }
+        Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: START id=$playlistId origin=$origin fn=$pythonFn")
         synchronized(this) {
             return try {
                 val python = Python.getInstance()
                 val module = python.getModule(moduleName)
                 val result = module.callAttr(
-                    "fetch_playlist", spotifyId, toPyOptions(python, options)
+                    pythonFn, playlistId, toPyOptions(python, options)
                 )
                 val parsed = parseSuccess(result)
                 Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: returning $parsed")

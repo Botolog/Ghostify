@@ -47,7 +47,7 @@ class AddPlaylistDialogTest {
 
         rule.onNodeWithTag(AddPlaylistTestTags.URL_ERROR)
             .assertIsDisplayed()
-        rule.onNodeWithText("That doesn't look like a Spotify link").assertIsDisplayed()
+        rule.onNodeWithText("That doesn't look like a Spotify or YouTube link").assertIsDisplayed()
         assertTrue(contract.fetchedIds.isEmpty())
     }
 

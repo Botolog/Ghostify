@@ -1,7 +1,10 @@
 package com.ghostify.python
 
+import com.ghostify.data.model.PlaylistOrigin
+
 /**
- * Full metadata for a Spotify playlist, as returned by the Python bridge.
+ * Full metadata for a playlist (Spotify or YouTube), as returned by the
+ * Python bridge.
  *
  * Mirrors the Room `playlists` + `songs` tables (PROJECT.md §4): the app saves
  * [tracks] in order and uses `spotifyId` as the authoritative track identity.
@@ -12,11 +15,13 @@ data class PlaylistMetadata(
     val coverUrl: String?,
     val description: String?,
     val trackCount: Int,
-    val tracks: List<PlaylistTrack>
+    val tracks: List<PlaylistTrack>,
+    val origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
 ) {
     companion object {
         /**
-         * Parses the wire dict returned by `ghostify_dl.fetch_playlist`.
+         * Parses the wire dict returned by `ghostify_dl.fetch_playlist` or
+         * `ghostify_dl.fetch_playlist_youtube`.
          *
          * The map is the deep-converted Java form of the Python result dict
          * (`Map<String, Any?>` with String/Number/Boolean/List/Map leaves).
@@ -37,7 +42,8 @@ data class PlaylistMetadata(
                 coverUrl = map["cover_url"] as? String,
                 description = map["description"] as? String,
                 trackCount = (map["track_count"] as? Number)?.toInt() ?: tracks.size,
-                tracks = tracks
+                tracks = tracks,
+                origin = PlaylistOrigin.fromWire(map["origin"] as? String),
             )
         }
     }

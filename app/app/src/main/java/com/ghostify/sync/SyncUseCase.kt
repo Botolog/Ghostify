@@ -3,6 +3,7 @@ package com.ghostify.sync
 import com.ghostify.data.db.TransactionRunner
 import com.ghostify.data.db.dao.PlaylistDao
 import com.ghostify.data.db.dao.SongDao
+import com.ghostify.data.model.PlaylistOrigin
 import com.ghostify.data.model.SongStatus
 import java.util.UUID
 import timber.log.Timber
@@ -55,7 +56,7 @@ class SyncUseCase(
 
         // 1) Network I/O — never inside a DB transaction (T-067).
         val remote = try {
-            fetcher.fetchPlaylist(playlist.spotifyId)
+            fetcher.fetchPlaylist(playlist.spotifyId, playlist.origin)
         } catch (e: Exception) {
             throw SyncException.Network(playlist.spotifyId, e)
         }

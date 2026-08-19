@@ -1,5 +1,7 @@
 package com.ghostify.ui.model
 
+import com.ghostify.data.model.PlaylistOrigin
+
 /**
  * UI-facing state models for the Ghostify screens.
  *
@@ -22,6 +24,8 @@ data class PlaylistUi(
     val trackCount: Int,
     val downloadedCount: Int,
     val status: PlaylistStatus,
+    /** Origin of the playlist (Spotify / YouTube) — drives row tinting. */
+    val origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
     /** Explicit overall download progress (0..100) emitted by the download flow, if in flight. */
     val progressPercent: Int? = null,
     /** Epoch ms; null = never synced. */

@@ -414,6 +414,90 @@ def fetch_playlist(
         raise _classify_error(exc) from exc
 
 
+def fetch_playlist_youtube(
+    url: str, options: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Fetch full metadata for a public YouTube playlist via yt-dlp.
+
+    Args:
+        url: A ``youtube.com/playlist?list=...`` URL.
+        options: Optional dict with key ``timeout`` (float, seconds).
+
+    Returns:
+        The serializable result dict, structurally identical to
+        :func:`fetch_playlist` but with ``origin`` set to ``"YOUTUBE"`` and
+        each track's ``spotify_id`` set to the YouTube video id (so the
+        download flow can play it directly without a Spotify lookup).
+    """
+    opts = _normalize_options(options)
+
+    try:
+        with _fetch_lock:
+            return _call_with_deadline(
+                opts["timeout"],
+                _fetch_youtube_impl,
+                url,
+            )
+    except GhostifyError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - must classify every failure
+        raise _classify_error(exc) from exc
+
+
+def _fetch_youtube_impl(url: str) -> Dict[str, Any]:
+    from yt_dlp import YoutubeDL
+
+    yt_opts: Dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,
+    }
+    with YoutubeDL(yt_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+    if not info or not info.get("entries"):
+        raise GhostifyError(ERR_NOT_FOUND, "Playlist could not be fetched.")
+
+    title = _clean(info.get("title")) or "YouTube Playlist"
+    owner = _clean(info.get("uploader")) or _clean(info.get("creator")) or ""
+    cover_url = _clean(info.get("thumbnail")) or None
+    description = _clean(info.get("description")) or None
+
+    tracks: List[Dict[str, Any]] = []
+    for position, entry in enumerate(info["entries"]):
+        if not entry:
+            continue
+        video_id = entry.get("id") or ""
+        if not video_id:
+            continue
+        track_title = _clean(entry.get("title")) or "Untitled"
+        track_artist = _clean(entry.get("uploader")) or "Unknown Artist"
+        duration_s = entry.get("duration") or 0
+        tracks.append(
+            {
+                "position": int(position),
+                "spotify_id": video_id,
+                "title": track_title,
+                "artists": track_artist,
+                "album": "",
+                "duration_ms": int(duration_s) * 1000,
+                "cover_url": cover_url,
+                "yt_id": video_id,
+            }
+        )
+
+    return {
+        "name": title,
+        "owner": owner,
+        "cover_url": cover_url,
+        "description": description,
+        "track_count": len(tracks),
+        "tracks": tracks,
+        "origin": "YOUTUBE",
+    }
+
+
 def _normalize_options(options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     opts = dict(options or {})
     timeout = opts.get("timeout", DEFAULT_TIMEOUT)
@@ -484,6 +568,7 @@ def _fetch_impl(
         "description": _clean(metadata.get("description")) or None,
         "track_count": len(tracks),
         "tracks": tracks,
+        "origin": "SPOTIFY",
     }
 
 

@@ -22,8 +22,11 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists WHERE id = :id")
     suspend fun getById(id: String): PlaylistEntity?
 
-    @Query("SELECT * FROM playlists WHERE spotify_id = :spotifyId")
+    @Query("SELECT * FROM playlists WHERE spotify_id = :spotifyId AND origin = 'SPOTIFY'")
     suspend fun getBySpotifyId(spotifyId: String): PlaylistEntity?
+
+    @Query("SELECT * FROM playlists WHERE spotify_id = :ytPlaylistId AND origin = 'YOUTUBE'")
+    suspend fun getByYtPlaylistId(ytPlaylistId: String): PlaylistEntity?
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(playlist: PlaylistEntity)

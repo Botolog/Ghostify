@@ -19,12 +19,15 @@ class SpotifyPlaylistFetcherAdapter(
     private val bridge: PlaylistMetadataBridge,
 ) : SpotifyPlaylistFetcher {
 
-    override suspend fun fetchPlaylist(spotifyId: String): PlaylistMetadata =
+    override suspend fun fetchPlaylist(
+        playlistId: String,
+        origin: com.ghostify.data.model.PlaylistOrigin,
+    ): PlaylistMetadata =
         withContext(Dispatchers.IO) {
-            when (val result = bridge.fetchPlaylistBlocking(spotifyId)) {
+            when (val result = bridge.fetchPlaylistBlocking(playlistId, origin)) {
                 is PlaylistFetchResult.Success -> result.metadata
                 is PlaylistFetchResult.Failure ->
-                    throw SyncException.Network(spotifyId, RuntimeException(result.error.message))
+                    throw SyncException.Network(playlistId, RuntimeException(result.error.message))
             }
         }
 }

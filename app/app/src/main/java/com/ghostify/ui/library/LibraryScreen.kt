@@ -1,6 +1,7 @@
 package com.ghostify.ui.library
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +50,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.ghostify.ui.contract.LibraryContract
 import com.ghostify.ui.contract.LibraryContract.LibraryUiState
+import com.ghostify.data.model.PlaylistOrigin
 import com.ghostify.ui.model.PlaylistUi
 import com.ghostify.ui.util.ProgressBadge
 import com.ghostify.ui.util.TimeFormat
@@ -275,9 +278,15 @@ private fun PlaylistRow(
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
+    val originTint = when (playlist.origin) {
+        PlaylistOrigin.SPOTIFY -> Color(0x0834E876)
+        PlaylistOrigin.YOUTUBE -> Color(0x08E53935)
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(originTint)
             .testTag(LibraryTestTags.item(playlist.id))
             .combinedClickable(
                 onClick = onClick,
