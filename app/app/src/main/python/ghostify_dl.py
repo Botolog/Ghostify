@@ -954,6 +954,17 @@ def _is_youtube_playlist_url(url: str) -> bool:
     return "youtube.com/playlist?list=" in url or "youtu.be/playlist?list=" in url
 
 
+def _is_youtube_video_url(url: str) -> bool:
+    """Detect a single YouTube video URL (not a playlist)."""
+    if not isinstance(url, str):
+        return False
+    if "youtube.com/playlist?list=" in url:
+        return False
+    if "youtu.be/playlist?list=" in url:
+        return False
+    return "youtube.com/watch?v=" in url or ("youtu.be/" in url and "?" in url)
+
+
 def sanitize_filename(name: str, separator: str = "-") -> str:
     """Return a filesystem-safe file *name* (no path separators)."""
     if not isinstance(name, str):
@@ -1192,9 +1203,21 @@ class TrackDownloader:
     def _search(self, url: str) -> List[Any]:
         """Resolve *url* into fully-populated Song objects (Spotify metadata)."""
         from spotdl.utils.search import parse_query
+        from yt_dlp import YoutubeDL  # local import: only needed for YouTube
 
         if _is_youtube_playlist_url(url):
             return self._search_youtube_playlist(url)
+        if _is_youtube_video_url(url):
+            return self._search_youtube_video(
+                url,
+                YoutubeDL(
+                    {
+                        "quiet": True,
+                        "no_warnings": True,
+                        "skip_download": True,
+                    }
+                ),
+            )
         return parse_query(
             query=[_normalize_spotify_url(url)],
             threads=self._downloader.settings["threads"],
@@ -1205,6 +1228,44 @@ class TrackDownloader:
                 "playlist_retain_track_cover"
             ],
         )
+
+    def _search_youtube_video(self, url: str, ydl: Any) -> List[Any]:
+        """Resolve a single YouTube video URL into a Song object via yt-dlp.
+
+        spotdl's ``parse_query`` falls through to ``Song.from_search_term`` for
+        plain YouTube video URLs (it only has special handling for YouTube Music
+        and ``open.spotify.com`` URLs), which treats the entire URL as a search
+        string and resolves to the wrong track. Extracting the metadata directly
+        with yt-dlp and building a Song with ``download_url`` set avoids that.
+        """
+        from spotdl.types.song import Song
+
+        info = ydl.extract_info(url, download=False)
+        if not info:
+            return []
+        # If yt-dlp returns a list of formats, take the first entry.
+        if isinstance(info, list):
+            return []
+        video_id = (
+            info.get("id") or url.split("v=")[-1].split("&")[0] if "v=" in url else ""
+        )
+        title = _clean(info.get("title")) or "Untitled"
+        artist = (
+            _clean(info.get("uploader"))
+            or _clean(info.get("artist"))
+            or "Unknown Artist"
+        )
+        watch_url = f"https://www.youtube.com/watch?v={video_id}"
+        song = Song.from_missing_data(
+            name=title,
+            artist=artist,
+            artists=[artist],
+            song_id=video_id,
+            duration=info.get("duration") or 0,
+            url=watch_url,
+            download_url=watch_url,
+        )
+        return [song]
 
     def _search_youtube_playlist(self, url: str) -> List[Any]:
         """Resolve a YouTube playlist URL into Song objects via yt-dlp.

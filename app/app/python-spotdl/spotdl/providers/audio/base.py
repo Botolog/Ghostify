@@ -101,11 +101,11 @@ class AudioProvider:
         self.filter_results = filter_results
 
         if self.output_format == "m4a":
-            ytdl_format = "bestaudio[ext=m4a]/bestaudio/best"
+            ytdl_format = "bestaudio[ext=m4a]/bestaudio"
         elif self.output_format == "opus":
-            ytdl_format = "bestaudio[ext=webm]/bestaudio/best"
+            ytdl_format = "bestaudio[ext=webm]/bestaudio"
         else:
-            ytdl_format = "bestaudio/best"
+            ytdl_format = "bestaudio"
 
         yt_dlp_options = {
             "format": ytdl_format,

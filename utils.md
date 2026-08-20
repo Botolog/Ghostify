@@ -207,4 +207,6 @@ is off). The loop is:
 4. Iterate. Commit on the branch; merge only after a device-pass.
 
 **When asking the user to retest after a fix, bump `versionCode`/`versionName` in
-`app/app/build.gradle.kts` so an old install cannot be mistaken for the new one.**
+`app/app/build.gradle.kts` so an old install cannot be mistaken for the new one.
+Bump the microversion (`versionName`) on every build with a code change — do not
+skip this step.**
