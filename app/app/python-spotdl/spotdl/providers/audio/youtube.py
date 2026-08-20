@@ -20,9 +20,7 @@ class YouTube(AudioProvider):
     SUPPORTS_ISRC = False
     GET_RESULTS_OPTS: List[Dict[str, Any]] = [{}]
 
-    def get_results(
-        self, search_term: str, *_args, **_kwargs
-    ) -> List[Result]:  # pylint: disable=W0221
+    def get_results(self, search_term: str, *_args, **_kwargs) -> List[Result]:  # pylint: disable=W0221
         """
         Get results from YouTube
 
@@ -35,6 +33,8 @@ class YouTube(AudioProvider):
         search_opts: Dict[str, Any] = {
             **self.audio_handler.params,
             "skip_download": True,
+            "extract_flat": True,  # avoid per-video metadata extraction (age-gated videos)
+            "extractor_args": {},  # override: search uses default player client, not Android
         }
 
         with YoutubeDL(search_opts) as ydl:

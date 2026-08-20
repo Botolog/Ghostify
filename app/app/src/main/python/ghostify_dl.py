@@ -1167,8 +1167,7 @@ class TrackDownloader:
             "scan_for_songs": False,
             "audio_providers": audio_providers or ["youtube-music", "youtube"],
             "lyrics_providers": lyrics_providers or ["synced"],
-            "yt_dlp_args": yt_dlp_args
-            or "--extractor-args youtube:player_client=android",
+            "yt_dlp_args": yt_dlp_args or "",
             "ffmpeg": ffmpeg,
             "threads": 1,
             "filter_results": True,
@@ -1264,6 +1263,21 @@ class TrackDownloader:
             duration=info.get("duration") or 0,
             url=watch_url,
             download_url=watch_url,
+            genres=[],
+            disc_number=1,
+            disc_count=1,
+            album_name=info.get("album") or artist or "Unknown Album",
+            album_artist=artist or "Unknown Artist",
+            year=info.get("release_year") or 0,
+            date=info.get("release_date") or "",
+            track_number=1,
+            tracks_count=1,
+            explicit=False,
+            publisher=artist or "Unknown Publisher",
+            isrc=None,
+            cover_url=info.get("thumbnail") or None,
+            copyright_text=None,
+            album_id="",
         )
         return [song]
 
@@ -1311,6 +1325,21 @@ class TrackDownloader:
                     duration=entry.get("duration") or 0,
                     url=watch_url,
                     download_url=watch_url,
+                    genres=[],
+                    disc_number=1,
+                    disc_count=1,
+                    album_name=entry.get("album") or artist,
+                    album_artist=artist,
+                    year=entry.get("release_year") or 0,
+                    date=entry.get("release_date") or "",
+                    track_number=1,
+                    tracks_count=1,
+                    explicit=False,
+                    publisher=artist,
+                    isrc=None,
+                    cover_url=entry.get("thumbnail") or None,
+                    copyright_text=None,
+                    album_id="",
                 )
                 songs.append(song)
         return songs
