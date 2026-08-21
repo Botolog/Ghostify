@@ -33,8 +33,6 @@ class YouTube(AudioProvider):
         search_opts: Dict[str, Any] = {
             **self.audio_handler.params,
             "skip_download": True,
-            "extract_flat": True,  # avoid per-video metadata extraction (age-gated videos)
-            "extractor_args": {},  # override: search uses default player client, not Android
         }
 
         with YoutubeDL(search_opts) as ydl:

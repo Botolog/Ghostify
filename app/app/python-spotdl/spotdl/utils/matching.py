@@ -83,7 +83,6 @@ _STANDARD_TITLE_WORDS = frozenset(
         "and",
         "a",
         "an",
-        "live",
         "album",
         "version",
         "single",
@@ -94,27 +93,25 @@ _STANDARD_TITLE_WORDS = frozenset(
         "music",
         "song",
         "mv",
-        " Visualizer",
         "visualizer",
         "lyric",
         "lyrics",
-        "hd",
         "4k",
+        "8k",
     }
 )
 
-# Words that strongly indicate non-song content (making-of, behind the scenes, etc.)
-# These are aggressively penalized.
+# Words that strongly indicate non-song content (making-of, reaction, etc.)
+# These are aggressively penalized in addition to forbidden words.
 _CONTENT_TYPE_WORDS = frozenset(
     {
         "making",
         "reaction",
-        "reaction",
         "react",
-        "reactionvideo",
         "compilation",
         "mixtape",
         "mashup",
+        "mash",
         "highlights",
         "behind",
         "scenes",
@@ -124,13 +121,13 @@ _CONTENT_TYPE_WORDS = frozenset(
         "review",
         "unboxing",
         "tutorial",
-        "how",
-        "cover",
-        "acoustic",
-        "remix",
-        "instrumental",
-        "slowed",
-        "bassboosted",
+        "howto",
+        "tutorial",
+        "challenge",
+        "trend",
+        "tiktok",
+        "tik",
+        "tok",
     }
 )
 
