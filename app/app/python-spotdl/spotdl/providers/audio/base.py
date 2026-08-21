@@ -380,7 +380,7 @@ class AudioProvider:
                 score = min(best_result[1] + views_score, 100)
                 weighted_results.append((best_result[0], score))
 
-            # Now we return the result with the highest score
+            # Return the result with the highest score
             return max(weighted_results, key=lambda x: x[1])
 
         return best_result[0], best_result[1]

@@ -140,6 +140,7 @@ class AddPlaylistViewModel(
                     trackCount = metadata.trackCount,
                     status = PlaylistStatus.NEW,
                     createdAt = System.currentTimeMillis(),
+                    lastSyncedAt = System.currentTimeMillis(),
                     origin = fetchedOrigin,
                 )
                 val songs = metadata.tracks.map { t ->

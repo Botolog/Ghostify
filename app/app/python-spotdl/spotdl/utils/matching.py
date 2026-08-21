@@ -62,10 +62,100 @@ def debug(song_id: str, result_id: str, message: str) -> None:
     Log a message with MATCH level
 
     ### Arguments
-    - message: message to log
+        - message: message to log
     """
 
     logger.log(MATCH, "[%s|%s] %s", song_id, result_id, message)
+
+
+# Words that appear in music video titles as standard descriptors and
+# should NOT be penalized
+_STANDARD_TITLE_WORDS = frozenset(
+    {
+        "official",
+        "video",
+        "audio",
+        "ft",
+        "feat",
+        "featuring",
+        "the",
+        "of",
+        "and",
+        "a",
+        "an",
+        "live",
+        "album",
+        "version",
+        "single",
+        "remastered",
+        "remaster",
+        "hd",
+        "hq",
+        "music",
+        "song",
+        "mv",
+        " Visualizer",
+        "visualizer",
+        "lyric",
+        "lyrics",
+        "hd",
+        "4k",
+    }
+)
+
+# Words that strongly indicate non-song content (making-of, behind the scenes, etc.)
+# These are aggressively penalized.
+_CONTENT_TYPE_WORDS = frozenset(
+    {
+        "making",
+        "reaction",
+        "reaction",
+        "react",
+        "reactionvideo",
+        "compilation",
+        "mixtape",
+        "mashup",
+        "highlights",
+        "behind",
+        "scenes",
+        "bts",
+        "btsm",
+        "interview",
+        "review",
+        "unboxing",
+        "tutorial",
+        "how",
+        "cover",
+        "acoustic",
+        "remix",
+        "instrumental",
+        "slowed",
+        "bassboosted",
+    }
+)
+
+
+def _penalty_unrelated_words(song: Song, result: Result) -> float:
+    """Return a penalty (-points) based on words in the result title that
+    do not appear in the song name or artist names but indicate non-song
+    content (e.g. 'Making of', 'Reaction')."""
+    result_words = set(slugify(result.name).replace("-", " ").split())
+    song_words = set()
+    song_words.update(slugify(song.name).replace("-", " ").split())
+    for artist in song.artists or []:
+        song_words.update(slugify(artist).replace("-", " ").split())
+    if song.artist:
+        song_words.update(slugify(song.artist).replace("-", " ").split())
+
+    penalty = 0.0
+    for word in result_words:
+        if not word or word in song_words or word in _STANDARD_TITLE_WORDS:
+            continue
+        if word in _CONTENT_TYPE_WORDS:
+            penalty += 20
+        else:
+            penalty += 5
+    return min(penalty, 40)
 
 
 def fill_string(strings: List[str], main_string: str, string_to_check: str) -> str:
@@ -761,6 +851,10 @@ def order_results(
             f"Contains forbidden words: {contains_fwords}, {found_fwords}",
         )
         debug(song.song_id, result.result_id, f"Final name match: {name_match}")
+
+        # Penalize results with words not in the song or its artists
+        # (e.g., "Making", "Reaction", "Compilation" — indicate non-song content)
+        name_match -= _penalty_unrelated_words(song, result)
 
         # Calculate album match
         album_match = calc_album_match(song, result)
