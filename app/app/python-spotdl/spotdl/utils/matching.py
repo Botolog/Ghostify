@@ -411,9 +411,12 @@ def artists_match_fixup1(song: Song, result: Result, score: float) -> float:
 
     # If we didn't find any artist match,
     # we fallback to channel name match
+    result_artist_str = (
+        ", ".join(result.artists) if result.artists else (result.author or "")
+    )
     channel_name_match = ratio(
         slugify(song.artist),
-        slugify(", ".join(result.artists)) if result.artists else "",
+        slugify(result_artist_str),
     )
 
     score = max(score, channel_name_match)
@@ -611,6 +614,17 @@ def calc_name_match(
 
         name_match = max(name_match, second_name_match)
 
+    # Prefix match: if the song name appears at the start of the result name
+    # (e.g., "Enemy (from the series Arcane...)"), give a high boost
+    if song_name and result_name.startswith(song_name):
+        prefix_match = min(30 + (100 - name_match), 100)
+        name_match = max(name_match, prefix_match)
+        debug(
+            song.song_id,
+            result.result_id,
+            f"Prefix match boost: {name_match}",
+        )
+
     return name_match
 
 
@@ -737,8 +751,9 @@ def order_results(
         # Check if result contains forbidden words
         contains_fwords, found_fwords = check_forbidden_words(song, result)
         if contains_fwords:
+            # Heavy penalty: each forbidden word drops name_match significantly
             for _ in found_fwords:
-                name_match -= 15
+                name_match -= 30
 
         debug(
             song.song_id,
@@ -776,6 +791,31 @@ def order_results(
         # Calculate total match
         average_match = (artists_match + name_match) / 2
         debug(song.song_id, result.result_id, f"Average match: {average_match}")
+
+        # Channel/author bonus: if the uploader matches a song artist,
+        # boost the score; if not, penalize to deprioritize random uploads
+        if result.author and song.artists:
+            slug_author = slugify(result.author).replace("-", "")
+            for artist in song.artists:
+                slug_artist = slugify(artist).replace("-", "")
+                if slug_artist and (
+                    slug_artist in slug_author or slug_author in slug_artist
+                ):
+                    average_match = min(average_match + 10, 100)
+                    debug(
+                        song.song_id,
+                        result.result_id,
+                        f"Channel-author match bonus: +10 ({result.author} ~ {artist})",
+                    )
+                    break
+            else:
+                # No artist match — penalize non-official uploads
+                average_match = max(average_match - 15, 0)
+                debug(
+                    song.song_id,
+                    result.result_id,
+                    f"Non-official channel penalty: -15 (author={result.author})",
+                )
 
         if (
             result.verified

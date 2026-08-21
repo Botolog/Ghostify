@@ -279,8 +279,8 @@ private fun PlaylistRow(
     var showMenu by remember { mutableStateOf(false) }
 
     val originTint = when (playlist.origin) {
-        PlaylistOrigin.SPOTIFY -> Color(0x0834E876)
-        PlaylistOrigin.YOUTUBE -> Color(0x08E53935)
+        PlaylistOrigin.SPOTIFY -> Color(0x2034E876)
+        PlaylistOrigin.YOUTUBE -> Color(0x20E53935)
     }
 
     Row(

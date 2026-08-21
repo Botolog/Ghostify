@@ -461,7 +461,7 @@ def _fetch_youtube_impl(url: str) -> Dict[str, Any]:
 
     title = _clean(info.get("title")) or "YouTube Playlist"
     owner = _clean(info.get("uploader")) or _clean(info.get("creator")) or ""
-    cover_url = _clean(info.get("thumbnail")) or None
+    cover_url = _get_thumbnail_url(info)
     description = _clean(info.get("description")) or None
 
     tracks: List[Dict[str, Any]] = []
@@ -599,6 +599,24 @@ def _clean(value: Any) -> Optional[str]:
         return None
     value = str(value).strip()
     return value or None
+
+
+def _get_thumbnail_url(info: Dict[str, Any]) -> Optional[str]:
+    """Return the best available thumbnail URL from a yt-dlp info dict.
+
+    Falls back from ``thumbnail`` → ``thumbnails`` list (largest) when
+    ``extract_flat`` is used (which often leaves ``thumbnail`` empty).
+    """
+    url = info.get("thumbnail")
+    if url:
+        return _clean(url)
+    thumbnails = info.get("thumbnails") or []
+    if thumbnails:
+        best = max(thumbnails, key=lambda t: t.get("width", 0) * t.get("height", 0))
+        url = best.get("url")
+        if url:
+            return _clean(url)
+    return None
 
 
 def _fetch_album_enrichment(playlist_id: str) -> Dict[str, Any]:
@@ -1275,7 +1293,7 @@ class TrackDownloader:
             explicit=False,
             publisher=artist or "Unknown Publisher",
             isrc=None,
-            cover_url=info.get("thumbnail") or None,
+            cover_url=_get_thumbnail_url(info) or None,
             copyright_text=None,
             album_id="",
         )
@@ -1337,7 +1355,7 @@ class TrackDownloader:
                     explicit=False,
                     publisher=artist,
                     isrc=None,
-                    cover_url=entry.get("thumbnail") or None,
+                    cover_url=_get_thumbnail_url(entry) or None,
                     copyright_text=None,
                     album_id="",
                 )
