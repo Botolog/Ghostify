@@ -64,6 +64,7 @@ class Synced(LyricsProvider):
             lyrics = syncedlyrics.search(
                 f"{name} - {artists[0]}",
                 synced_only=not kwargs.get("allow_plain_format", True),
+                providers=["Lrclib", "NetEase", "Megalobiz", "Genius"],
             )
             return lyrics
         except requests.exceptions.SSLError:

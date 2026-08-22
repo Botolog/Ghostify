@@ -126,8 +126,7 @@ def get_temp_path() -> Path:
     """
 
     temp_path = get_spotdl_path() / "temp"
-    if not temp_path.exists():
-        os.mkdir(temp_path)
+    os.makedirs(temp_path, exist_ok=True)
 
     return temp_path
 

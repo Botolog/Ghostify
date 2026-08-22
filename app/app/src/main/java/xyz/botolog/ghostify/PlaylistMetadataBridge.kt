@@ -162,7 +162,7 @@ class PlaylistMetadataBridge(
         const val DEFAULT_MODULE_NAME = "ghostify_dl"
 
         val DEFAULT_OPTIONS: Map<String, Any> = mapOf(
-            "timeout" to 180.0,
+            "timeout" to 300.0,
             "resolve_yt" to true,
             "per_track_yt_timeout" to 8.0
         )

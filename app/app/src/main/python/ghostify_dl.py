@@ -1185,7 +1185,7 @@ class TrackDownloader:
             "overwrite": "skip",
             "scan_for_songs": False,
             "audio_providers": audio_providers or ["youtube-music", "youtube"],
-            "lyrics_providers": lyrics_providers or ["synced"],
+            "lyrics_providers": lyrics_providers or [],
             "yt_dlp_args": yt_dlp_args or "",
             "ffmpeg": ffmpeg,
             "threads": 1,
@@ -1572,6 +1572,10 @@ class TrackDownloader:
 
         if yt_id:
             song.download_url = f"https://www.youtube.com/watch?v={yt_id}"
+        print(
+            f"[GHOSTIFY_DEBUG] download: yt_id={yt_id} download_url={getattr(song, 'download_url', None)} song={getattr(song, 'name', None)}",
+            flush=True,
+        )
 
         return self._download_song(
             song, url, on_start, on_complete, self._active_progress, result
@@ -1616,6 +1620,10 @@ class TrackDownloader:
         before = self._snapshot_temp()
         error_count = len(self._downloader.errors)
         path: Optional[Path] = None
+        print(
+            f"[GHOSTIFY_DEBUG] _download_song: download_url={getattr(song, 'download_url', None)} duration={getattr(song, 'duration', None)}",
+            flush=True,
+        )
         try:
             _song, path = self._downloader.search_and_download(song)
         except BaseException as exc:  # noqa: BLE001 - KeyboardInterrupt etc.
