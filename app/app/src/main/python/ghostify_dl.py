@@ -259,7 +259,8 @@ class TrackDownloadError(Exception):
 DEFAULT_TIMEOUT = 180.0
 DEFAULT_RESOLVE_YT = True
 DEFAULT_PER_TRACK_YT_TIMEOUT = 8.0
-YT_CONCURRENCY = 4
+YT_CONCURRENCY = 10
+_yt_semaphore = threading.Semaphore(YT_CONCURRENCY)
 
 _PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{1,64}$")
 _PLAYLIST_REF_PATTERN = re.compile(
@@ -670,7 +671,8 @@ def _resolve_yt_ids(songs: Any, resolve_yt: bool, per_track_timeout: float) -> l
     lock = threading.Lock()
 
     def run(index: int, song: Any) -> None:
-        results[index] = _resolve_yt_id(song, per_track_timeout)
+        with _yt_semaphore:
+            results[index] = _resolve_yt_id(song, per_track_timeout)
         with lock:
             remaining["n"] -= 1
             if remaining["n"] == 0:
@@ -680,9 +682,8 @@ def _resolve_yt_ids(songs: Any, resolve_yt: bool, per_track_timeout: float) -> l
         threading.Thread(target=run, args=(i, s), name=f"ghostify-yt-{i}", daemon=True)
         for i, s in enumerate(songs)
     ]
-    for i in range(0, count, YT_CONCURRENCY):
-        for thread in threads[i : i + YT_CONCURRENCY]:
-            thread.start()
+    for t in threads:
+        t.start()
 
     done.wait()
     return [results.get(i) for i in range(count)]
