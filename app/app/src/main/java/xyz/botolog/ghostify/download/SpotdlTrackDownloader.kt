@@ -82,7 +82,7 @@ class ChaquopySpotdlCall(
             outputTemplate = TrackDownloadConfig.DEFAULT_TEMPLATE,
             ffmpeg = FfmpegLocator.executablePath ?: "ffmpeg",
         )
-        val url = "spotify:track:${song.spotifyId}"
+        val url = song.sourceUrl
         val listener = object : TrackProgressListener {
             override fun onDownloadStart(track: xyz.botolog.ghostify.trackdownload.TrackInfo) {
                 // Metadata resolved; conversion is about to begin.

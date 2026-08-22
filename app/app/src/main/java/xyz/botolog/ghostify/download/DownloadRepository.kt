@@ -16,7 +16,24 @@ data class SongRecord(
     val error: String? = null,
     /** Resolved YouTube id for this track (YouTube-origin tracks have this set to the video id). */
     val ytId: String? = null,
-)
+) {
+    /**
+     * True when this track originated from a YouTube playlist.
+     * YouTube-origin rows have both [spotifyId] and [ytId] set to the same
+     * YouTube video id; Spotify-origin rows have a 22-char Spotify id in
+     * [spotifyId] and a distinct (or absent) YouTube id in [ytId].
+     */
+    val isYouTubeOrigin: Boolean
+        get() = !ytId.isNullOrBlank() && spotifyId == ytId
+
+    /** The URL the Python downloader should receive for this track. */
+    val sourceUrl: String
+        get() = if (isYouTubeOrigin) {
+            "https://www.youtube.com/watch?v=$ytId"
+        } else {
+            "spotify:track:$spotifyId"
+        }
+}
 
 /** The subset of the Room `playlists` row the download manager needs. */
 data class PlaylistRecord(
