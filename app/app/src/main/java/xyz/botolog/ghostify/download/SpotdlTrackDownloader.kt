@@ -82,11 +82,7 @@ class ChaquopySpotdlCall(
             outputTemplate = TrackDownloadConfig.DEFAULT_TEMPLATE,
             ffmpeg = FfmpegLocator.executablePath ?: "ffmpeg",
         )
-        val url = if (song.ytId != null) {
-            "https://www.youtube.com/watch?v=${song.ytId}"
-        } else {
-            "spotify:track:${song.spotifyId}"
-        }
+        val url = "spotify:track:${song.spotifyId}"
         val listener = object : TrackProgressListener {
             override fun onDownloadStart(track: xyz.botolog.ghostify.trackdownload.TrackInfo) {
                 // Metadata resolved; conversion is about to begin.
@@ -101,7 +97,7 @@ class ChaquopySpotdlCall(
             }
         }
         val result = withContext(Dispatchers.IO) {
-            when (val result = bridge.downloadBlocking(url, config, listener)) {
+            when (val result = bridge.downloadBlocking(url, config, listener, song.ytId)) {
                 is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Downloaded ->
                     TrackDownloadResult(songId = song.id, filePath = result.outputPath)
 

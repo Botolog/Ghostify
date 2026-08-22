@@ -1506,6 +1506,7 @@ class TrackDownloader:
         on_start: Any = None,
         on_complete: Any = None,
         on_progress: Any = None,
+        yt_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Download one track (see component TESTS.md T-030..T-041)."""
         if not isinstance(url, str) or not url.strip():
@@ -1568,6 +1569,9 @@ class TrackDownloader:
         if not songs:
             raise TrackDownloadError(ErrorKind.NO_TRACK, f"No track found for: {url}")
         song = songs[0]
+
+        if yt_id:
+            song.download_url = f"https://www.youtube.com/watch?v={yt_id}"
 
         return self._download_song(
             song, url, on_start, on_complete, self._active_progress, result
@@ -1877,6 +1881,7 @@ def download(
     on_start: Any = None,
     on_complete: Any = None,
     on_progress: Any = None,
+    yt_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Download one track via an existing :class:`TrackDownloader`."""
     if not isinstance(downloader, TrackDownloader):
@@ -1884,7 +1889,8 @@ def download(
             "downloader must be a TrackDownloader (create it with make_downloader)"
         )
     return downloader.download(
-        url, on_start=on_start, on_complete=on_complete, on_progress=on_progress
+        url, on_start=on_start, on_complete=on_complete, on_progress=on_progress,
+        yt_id=yt_id,
     )
 
 

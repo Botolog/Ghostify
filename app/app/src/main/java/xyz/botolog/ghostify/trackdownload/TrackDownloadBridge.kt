@@ -69,7 +69,8 @@ class TrackDownloadBridge(
     fun downloadBlocking(
         url: String,
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
-        listener: TrackProgressListener? = null
+        listener: TrackProgressListener? = null,
+        ytId: String? = null,
     ): TrackDownloadResult {
         Timber.i("TrackDownloadBridge.downloadBlocking: START")
         return try {
@@ -77,7 +78,7 @@ class TrackDownloadBridge(
             val hook = if (listener == null) null else HookAdapter(listener)
             val module = Python.getInstance().getModule(moduleName)
             val pyResult = module.callAttr(
-                "download", downloader, url, hook, hook, hook
+                "download", downloader, url, hook, hook, hook, ytId
             )
             val result = parseResult(pyResult, url)
             Timber.i("TrackDownloadBridge.downloadBlocking: returning $result")
