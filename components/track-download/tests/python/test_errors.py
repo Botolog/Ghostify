@@ -168,7 +168,16 @@ class ErrorMappingTest(unittest.TestCase):
         self.assertEqual(ctx.exception.kind, g.ErrorKind.NO_TRACK)
 
     def test_download_playlist_api_in_all(self):
-        self.assertIn("download_playlist", g.__all__)
+        # The merged module exposes the bridge surface as plain module-level
+        # callables (no ``__all__``); Kotlin resolves these by name.
+        for name in (
+            "make_downloader",
+            "download",
+            "download_playlist",
+            "expected_output_path",
+            "cleanup_temp",
+        ):
+            self.assertTrue(callable(getattr(g, name, None)), name)
 
 
 if __name__ == "__main__":

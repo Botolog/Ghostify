@@ -1507,6 +1507,7 @@ class TrackDownloader:
         on_complete: Any = None,
         on_progress: Any = None,
         yt_id: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Download one track (see component TESTS.md T-030..T-041)."""
         if not isinstance(url, str) or not url.strip():
@@ -1560,15 +1561,23 @@ class TrackDownloader:
             return result("SKIPPED", str(mp3), track=info)
 
         # 2) Resolve metadata (network — Spotify only).
-        try:
-            songs = self._search(url)
-        except Exception as exc:  # noqa: BLE001 - typed regardless of cause
-            raise TrackDownloadError(
-                _kind_for(exc), f"Could not resolve track metadata for {url}: {exc}"
-            ) from exc
-        if not songs:
-            raise TrackDownloadError(ErrorKind.NO_TRACK, f"No track found for: {url}")
-        song = songs[0]
+        #
+        # Fast path: Kotlin already fetched the Spotify metadata at fetch time
+        # and passes it through the bridge as ``meta``, so we can build the
+        # Song locally and skip the per-track Spotify re-fetch entirely (bulk
+        # downloads would otherwise hammer the API and hit rate limits).
+        # Absent/invalid ``meta`` falls back to the legacy search unchanged.
+        song = self._song_from_meta(meta, url)
+        if song is None:
+            try:
+                songs = self._search(url)
+            except Exception as exc:  # noqa: BLE001 - typed regardless of cause
+                raise TrackDownloadError(
+                    _kind_for(exc), f"Could not resolve track metadata for {url}: {exc}"
+                ) from exc
+            if not songs:
+                raise TrackDownloadError(ErrorKind.NO_TRACK, f"No track found for: {url}")
+            song = songs[0]
 
         if yt_id:
             song.download_url = f"https://www.youtube.com/watch?v={yt_id}"
@@ -1579,6 +1588,66 @@ class TrackDownloader:
 
         return self._download_song(
             song, url, on_start, on_complete, self._active_progress, result
+        )
+
+    def _song_from_meta(self, meta: Any, url: str) -> Optional[Any]:
+        """Build a Song from bridge-passed fetch-time metadata, or None.
+
+        Kotlin stores title/artists/album/duration/cover when the user picks a
+        track; passing it here lets :meth:`download` skip the Spotify API.
+        Returns None (never raises) for absent or unusable *meta* so the caller
+        falls back to the legacy ``_search`` resolution path.
+        """
+        if not isinstance(meta, dict):
+            return None
+        name = meta.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        raw_artists = meta.get("artists")
+        if isinstance(raw_artists, str):
+            artists = [part.strip() for part in raw_artists.split(";") if part.strip()]
+        elif isinstance(raw_artists, list):
+            artists = [
+                part for part in raw_artists if isinstance(part, str) and part.strip()
+            ]
+        else:
+            return None
+        if not artists:
+            return None
+
+        album = meta.get("album")
+        album_name = album if isinstance(album, str) else ""
+        try:
+            duration = max(0, int(round(float(meta.get("duration_sec") or 0))))
+        except (TypeError, ValueError):
+            duration = 0
+        image_url = meta.get("image_url")
+        cover_url = image_url if isinstance(image_url, str) and image_url else None
+
+        from spotdl.types.song import Song
+
+        return Song.from_missing_data(
+            name=name.strip(),
+            artist=artists[0],
+            artists=artists,
+            song_id=extract_spotify_id(url) or "",
+            duration=duration,
+            url=url,
+            genres=[],
+            disc_number=1,
+            disc_count=1,
+            album_name=album_name,
+            album_artist=artists[0],
+            year=0,
+            date="",
+            track_number=1,
+            tracks_count=1,
+            explicit=False,
+            publisher=artists[0],
+            isrc=None,
+            cover_url=cover_url,
+            copyright_text=None,
+            album_id="",
         )
 
     def _download_song(
@@ -1890,6 +1959,7 @@ def download(
     on_complete: Any = None,
     on_progress: Any = None,
     yt_id: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Download one track via an existing :class:`TrackDownloader`."""
     if not isinstance(downloader, TrackDownloader):
@@ -1898,7 +1968,7 @@ def download(
         )
     return downloader.download(
         url, on_start=on_start, on_complete=on_complete, on_progress=on_progress,
-        yt_id=yt_id,
+        yt_id=yt_id, meta=meta,
     )
 
 

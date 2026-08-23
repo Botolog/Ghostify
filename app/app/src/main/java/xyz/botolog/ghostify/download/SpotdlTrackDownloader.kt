@@ -7,6 +7,7 @@ import xyz.botolog.ghostify.trackdownload.DownloadErrorKind
 import xyz.botolog.ghostify.trackdownload.TrackDownloadBridge
 import xyz.botolog.ghostify.trackdownload.TrackDownloadConfig
 import xyz.botolog.ghostify.trackdownload.TrackProgressListener
+import xyz.botolog.ghostify.trackdownload.buildMetaPayload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
@@ -106,7 +107,10 @@ class ChaquopySpotdlCall(
         val url = song.sourceUrl
         val listener = buildProgressListener(onProgress)
         val result = withContext(Dispatchers.IO) {
-            mapBridgeResult(song, bridge.downloadBlocking(url, config, listener, song.ytId))
+            mapBridgeResult(
+                song,
+                bridge.downloadBlocking(url, config, listener, song.ytId, buildMetaPayload(song)),
+            )
         }
         Timber.i("ChaquopySpotdlCall.invoke: returning ${if (result.isSuccess) "SUCCESS" else "FAILED"}")
         return result

@@ -13,8 +13,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Make the component importable regardless of where tests are launched from.
-_SRC = Path(__file__).resolve().parents[2] / "src" / "main" / "python"
+# Import the real shipped module (Chaquopy's app source) — the suite must
+# exercise exactly what runs on device, not the stale component copy.
+_REPO = Path(__file__).resolve().parents[4]
+_SRC = _REPO / "app" / "app" / "src" / "main" / "python"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 

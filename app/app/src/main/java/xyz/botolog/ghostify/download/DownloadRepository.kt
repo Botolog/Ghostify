@@ -15,6 +15,9 @@ import kotlinx.coroutines.flow.Flow
  * @property filePath local file path if downloaded, `null` otherwise.
  * @property error error message if the download failed, `null` otherwise.
  * @property ytId resolved YouTube video ID (YouTube-origin tracks have this set).
+ * @property album album name, `null` when unknown.
+ * @property durationMs track duration in milliseconds; `0` when unknown.
+ * @property coverUrl URL of the album/track artwork, `null` when unknown.
  */
 data class SongRecord(
     val id: String,
@@ -27,6 +30,9 @@ data class SongRecord(
     val filePath: String? = null,
     val error: String? = null,
     val ytId: String? = null,
+    val album: String? = null,
+    val durationMs: Long = 0,
+    val coverUrl: String? = null,
 ) {
     /**
      * True when this track originated from a YouTube playlist.

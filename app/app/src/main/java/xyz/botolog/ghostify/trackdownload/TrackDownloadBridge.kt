@@ -67,16 +67,21 @@ class TrackDownloadBridge(
      * @param config downloader configuration; a new downloader is made if the
      *   cached one does not match.
      * @param listener optional progress callback; may be null to ignore progress.
+     * @param ytId resolved YouTube video ID for YouTube-origin tracks.
+     * @param meta optional flat metadata map (see [buildMetaPayload]) letting the
+     *   Python side skip its per-track Spotify re-fetch; `null` keeps the old
+     *   fetch-from-Scraper behavior.
      */
     fun downloadBlocking(
         url: String,
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
         listener: TrackProgressListener? = null,
         ytId: String? = null,
+        meta: Map<String, Any?>? = null,
     ): TrackDownloadResult {
         Timber.i("TrackDownloadBridge.downloadBlocking: START")
         return try {
-            val pyResult = invokeDownload(url, config, listener, ytId)
+            val pyResult = invokeDownload(url, config, listener, ytId, meta)
             val result = parseResult(pyResult, url)
             Timber.i("TrackDownloadBridge.downloadBlocking: returning $result")
             result
@@ -92,17 +97,22 @@ class TrackDownloadBridge(
     /**
      * Invokes the Python `download` function with the given parameters.
      * Returns the raw [PyObject] result dict.
+     *
+     * The top-level [meta] map of primitives (String / Double / List / null)
+     * converts natively through Chaquopy, like the scalar arguments already
+     * passed here; `null` arrives in Python as `None`.
      */
     private fun invokeDownload(
         url: String,
         config: TrackDownloadConfig,
         listener: TrackProgressListener?,
         ytId: String?,
+        meta: Map<String, Any?>?,
     ): PyObject? {
         val downloader = requireDownloader(config)
         val hook = listener?.let { HookAdapter(it) }
         val module = Python.getInstance().getModule(moduleName)
-        return module.callAttr("download", downloader, url, hook, hook, hook, ytId)
+        return module.callAttr("download", downloader, url, hook, hook, hook, ytId, meta)
     }
 
     /**

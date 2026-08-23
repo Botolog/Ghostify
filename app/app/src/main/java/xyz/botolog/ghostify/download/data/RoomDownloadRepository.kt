@@ -146,6 +146,9 @@ class RoomDownloadRepository(
         filePath = filePath,
         error = error,
         ytId = ytId,
+        album = album,
+        durationMs = durationMs.toLong(),
+        coverUrl = coverUrl,
     )
 }
 
