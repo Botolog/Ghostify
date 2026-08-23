@@ -23,9 +23,9 @@ import timber.log.Timber
  */
 object SpotifySanitizer {
 
-    /** `https://open.spotify.com/<resource>/<id>[?si=..][#..]` (+ legacy `intl-<cc>` prefix). */
+    /** `https://open.spotify.com/<resource>/<id>[/extra][?si=..][#..]` (+ legacy `intl-<cc>` prefix). */
     private val OPEN_SPOTIFY = Regex(
-        """(?i)\bhttps?://open\.spotify\.com/(?:intl-[a-z0-9]{2}/)?(playlist|album|artist|track|episode|show|user)/[A-Za-z0-9]+(?:[?&#][^\s"'<>]*)?(?=\s|$|["'<>;,)])""",
+        """(?i)\bhttps?://open\.spotify\.com/(?:intl-[a-z0-9]{2}/)?(playlist|album|artist|track|episode|show|user)/[A-Za-z0-9]+(?:[/?#][^\s"'<>]*)?(?=\s|$|["'<>;,)])""",
     )
 
     /** `https://spotify.app.link/<code>` (Branch link) — id is opaque, drop it. */
@@ -101,10 +101,10 @@ object SpotifySanitizer {
         if (spotifyUrl == null) return null
         val m = OPEN_SPOTIFY.find(spotifyUrl) ?: return null
         val result = m.value
-            .substringAfterLast('/')
             .substringBefore('?')
             .substringBefore('#')
             .trimEnd('/')
+            .substringAfterLast('/')
             .ifEmpty { null }
         Timber.i("SpotifySanitizer.shortIdOf: returning $result")
         return result

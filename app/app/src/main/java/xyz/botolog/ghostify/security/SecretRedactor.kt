@@ -184,7 +184,13 @@ object SecretRedactor {
 
     /** Canonical key name (api_key, apiKey, API-Key -> api_key). */
     private fun normalizeKey(raw: String): String {
-        val camel = raw.replace(Regex("(?<=[a-zA-Z])(?=[A-Z])"), "_")
+        // Split camelCase boundaries (t→S in clientSecret) and acronym boundaries
+        // before a capitalized word (HTTPServer), without tearing acronyms apart
+        // (API-KEY must stay one word, not a_p_i_k_e_y).
+        val camel = raw.replace(
+            Regex("(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"),
+            "_",
+        )
         return camel.lowercase().replace('-', '_').replace(Regex("_+"), "_").trim('_')
     }
 
