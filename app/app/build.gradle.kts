@@ -14,8 +14,8 @@ android {
         applicationId = "xyz.botolog.ghostify"
         minSdk = 26
         targetSdk = 35
-        versionCode = 36
-        versionName = "0.1.35"
+        versionCode = 38
+        versionName = "0.1.37"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {

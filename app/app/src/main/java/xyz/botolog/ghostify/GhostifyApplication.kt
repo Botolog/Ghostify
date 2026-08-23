@@ -170,7 +170,14 @@ class GhostifyContainer(private val context: Application) {
 
     // --- view models ----------------------------------------------------------
 
-    val viewModels: xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels by lazy {
+    // Rebuilt per activity lifetime: clear() cancels every VM scope, so the bundle
+    // must be discarded afterwards or the next activity inherits dead coroutines.
+    private var viewModelsBundle: xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels? = null
+
+    val viewModels: xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels
+        get() = viewModelsBundle ?: buildViewModels().also { viewModelsBundle = it }
+
+    private fun buildViewModels(): xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels =
         xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels(
             repo = playlistRepository,
             songRepo = songRepository,
@@ -181,10 +188,10 @@ class GhostifyContainer(private val context: Application) {
             player = playerController,
             musicStore = musicStore,
         )
-    }
 
-    /** Tears down process-scoped resources when the activity is destroyed. */
+    /** Tears down activity-scoped ViewModels when the activity is destroyed. */
     fun onDestroy() {
-        viewModels.clear()
+        viewModelsBundle?.clear()
+        viewModelsBundle = null
     }
 }

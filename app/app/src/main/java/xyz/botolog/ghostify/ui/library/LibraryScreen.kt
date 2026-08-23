@@ -120,7 +120,13 @@ fun LibraryScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        topBar = { LibraryTopBar(contract = contract, onShutdown = { showShutdownDialog = true }) },
+        topBar = {
+            LibraryTopBar(
+                contract = contract,
+                onShutdown = { showShutdownDialog = true },
+                onOpenSettings = onOpenSettings,
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = contract::onAddClick,
@@ -162,6 +168,7 @@ fun LibraryScreen(
 private fun LibraryTopBar(
     contract: LibraryContract,
     onShutdown: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     CenterAlignedTopAppBar(
         title = { Text("Library") },
@@ -175,7 +182,13 @@ private fun LibraryTopBar(
         },
         actions = {
             IconButton(
-                onClick = contract::onOpenSettings,
+                // Contract hook for future VM-side logic; the lambda performs the
+                // navigation (wired in GhostifyApp) — the VM method intentionally
+                // does not navigate itself.
+                onClick = {
+                    contract.onOpenSettings()
+                    onOpenSettings()
+                },
                 modifier = Modifier.testTag(LibraryTestTags.SETTINGS),
             ) {
                 Icon(Icons.Filled.Settings, contentDescription = "Settings")
