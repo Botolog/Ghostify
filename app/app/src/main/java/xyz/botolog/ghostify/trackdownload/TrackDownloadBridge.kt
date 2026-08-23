@@ -33,6 +33,8 @@ import timber.log.Timber
  * which the adapter reads explicitly via [xyz.botolog.ghostify.python.PyConverters].
  * Hook exceptions on the Python side are swallowed by the bridge (see
  * `ghostify_dl._fire`), so a misbehaving listener can never fail a download.
+ *
+ * @param moduleName the Python module to invoke (default "ghostify_dl").
  */
 class TrackDownloadBridge(
     private val moduleName: String = DEFAULT_MODULE_NAME
@@ -74,12 +76,7 @@ class TrackDownloadBridge(
     ): TrackDownloadResult {
         Timber.i("TrackDownloadBridge.downloadBlocking: START")
         return try {
-            val downloader = requireDownloader(config)
-            val hook = if (listener == null) null else HookAdapter(listener)
-            val module = Python.getInstance().getModule(moduleName)
-            val pyResult = module.callAttr(
-                "download", downloader, url, hook, hook, hook, ytId
-            )
+            val pyResult = invokeDownload(url, config, listener, ytId)
             val result = parseResult(pyResult, url)
             Timber.i("TrackDownloadBridge.downloadBlocking: returning $result")
             result
@@ -93,13 +90,29 @@ class TrackDownloadBridge(
     }
 
     /**
+     * Invokes the Python `download` function with the given parameters.
+     * Returns the raw [PyObject] result dict.
+     */
+    private fun invokeDownload(
+        url: String,
+        config: TrackDownloadConfig,
+        listener: TrackProgressListener?,
+        ytId: String?,
+    ): PyObject? {
+        val downloader = requireDownloader(config)
+        val hook = listener?.let { HookAdapter(it) }
+        val module = Python.getInstance().getModule(moduleName)
+        return module.callAttr("download", downloader, url, hook, hook, hook, ytId)
+    }
+
+    /**
      * Path [url] would be written to, resolved without downloading — used for
      * idempotent status checks (T-035 sidecar fast path lives in Python).
      * Returns null when the track can't be resolved locally/offline.
      */
     fun expectedOutputPath(
         url: String,
-        config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT
+        config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
     ): String? {
         Timber.i("TrackDownloadBridge.expectedOutputPath: START")
         return try {
@@ -125,7 +138,7 @@ class TrackDownloadBridge(
      */
     fun cleanupTemp(
         config: TrackDownloadConfig = TrackDownloadConfig.DEFAULT,
-        ageSeconds: Double? = null
+        ageSeconds: Double? = null,
     ): Int {
         Timber.i("TrackDownloadBridge.cleanupTemp: START")
         return try {

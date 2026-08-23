@@ -12,8 +12,12 @@ import kotlinx.coroutines.withContext
 
 /**
  * Adapts the Python [PlaylistMetadataBridge] to the [SpotifyPlaylistFetcher]
- * contract the re-sync diff needs. The bridge is blocking, so the fetch runs on
- * [Dispatchers.IO]; any bridge failure becomes [SyncException.Network].
+ * contract the re-sync diff needs.
+ *
+ * The bridge is blocking, so the fetch runs on [Dispatchers.IO]; any bridge
+ * failure is wrapped in [SyncException.Network].
+ *
+ * @property bridge The Python bridge that performs the blocking network call.
  */
 class SpotifyPlaylistFetcherAdapter(
     private val bridge: PlaylistMetadataBridge,
@@ -27,14 +31,20 @@ class SpotifyPlaylistFetcherAdapter(
             when (val result = bridge.fetchPlaylistBlocking(playlistId, origin)) {
                 is PlaylistFetchResult.Success -> result.metadata
                 is PlaylistFetchResult.Failure ->
-                    throw SyncException.Network(playlistId, RuntimeException(result.error.message))
+                    throw SyncException.Network(
+                        playlistId,
+                        RuntimeException(result.error.message),
+                    )
             }
         }
 }
 
 /**
  * Adapts [MusicStore] to the [LocalFileStore] contract used by the sync diff.
- * All operations are defensive (missing/blank paths never throw).
+ *
+ * All operations are defensive: missing/blank paths never throw.
+ *
+ * @property store The underlying music file store.
  */
 class MusicStoreLocalFileStore(
     private val store: MusicStore,

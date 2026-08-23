@@ -11,7 +11,13 @@ import timber.log.Timber
  * is testable with a fake extractor.
  */
 fun interface ArtworkExtractor {
-    /** @return the embedded picture bytes (typically JPEG), or null if none / unreadable. */
+
+    /**
+     * Extracts embedded artwork from the audio file at [filePath].
+     *
+     * @param filePath absolute path to the audio file.
+     * @return the embedded picture bytes (typically JPEG), or null if none / unreadable.
+     */
     fun extractArtwork(filePath: String): ByteArray?
 }
 

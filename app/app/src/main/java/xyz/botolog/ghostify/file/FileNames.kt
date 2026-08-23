@@ -1,7 +1,5 @@
 package xyz.botolog.ghostify.file
 
-import java.nio.charset.StandardCharsets
-
 /**
  * Pure filename logic: sanitizing unsafe characters and truncating to the
  * filesystem byte limit without splitting a multi-byte UTF-8 character.
@@ -21,6 +19,10 @@ object FileNames {
     val MAX_STEM_BYTES: Int = MAX_FILENAME_BYTES - MP3_EXTENSION.length
 
     private const val FALLBACK_STEM = "track"
+    private const val CONTROL_CHAR_START = 0x00
+    private const val CONTROL_CHAR_END = 0x1F
+    private const val DEL_CODE = 0x7F
+    private const val C1_CONTROL_END = 0x9F
 
     /**
      * Characters that are illegal in filenames on common filesystems, plus the
@@ -60,9 +62,11 @@ object FileNames {
             clean(artists).ifBlank { null },
             clean(title).ifBlank { null },
         )
-        val combined = parts.joinToString(" - ").ifBlank { FALLBACK_STEM }
+        val combined = parts.joinToString(ARTIST_TITLE_SEPARATOR).ifBlank { FALLBACK_STEM }
         return truncateToBytes(combined, MAX_STEM_BYTES) + MP3_EXTENSION
     }
+
+    private const val ARTIST_TITLE_SEPARATOR = " - "
 
     private fun clean(raw: String): String {
         if (raw.isBlank()) return ""
@@ -70,7 +74,7 @@ object FileNames {
         for (ch in raw) {
             val code = ch.code
             builder.append(
-                if (ch in INVALID_CHARS || code in 0x00..0x1F || code in 0x7F..0x9F) '_' else ch
+                if (ch in INVALID_CHARS || code in CONTROL_CHAR_START..CONTROL_CHAR_END || code in DEL_CODE..C1_CONTROL_END) '_' else ch,
             )
         }
         return builder.toString().trim { it == '.' || it.isWhitespace() }
@@ -85,7 +89,7 @@ object FileNames {
     fun truncateToBytes(value: String, maxBytes: Int): String {
         require(maxBytes >= 0) { "maxBytes must be >= 0, was $maxBytes" }
         if (maxBytes == 0) return ""
-        if (value.toByteArray(StandardCharsets.UTF_8).size <= maxBytes) return value
+        if (value.toByteArray(Charsets.UTF_8).size <= maxBytes) return value
 
         val builder = StringBuilder()
         var size = 0
@@ -93,7 +97,7 @@ object FileNames {
         while (iterator.hasNext()) {
             val codePoint = iterator.nextInt()
             val charArray = Character.toChars(codePoint)
-            val charBytes = String(charArray).toByteArray(StandardCharsets.UTF_8).size
+            val charBytes = String(charArray).toByteArray(Charsets.UTF_8).size
             if (size + charBytes > maxBytes) break
             builder.append(charArray)
             size += charBytes

@@ -26,6 +26,10 @@ enum class DownloadErrorKind {
     UNKNOWN;
 
     companion object {
+        private const val KIND_SEPARATOR = ": "
+        private const val KIND_SEPARATOR_LENGTH = 2
+        private const val FALLBACK_MESSAGE = "Download failed."
+
         /**
          * Extracts the first recognised [ErrorKind] token from a Chaquopy
          * exception message. Chaquopy prefixes the Python exception type name, so
@@ -34,12 +38,12 @@ enum class DownloadErrorKind {
         private val WIRE_PATTERN = Regex(
             "\\b(NO_TRACK|METADATA_FAILED|SEARCH_FAILED|AUDIO_UNAVAILABLE|" +
                 "CONVERSION_FAILED|TAGGING_FAILED|VALIDATION_FAILED|IO|" +
-                "INTERRUPTED|DEPENDENCY|UNKNOWN)\\b"
+                "INTERRUPTED|DEPENDENCY|UNKNOWN)\\b",
         )
 
         fun fromWire(token: String?): DownloadErrorKind {
             if (token.isNullOrBlank()) return UNKNOWN
-            for (value in values()) if (value.name == token) return value
+            for (value in entries) if (value.name == token) return value
             return UNKNOWN
         }
 
@@ -55,10 +59,10 @@ enum class DownloadErrorKind {
          * found, or the full message otherwise. Never returns blank.
          */
         fun humanMessage(message: String?): String {
-            if (message.isNullOrEmpty()) return "Download failed."
+            if (message.isNullOrEmpty()) return FALLBACK_MESSAGE
             val match = WIRE_PATTERN.find(message)
             if (match != null) {
-                val start = match.range.last + 2 // skip "KIND: "
+                val start = match.range.last + KIND_SEPARATOR_LENGTH
                 if (start <= message.length) {
                     val after = message.substring(start).trim()
                     if (after.isNotEmpty()) return after
@@ -82,13 +86,13 @@ data class DownloadError(
     val wireType: String? = null
 ) {
     companion object {
+        private const val FALLBACK_MESSAGE = "The track could not be downloaded."
+
         /** Fallback for failures that could not be classified. (T-021 style.) */
-        fun unknown(rawMessage: String?): DownloadError =
-            DownloadError(
-                kind = DownloadErrorKind.UNKNOWN,
-                message = rawMessage?.takeIf { !it.isNullOrBlank() }
-                    ?: "The track could not be downloaded."
-            )
+        fun unknown(rawMessage: String?): DownloadError = DownloadError(
+            kind = DownloadErrorKind.UNKNOWN,
+            message = rawMessage?.takeIf { !it.isNullOrBlank() } ?: FALLBACK_MESSAGE,
+        )
     }
 }
 
@@ -100,22 +104,30 @@ data class TrackInfo(
     val artists: String?,
     val album: String?,
     val durationMs: Long?,
-    val coverUrl: String?
+    val coverUrl: String?,
 ) {
     companion object {
+        private const val KEY_URL = "url"
+        private const val KEY_SPOTIFY_ID = "spotify_id"
+        private const val KEY_TITLE = "title"
+        private const val KEY_ARTISTS = "artists"
+        private const val KEY_ALBUM = "album"
+        private const val KEY_DURATION_MS = "duration_ms"
+        private const val KEY_COVER_URL = "cover_url"
+
         /**
          * Parses the map Python hands to `on_download_start`
          * (`ghostify_dl._track_dict`). Fully defensive: missing/wrong-typed
          * fields fall back to null rather than throwing.
          */
         fun fromMap(map: Map<*, *>): TrackInfo = TrackInfo(
-            url = map["url"] as? String ?: "",
-            spotifyId = map["spotify_id"] as? String,
-            title = map["title"] as? String,
-            artists = map["artists"] as? String,
-            album = map["album"] as? String,
-            durationMs = (map["duration_ms"] as? Number)?.toLong(),
-            coverUrl = map["cover_url"] as? String
+            url = map[KEY_URL] as? String ?: "",
+            spotifyId = map[KEY_SPOTIFY_ID] as? String,
+            title = map[KEY_TITLE] as? String,
+            artists = map[KEY_ARTISTS] as? String,
+            album = map[KEY_ALBUM] as? String,
+            durationMs = (map[KEY_DURATION_MS] as? Number)?.toLong(),
+            coverUrl = map[KEY_COVER_URL] as? String,
         )
     }
 }
@@ -156,6 +168,11 @@ sealed class TrackDownloadResult {
     ) : TrackDownloadResult()
 
     companion object {
+        private const val STATUS_DOWNLOADED = "DOWNLOADED"
+        private const val STATUS_SKIPPED = "SKIPPED"
+        private const val STATUS_FAILED = "FAILED"
+        private const val UNEXPECTED_STATUS_PREFIX = "Unexpected download status: "
+
         /**
          * Parses the result dict returned by `ghostify_dl.download` (and the
          * `on_download_complete` payload — they share this shape). Unknown
@@ -164,46 +181,75 @@ sealed class TrackDownloadResult {
         fun fromMap(map: Map<*, *>): TrackDownloadResult {
             val status = map["status"] as? String
             val url = map["url"] as? String ?: ""
-            val title = map["title"] as? String
-            val artists = map["artists"] as? String
-            val album = map["album"] as? String
-            val bitrate = map["bitrate"] as? String
-            val durationMs = (map["duration_ms"] as? Number)?.toLong()
-            val fileSize = (map["file_size"] as? Number)?.toLong()
+            val metadata = parseMetadata(map)
             return when (status) {
-                "DOWNLOADED" -> Downloaded(
-                    url = url,
-                    outputPath = (map["output_path"] as? String) ?: "",
-                    fileSize = fileSize,
-                    title = title,
-                    artists = artists,
-                    album = album,
-                    bitrate = bitrate,
-                    durationMs = durationMs
-                )
-                "SKIPPED" -> Skipped(
-                    url = url,
-                    outputPath = (map["output_path"] as? String) ?: "",
-                    title = title,
-                    artists = artists,
-                    album = album,
-                    bitrate = bitrate
-                )
-                "FAILED" -> Failure(
-                    url = url,
-                    error = DownloadError(
-                        kind = DownloadErrorKind.fromWire(map["error_type"] as? String),
-                        message = DownloadErrorKind.humanMessage(map["error"] as? String),
-                        wireType = map["error_type"] as? String
-                    )
-                )
-                else -> Failure(
-                    url = url,
-                    error = DownloadError.unknown(
-                        "Unexpected download status: " + (status?.toString() ?: "null")
-                    )
-                )
+                STATUS_DOWNLOADED -> parseDownloaded(url, map, metadata)
+                STATUS_SKIPPED -> parseSkipped(url, map, metadata)
+                STATUS_FAILED -> parseFailure(url, map)
+                else -> unexpectedStatus(url, status)
             }
         }
+
+        private data class TrackMetadata(
+            val title: String?,
+            val artists: String?,
+            val album: String?,
+            val bitrate: String?,
+            val durationMs: Long?,
+            val fileSize: Long?,
+        )
+
+        private fun parseMetadata(map: Map<*, *>): TrackMetadata = TrackMetadata(
+            title = map["title"] as? String,
+            artists = map["artists"] as? String,
+            album = map["album"] as? String,
+            bitrate = map["bitrate"] as? String,
+            durationMs = (map["duration_ms"] as? Number)?.toLong(),
+            fileSize = (map["file_size"] as? Number)?.toLong(),
+        )
+
+        private fun parseDownloaded(
+            url: String,
+            map: Map<*, *>,
+            metadata: TrackMetadata,
+        ): Downloaded = Downloaded(
+            url = url,
+            outputPath = (map["output_path"] as? String) ?: "",
+            fileSize = metadata.fileSize,
+            title = metadata.title,
+            artists = metadata.artists,
+            album = metadata.album,
+            bitrate = metadata.bitrate,
+            durationMs = metadata.durationMs,
+        )
+
+        private fun parseSkipped(
+            url: String,
+            map: Map<*, *>,
+            metadata: TrackMetadata,
+        ): Skipped = Skipped(
+            url = url,
+            outputPath = (map["output_path"] as? String) ?: "",
+            title = metadata.title,
+            artists = metadata.artists,
+            album = metadata.album,
+            bitrate = metadata.bitrate,
+        )
+
+        private fun parseFailure(url: String, map: Map<*, *>): Failure = Failure(
+            url = url,
+            error = DownloadError(
+                kind = DownloadErrorKind.fromWire(map["error_type"] as? String),
+                message = DownloadErrorKind.humanMessage(map["error"] as? String),
+                wireType = map["error_type"] as? String,
+            ),
+        )
+
+        private fun unexpectedStatus(url: String, status: String?): Failure = Failure(
+            url = url,
+            error = DownloadError.unknown(
+                UNEXPECTED_STATUS_PREFIX + (status?.toString() ?: "null"),
+            ),
+        )
     }
 }

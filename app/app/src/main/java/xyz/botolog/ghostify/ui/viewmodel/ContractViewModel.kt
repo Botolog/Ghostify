@@ -21,11 +21,18 @@ abstract class ContractViewModel {
     /** Backs every state subscription so [clear] cancels the whole chain. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    /** Starts a coroutine bound to this VM's lifetime. */
+    /**
+     * Starts a coroutine bound to this ViewModel's lifetime.
+     *
+     * @param block the suspend block to execute.
+     * @return the [Job] representing the launched coroutine.
+     */
     protected fun launch(block: suspend CoroutineScope.() -> Unit): Job =
         scope.launch { block() }
 
-    /** Cancels every coroutine started in this VM (called at teardown). */
+    /**
+     * Cancels every coroutine started in this ViewModel (called at teardown).
+     */
     fun clear() {
         Timber.d("ContractViewModel.clear: START")
         scope.cancel()

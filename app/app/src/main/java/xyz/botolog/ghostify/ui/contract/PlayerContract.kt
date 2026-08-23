@@ -13,30 +13,67 @@ import kotlinx.coroutines.flow.StateFlow
  */
 interface PlayerContract {
 
+    /** Observable UI state for the Player screen. */
     val state: StateFlow<PlayerUiState>
 
+    /** Toggle between play and pause. */
     fun togglePlay()
 
+    /** Skip to the next track in the queue. */
     fun next()
 
+    /** Skip to the previous track in the queue. */
     fun previous()
 
+    /**
+     * Seek to an absolute position within the current track.
+     *
+     * @param positionMs target position in milliseconds.
+     */
     fun seekTo(positionMs: Long)
 
+    /** Toggle shuffle mode on or off. */
     fun toggleShuffle()
 
-    /** Cycles repeat OFF -> ALL -> ONE -> OFF. */
+    /**
+     * Cycles repeat mode in the order OFF → ALL → ONE → OFF.
+     */
     fun cycleRepeat()
 
+    /**
+     * Set the playback volume.
+     *
+     * @param fraction volume level in the range `0f` (mute) to `1f` (full).
+     */
     fun setVolume(fraction: Float)
 
-    /** Jump to the queue item at [index]. */
+    /**
+     * Jump to a specific index in the playback queue.
+     *
+     * @param index zero-based position in the queue.
+     */
     fun jumpToQueueIndex(index: Int)
 
+    /** Toggle the queue drawer open/closed. */
     fun toggleQueue()
 
+    /** Close the queue drawer. */
     fun closeQueue()
 
+    /**
+     * Immutable UI state for the Player screen.
+     *
+     * @property empty `true` when there is nothing to play.
+     * @property nowPlaying metadata of the currently playing track, or `null`.
+     * @property isPlaying `true` when playback is active.
+     * @property positionMs current playback position in milliseconds.
+     * @property durationMs total duration of the current track in milliseconds.
+     * @property shuffle `true` when shuffle mode is enabled.
+     * @property repeatMode current repeat mode.
+     * @property volume playback volume in the range `0f..1f`.
+     * @property queue the ordered list of tracks in the queue.
+     * @property queueOpen `true` when the queue drawer is visible.
+     */
     data class PlayerUiState(
         val empty: Boolean = true,
         val nowPlaying: NowPlaying? = null,
@@ -45,7 +82,6 @@ interface PlayerContract {
         val durationMs: Long = 0,
         val shuffle: Boolean = false,
         val repeatMode: RepeatMode = RepeatMode.OFF,
-        /** 0f..1f. */
         val volume: Float = 0.8f,
         val queue: List<QueueItem> = emptyList(),
         val queueOpen: Boolean = false,

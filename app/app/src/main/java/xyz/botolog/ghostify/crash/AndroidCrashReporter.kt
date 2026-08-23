@@ -15,29 +15,24 @@ import timber.log.Timber
  *
  * Guarantees: never throws (a failing reporter must not mask the crash), bounded log size,
  * no PII beyond stack traces, no dialogs.
+ *
+ * @param context the application context for file access.
+ * @param marker the crash marker to flag unclean shutdowns.
  */
 class FileLogCrashReporter(
     context: Context,
     private val marker: CrashMarker,
 ) : CrashReporter {
 
-    private val logFile = File(context.filesDir, "crash_log.txt")
-    private val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z")
+    private val logFile = File(context.filesDir, LOG_FILE_NAME)
+    private val formatter = DateTimeFormatter.ofPattern(TIMESTAMP_FORMAT)
         .withZone(ZoneId.systemDefault())
 
     override fun report(crash: Crash): Boolean {
         Timber.e("FileLogCrashReporter.report: START")
         val result = runCatching {
             marker.markCrashDetected()
-            val entry = buildString {
-                append("== ${formatter.format(Instant.ofEpochMilli(crash.timestampMs))} ==\n")
-                append("Thread: ${crash.thread.name}\n")
-                append("Type: ${crash.type}\n")
-                append("Message: ${crash.throwable.message}\n")
-                append("Mapped: ${ErrorMapper.map(crash.throwable).code}\n")
-                append(crash.stackTraceText)
-                append("\n\n")
-            }
+            val entry = buildEntry(crash)
             val previous = logFile.takeIf { it.exists() }?.readText()?.takeLast(MAX_LOG_CHARS) ?: ""
             logFile.writeText(previous + entry)
             Log.w(TAG, "Uncaught crash: ${crash.type}", crash.throwable)
@@ -47,13 +42,36 @@ class FileLogCrashReporter(
         return result
     }
 
+    /** Builds a single crash log entry with timestamp, thread, type, and stack trace. */
+    private fun buildEntry(crash: Crash): String = buildString {
+        append("$SECTION_SEPARATOR${formatter.format(Instant.ofEpochMilli(crash.timestampMs))}$SECTION_SUFFIX\n")
+        append("$THREAD_HEADER${crash.thread.name}\n")
+        append("$TYPE_HEADER${crash.type}\n")
+        append("$MESSAGE_HEADER${crash.throwable.message}\n")
+        append("$MAPPED_HEADER${ErrorMapper.map(crash.throwable).code}\n")
+        append(crash.stackTraceText)
+        append("\n\n")
+    }
+
     companion object {
         private const val TAG = "GhostifyCrash"
         private const val MAX_LOG_CHARS = 64 * 1024
+        private const val LOG_FILE_NAME = "crash_log.txt"
+        private const val TIMESTAMP_FORMAT = "yyyy-MM-dd HH:mm:ss z"
+        private const val THREAD_HEADER = "Thread: "
+        private const val TYPE_HEADER = "Type: "
+        private const val MESSAGE_HEADER = "Message: "
+        private const val MAPPED_HEADER = "Mapped: "
+        private const val SECTION_SEPARATOR = "== "
+        private const val SECTION_SUFFIX = " =="
     }
 }
 
-/** [CrashMarker] backed by a private SharedPreferences file. */
+/**
+ * [CrashMarker] backed by a private SharedPreferences file.
+ *
+ * @param context the application context for SharedPreferences access.
+ */
 class PrefsCrashMarker(context: Context) : CrashMarker {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

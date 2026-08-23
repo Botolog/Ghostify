@@ -21,6 +21,9 @@ package xyz.botolog.ghostify.perf
  * exactly what the battery budget wants from background work.
  *
  * Pure JVM — unit-tested in `UiBusyLoopGuardTest`.
+ *
+ * @param minIntervalMillis minimum milliseconds between emissions (default 500).
+ * @param clock a time source returning epoch millis (default [System.currentTimeMillis]).
  */
 class CoalescingThrottle(
     private val minIntervalMillis: Long = DEFAULT_MIN_INTERVAL_MILLIS,

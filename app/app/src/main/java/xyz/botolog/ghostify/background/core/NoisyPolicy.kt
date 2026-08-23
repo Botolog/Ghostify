@@ -11,8 +11,16 @@ import timber.log.Timber
  * `AudioManager.ACTION_AUDIO_BECOMING_NOISY`) so it is JVM-testable.
  */
 object NoisyPolicy {
+
+    /** Intent action broadcast when the audio output becomes noisy. */
     const val ACTION_AUDIO_BECOMING_NOISY: String = "android.media.AUDIO_BECOMING_NOISY"
 
+    /**
+     * Determines whether the player should pause for the given intent action.
+     *
+     * @param intentAction the action from the received broadcast intent.
+     * @return true if the player should pause.
+     */
     fun shouldPause(intentAction: String?): Boolean {
         Timber.i("NoisyPolicy.shouldPause: START")
         val result = intentAction == ACTION_AUDIO_BECOMING_NOISY

@@ -20,11 +20,19 @@ data class TrackDownloadConfig(
     val ffmpeg: String = "ffmpeg"
 ) {
     companion object {
+        /** Default bitrate in kbps. */
         const val DEFAULT_BITRATE = 192
+
+        /** Default spotdl output template. */
         const val DEFAULT_TEMPLATE = "{artists} - {title}"
+
+        /** Allowed bitrate values in kbps. */
         val ALLOWED_BITRATES = intArrayOf(128, 192, 320)
+
+        /** Returns true when [b] is a valid bitrate. */
         fun isValidBitrate(b: Int): Boolean = b in ALLOWED_BITRATES
 
+        /** Default configuration with an empty output directory. */
         val DEFAULT: TrackDownloadConfig
             get() = TrackDownloadConfig(outputDir = "", bitrate = DEFAULT_BITRATE)
     }

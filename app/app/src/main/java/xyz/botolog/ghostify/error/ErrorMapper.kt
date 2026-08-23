@@ -27,6 +27,11 @@ import java.util.concurrent.TimeoutException
  */
 object ErrorMapper {
 
+    private const val HTTP_400 = "HTTP 400"
+    private const val HTTP_401 = "HTTP 401"
+    private const val HTTP_403 = "HTTP 403"
+    private const val HTTP_404 = "HTTP 404"
+
     fun map(error: AppError): AppError = error
 
     fun map(throwable: Throwable): AppError {
@@ -47,12 +52,12 @@ object ErrorMapper {
     fun map(statusCode: Int, detail: String? = null, cause: Throwable? = null): AppError {
         Timber.i("ErrorMapper.map: START")
         return when (statusCode) {
-        400 -> InvalidUrlError(detail = detail ?: "HTTP 400", causeOf = cause)
-        401 -> ApiError(statusCode = statusCode, detail = detail ?: "HTTP 401", causeOf = cause)
-        403 -> PrivatePlaylistError(detail = detail ?: "HTTP 403", causeOf = cause)
-        404 -> NotFoundError(detail = detail ?: "HTTP 404", causeOf = cause)
-        429 -> RateLimitError(detail = detail, causeOf = cause)
-        else -> ApiError(statusCode = statusCode, detail = detail, causeOf = cause)
+            400 -> InvalidUrlError(detail = detail ?: HTTP_400, causeOf = cause)
+            401 -> ApiError(statusCode = statusCode, detail = detail ?: HTTP_401, causeOf = cause)
+            403 -> PrivatePlaylistError(detail = detail ?: HTTP_403, causeOf = cause)
+            404 -> NotFoundError(detail = detail ?: HTTP_404, causeOf = cause)
+            429 -> RateLimitError(detail = detail, causeOf = cause)
+            else -> ApiError(statusCode = statusCode, detail = detail, causeOf = cause)
         }
     }
 

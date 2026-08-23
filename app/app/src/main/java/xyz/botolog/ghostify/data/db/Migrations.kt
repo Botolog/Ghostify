@@ -31,7 +31,7 @@ import timber.log.Timber
  */
 object Migrations {
 
-    /** The v1 -> v2 DDL, in dependency order. */
+    /** The v1 → v2 DDL, in dependency order. */
     val MIGRATION_1_2_STATEMENTS: List<String> = listOf(
         // 1. New column — nullable, so no backfill of existing rows is required.
         "ALTER TABLE songs ADD COLUMN yt_id TEXT",
@@ -42,9 +42,10 @@ object Migrations {
         "CREATE INDEX index_songs_playlist_id_status ON songs (playlist_id, status)",
         // 3. Settings key/value store.
         "CREATE TABLE IF NOT EXISTS `settings` (`key` TEXT NOT NULL, `value` TEXT NOT NULL, " +
-            "PRIMARY KEY(`key`))"
+            "PRIMARY KEY(`key`))",
     )
 
+    /** v1 → v2 migration. */
     val MIGRATION_1_2: Migration = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {
             Timber.d("Migrations.MIGRATION_1_2.migrate")
@@ -52,11 +53,12 @@ object Migrations {
         }
     }
 
-    /** The v2 -> v3 DDL. Single nullable column — no backfill required. */
+    /** The v2 → v3 DDL. Single nullable column — no backfill required. */
     val MIGRATION_2_3_STATEMENTS: List<String> = listOf(
-        "ALTER TABLE songs ADD COLUMN error TEXT"
+        "ALTER TABLE songs ADD COLUMN error TEXT",
     )
 
+    /** v2 → v3 migration. */
     val MIGRATION_2_3: Migration = object : Migration(2, 3) {
         override fun migrate(db: SupportSQLiteDatabase) {
             Timber.d("Migrations.MIGRATION_2_3.migrate")
@@ -64,11 +66,12 @@ object Migrations {
         }
     }
 
-    /** The v3 -> v4 DDL. Adds user-defined sort order to playlists. */
+    /** The v3 → v4 DDL. Adds user-defined sort order to playlists. */
     val MIGRATION_3_4_STATEMENTS: List<String> = listOf(
-        "ALTER TABLE playlists ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+        "ALTER TABLE playlists ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
     )
 
+    /** v3 → v4 migration. */
     val MIGRATION_3_4: Migration = object : Migration(3, 4) {
         override fun migrate(db: SupportSQLiteDatabase) {
             Timber.d("Migrations.MIGRATION_3_4.migrate")
@@ -76,7 +79,7 @@ object Migrations {
         }
     }
 
-    /** The v4 -> v5 DDL. Adds `origin` column and remaps the unique index. */
+    /** The v4 → v5 DDL. Adds `origin` column and remaps the unique index. */
     val MIGRATION_4_5_STATEMENTS: List<String> = listOf(
         "ALTER TABLE playlists ADD COLUMN origin TEXT NOT NULL DEFAULT 'SPOTIFY'",
         // Drop the old single-column unique index and recreate as (spotify_id, origin).
@@ -84,6 +87,7 @@ object Migrations {
         "CREATE UNIQUE INDEX index_playlists_spotify_id_origin ON playlists (spotify_id, origin)",
     )
 
+    /** v4 → v5 migration. */
     val MIGRATION_4_5: Migration = object : Migration(4, 5) {
         override fun migrate(db: SupportSQLiteDatabase) {
             Timber.d("Migrations.MIGRATION_4_5.migrate")
@@ -91,7 +95,11 @@ object Migrations {
         }
     }
 
+    /** All migrations in order, passed to [Room.databaseBuilder]. */
     val ALL: Array<Migration> = arrayOf(
-        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5
+        MIGRATION_1_2,
+        MIGRATION_2_3,
+        MIGRATION_3_4,
+        MIGRATION_4_5,
     )
 }

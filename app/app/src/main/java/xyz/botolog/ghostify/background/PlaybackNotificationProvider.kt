@@ -11,6 +11,12 @@ import timber.log.Timber
 /**
  * Default Media3 notification provider with a **Shutdown** button on the left (kills
  * the app) and the standard previous/play-pause/next buttons.
+ *
+ * The shutdown button issues a custom [SessionCommand] with action [ACTION_SHUTDOWN],
+ * which [PlaybackService] intercepts to terminate the process.
+ *
+ * @param context used for notification resources.
+ * @param smallIconResId drawable resource for the notification small icon.
  */
 class PlaybackNotificationProvider(
     context: Context,
@@ -21,6 +27,15 @@ class PlaybackNotificationProvider(
         setSmallIcon(smallIconResId)
     }
 
+    /**
+     * Prepends a Shutdown button to the default media buttons.
+     *
+     * @param session the active media session.
+     * @param commands the commands supported by the session.
+     * @param commandButtons the default command buttons provided by the parent.
+     * @param showCompact whether the compact notification is being rendered.
+     * @return an immutable list of buttons with Shutdown at the front.
+     */
     override fun getMediaButtons(
         session: MediaSession,
         commands: Player.Commands,
@@ -42,7 +57,11 @@ class PlaybackNotificationProvider(
     }
 
     companion object {
+
+        /** Custom session command action that triggers a full process shutdown. */
         const val ACTION_SHUTDOWN = "xyz.botolog.ghostify.SHUTDOWN"
+
+        /** Display label shown on the shutdown button. */
         private const val SHUTDOWN_LABEL = "Shutdown"
     }
 }

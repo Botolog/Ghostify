@@ -3,6 +3,7 @@ package xyz.botolog.ghostify.ui.playlist
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -53,6 +54,9 @@ import xyz.botolog.ghostify.ui.model.SongStatus
 import xyz.botolog.ghostify.ui.model.TrackUi
 import xyz.botolog.ghostify.ui.util.DurationFormat
 
+/**
+ * Test tag constants for the playlist detail screen. Used by Compose UI tests to locate elements.
+ */
 object PlaylistDetailTestTags {
     const val COVER = "detail_cover"
     const val TRACK_LIST = "track_list"
@@ -65,10 +69,34 @@ object PlaylistDetailTestTags {
     const val LOADING = "detail_loading"
     const val ERROR = "detail_error"
 
+    /**
+     * Returns the test tag for a specific track row.
+     *
+     * @param id unique track identifier.
+     */
     fun track(id: String) = "track_item_$id"
+
+    /**
+     * Returns the test tag for a track status icon.
+     *
+     * @param status the [SongStatus] to render a tag for.
+     */
     fun trackStatus(status: SongStatus) = "track_status_$status"
 }
 
+private val COVER_SIZE = 72.dp
+private val ICON_SIZE = 18.dp
+private val STATUS_ICON_SIZE = 20.dp
+private val TRACK_STATUS_BOX_SIZE = 24.dp
+private val SYNC_INDICATOR_SIZE = 16.dp
+
+/**
+ * Full screen showing playlist details including cover art, track list, and action buttons.
+ *
+ * @param contract ViewModel contract driving the playlist detail state and actions.
+ * @param onBack callback invoked when the back button is tapped.
+ * @param modifier optional modifier applied to the screen root.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistDetailScreen(
@@ -92,27 +120,45 @@ fun PlaylistDetailScreen(
             )
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            when {
-                state.loading && state.tracks.isEmpty() -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .testTag(PlaylistDetailTestTags.LOADING),
-                    )
-                }
+        PlaylistDetailContent(
+            state = state,
+            contract = contract,
+            padding = padding,
+        )
+    }
+}
 
-                state.error != null && state.tracks.isEmpty() -> ErrorState(
-                    message = state.error!!,
-                    onRetry = contract::sync,
+/**
+ * Main content area of the playlist detail screen, switching between loading, error, and
+ * content states.
+ */
+@Composable
+private fun PlaylistDetailContent(
+    state: PlaylistDetailUiState,
+    contract: PlaylistDetailContract,
+    padding: PaddingValues,
+) {
+    Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        when {
+            state.loading && state.tracks.isEmpty() -> {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .testTag(PlaylistDetailTestTags.LOADING),
                 )
-
-                else -> PlaylistContent(state = state, contract = contract)
             }
+            state.error != null && state.tracks.isEmpty() -> ErrorState(
+                message = state.error,
+                onRetry = contract::sync,
+            )
+            else -> PlaylistContent(state = state, contract = contract)
         }
     }
 }
 
+/**
+ * Error state with a message and retry button.
+ */
 @Composable
 private fun ErrorState(message: String, onRetry: () -> Unit) {
     Column(
@@ -121,7 +167,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
             .padding(32.dp)
             .testTag(PlaylistDetailTestTags.ERROR),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        verticalArrangement = Arrangement.Center,
     ) {
         Text(message, style = MaterialTheme.typography.bodyLarge)
         Spacer(modifier = Modifier.height(12.dp))
@@ -129,6 +175,9 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
     }
 }
 
+/**
+ * Full playlist content: header, action bar, optional syncing indicator, and track list.
+ */
 @Composable
 private fun PlaylistContent(
     state: PlaylistDetailUiState,
@@ -138,38 +187,38 @@ private fun PlaylistContent(
         PlaylistHeader(state = state)
         ActionBar(state = state, contract = contract)
 
-        if (state.isSyncing) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .testTag(PlaylistDetailTestTags.SYNCING),
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Syncing with Spotify…", style = MaterialTheme.typography.bodySmall)
-            }
-        }
+        SyncingIndicator(isSyncing = state.isSyncing)
 
-        LazyColumn(
+        TrackList(
+            tracks = state.tracks,
+            contract = contract,
+        )
+    }
+}
+
+/**
+ * Shows a syncing indicator row when a sync operation is in progress.
+ */
+@Composable
+private fun SyncingIndicator(isSyncing: Boolean) {
+    if (isSyncing) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .fillMaxSize()
-                .testTag(PlaylistDetailTestTags.TRACK_LIST),
-            contentPadding = PaddingValues(vertical = 8.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .testTag(PlaylistDetailTestTags.SYNCING),
         ) {
-            items(state.tracks, key = { it.id }) { track ->
-                TrackRow(
-                    track = track,
-                    onPlay = { contract.playFromSong(track.id) },
-                    onDownload = { contract.downloadSong(track.id) },
-                    onRetry = { contract.retryTrack(track.id) },
-                )
-            }
+            CircularProgressIndicator(modifier = Modifier.size(SYNC_INDICATOR_SIZE))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Syncing with Spotify…", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
+/**
+ * Header section with playlist cover art, name, and track count.
+ */
 @Composable
 private fun PlaylistHeader(state: PlaylistDetailUiState) {
     Row(
@@ -182,13 +231,18 @@ private fun PlaylistHeader(state: PlaylistDetailUiState) {
             model = state.coverUrl,
             contentDescription = "Playlist cover",
             modifier = Modifier
-                .size(72.dp)
+                .size(COVER_SIZE)
                 .testTag(PlaylistDetailTestTags.COVER),
             contentScale = ContentScale.Crop,
         )
         Spacer(modifier = Modifier.width(16.dp))
         Column {
-            Text(state.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                state.name,
+                style = MaterialTheme.typography.headlineSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Text(
                 text = "${state.trackCount} tracks · ${state.downloadedCount} downloaded",
                 style = MaterialTheme.typography.bodyMedium,
@@ -198,6 +252,9 @@ private fun PlaylistHeader(state: PlaylistDetailUiState) {
     }
 }
 
+/**
+ * Action bar with Play, Download, and Sync buttons, plus a hint when no tracks are downloaded.
+ */
 @Composable
 private fun ActionBar(
     state: PlaylistDetailUiState,
@@ -208,7 +265,7 @@ private fun ActionBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Button(
             onClick = contract::playAll,
@@ -217,43 +274,19 @@ private fun ActionBar(
                 .weight(1f)
                 .testTag(PlaylistDetailTestTags.PLAY_ALL),
         ) {
-            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(ICON_SIZE))
             Spacer(modifier = Modifier.width(4.dp))
             Text("Play")
         }
 
-        if (state.isDownloadingAll) {
-            Button(
-                onClick = {},
-                enabled = false,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(PlaylistDetailTestTags.DOWNLOAD_ALL),
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Downloading ${state.downloadAllProgress ?: 0}%")
-                    LinearProgressIndicator(
-                        progress = { ((state.downloadAllProgress ?: 0) / 100f).coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                            .testTag(PlaylistDetailTestTags.DOWNLOAD_PROGRESS),
-                    )
-                }
-            }
-        } else {
-            OutlinedButton(
-                onClick = contract::downloadAll,
-                enabled = hasTracks && !state.isSyncing,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(PlaylistDetailTestTags.DOWNLOAD_ALL),
-            ) {
-                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Download")
-            }
-        }
+        DownloadAllButton(
+            isDownloading = state.isDownloadingAll,
+            progress = state.downloadAllProgress,
+            hasTracks = hasTracks,
+            isSyncing = state.isSyncing,
+            onDownloadAll = contract::downloadAll,
+            modifier = Modifier.weight(1f),
+        )
 
         OutlinedButton(
             onClick = contract::sync,
@@ -262,7 +295,7 @@ private fun ActionBar(
                 .weight(1f)
                 .testTag(PlaylistDetailTestTags.RESYNC),
         ) {
-            Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(ICON_SIZE))
             Spacer(modifier = Modifier.width(4.dp))
             Text(if (state.isSyncing) "Syncing…" else "Sync")
         }
@@ -280,6 +313,79 @@ private fun ActionBar(
     }
 }
 
+/**
+ * Download all button that shows progress while downloading, or an outlined button when idle.
+ */
+@Composable
+private fun DownloadAllButton(
+    isDownloading: Boolean,
+    progress: Int?,
+    hasTracks: Boolean,
+    isSyncing: Boolean,
+    onDownloadAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (isDownloading) {
+        Button(
+            onClick = {},
+            enabled = false,
+            modifier = modifier
+                .testTag(PlaylistDetailTestTags.DOWNLOAD_ALL),
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Downloading ${progress ?: 0}%")
+                LinearProgressIndicator(
+                    progress = { ((progress ?: 0) / 100f).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .testTag(PlaylistDetailTestTags.DOWNLOAD_PROGRESS),
+                )
+            }
+        }
+    } else {
+        OutlinedButton(
+            onClick = onDownloadAll,
+            enabled = hasTracks && !isSyncing,
+            modifier = modifier
+                .testTag(PlaylistDetailTestTags.DOWNLOAD_ALL),
+        ) {
+            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(ICON_SIZE))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Download")
+        }
+    }
+}
+
+/**
+ * Scrollable list of tracks in the playlist.
+ */
+@Composable
+private fun TrackList(
+    tracks: List<TrackUi>,
+    contract: PlaylistDetailContract,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag(PlaylistDetailTestTags.TRACK_LIST),
+        contentPadding = PaddingValues(vertical = 8.dp),
+    ) {
+        items(tracks, key = { it.id }) { track ->
+            TrackRow(
+                track = track,
+                onPlay = { contract.playFromSong(track.id) },
+                onDownload = { contract.downloadSong(track.id) },
+                onRetry = { contract.retryTrack(track.id) },
+            )
+        }
+    }
+}
+
+/**
+ * A single track row showing title, artists, duration, and status. Tap action depends on
+ * the download status: play if downloaded, download if pending, retry if failed.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TrackRow(
@@ -311,38 +417,7 @@ private fun TrackRow(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = track.title,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = track.artists,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            when {
-                isFailed -> Text(
-                    text = "Failed — tap to retry",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                !isDownloaded -> Text(
-                    text = "Tap to download",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                else -> Text(
-                    text = "Tap to play from here",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
+        TrackInfoColumn(track = track, isFailed = isFailed, isDownloaded = isDownloaded, modifier = Modifier.weight(1f))
 
         Text(
             text = DurationFormat.format(track.durationMs),
@@ -356,11 +431,58 @@ private fun TrackRow(
     }
 }
 
+/**
+ * Track title, artists, and contextual status hint (failed / tap to download / tap to play).
+ */
+@Composable
+private fun TrackInfoColumn(
+    track: TrackUi,
+    isFailed: Boolean,
+    isDownloaded: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = track.title,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = track.artists,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        when {
+            isFailed -> Text(
+                text = "Failed — tap to retry",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            !isDownloaded -> Text(
+                text = "Tap to download",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            else -> Text(
+                text = "Tap to play from here",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/**
+ * Icon representing the current download status of a track.
+ */
 @Composable
 private fun TrackStatusIcon(status: SongStatus) {
     Box(
         modifier = Modifier
-            .size(24.dp)
+            .size(TRACK_STATUS_BOX_SIZE)
             .testTag(PlaylistDetailTestTags.trackStatus(status)),
         contentAlignment = Alignment.Center,
     ) {
@@ -369,30 +491,26 @@ private fun TrackStatusIcon(status: SongStatus) {
                 Icons.Filled.CheckCircle,
                 contentDescription = "Downloaded",
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(STATUS_ICON_SIZE),
             )
-
-            SongStatus.DOWNLOADING -> CircularProgressIndicator(modifier = Modifier.size(20.dp))
-
+            SongStatus.DOWNLOADING -> CircularProgressIndicator(modifier = Modifier.size(STATUS_ICON_SIZE))
             SongStatus.QUEUED -> Icon(
                 Icons.Filled.HourglassEmpty,
                 contentDescription = "Queued",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(STATUS_ICON_SIZE),
             )
-
             SongStatus.PENDING -> Icon(
                 Icons.Filled.Download,
                 contentDescription = "Pending",
                 tint = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(STATUS_ICON_SIZE),
             )
-
             SongStatus.FAILED -> Icon(
                 Icons.Filled.ErrorOutline,
                 contentDescription = "Failed",
                 tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(STATUS_ICON_SIZE),
             )
         }
     }

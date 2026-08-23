@@ -55,7 +55,7 @@ object JvmFileSystem : FileSystem {
         file.parentFile?.mkdirs()
         file.writeBytes(bytes)
         true
-    } catch (t: Throwable) {
+    } catch (_: Throwable) {
         false
     }
 }

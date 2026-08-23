@@ -90,53 +90,65 @@ class PlayerController private constructor(
      * reports the "nothing to play" state and stays idle. This is the *only* way the queue
      * changes; the controller never observes the database itself.
      *
+     * @param songs list of songs from which to build the playback queue.
      * @param startSongId optional song to start from (by `songs.id`); defaults to the first item.
      */
     fun playPlaylist(songs: List<Song>, startSongId: String? = null) {
         Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId")
         scope.launch(Dispatchers.IO) {
             when (val result = queueBuilder.build(songs, startSongId)) {
-                is QueueBuildResult.NothingToPlay -> withContext(Dispatchers.Main.immediate) {
-                    Timber.w("playPlaylist: nothing to play")
-                    nothingToPlay = true
-                    lastError = null
-                    artworkByMediaId.clear()
-                    exoPlayer.clearMediaItems()
-                    _state.update {
-                        PlayerUiState(
-                            nothingToPlay = true,
-                            shuffleEnabled = exoPlayer.shuffleModeEnabled,
-                            repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode),
-                            volume = exoPlayer.volume,
-                        )
-                    }
-                }
-
-                is QueueBuildResult.Ready -> {
-                    val mediaItems = buildMediaItems(result.items)
-                    Timber.i("playPlaylist: ${result.items.size} playable items, starting at ${result.startIndex}")
-                    withContext(Dispatchers.Main.immediate) {
-                        nothingToPlay = false
-                        lastError = null
-                        artworkByMediaId.clear()
-                        artworkByMediaId.putAll(mediaItems.artwork)
-                        exoPlayer.setMediaItems(mediaItems.items, result.startIndex, PlaybackConstants.TIME_UNSET)
-                        exoPlayer.prepare()
-                        exoPlayer.play()
-                        _state.update { it.copy(queue = result.items) }
-                        publishSnapshot()
-                        startPlaybackService()
-                    }
-                }
+                is QueueBuildResult.NothingToPlay -> handleNothingToPlay()
+                is QueueBuildResult.Ready -> handleQueueReady(result)
             }
         }
     }
 
+    /** Applies the idle state when no songs are downloadable / queueable. */
+    private suspend fun handleNothingToPlay() = withContext(Dispatchers.Main.immediate) {
+        Timber.w("playPlaylist: nothing to play")
+        nothingToPlay = true
+        lastError = null
+        artworkByMediaId.clear()
+        exoPlayer.clearMediaItems()
+        _state.update {
+            PlayerUiState(
+                nothingToPlay = true,
+                shuffleEnabled = exoPlayer.shuffleModeEnabled,
+                repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode),
+                volume = exoPlayer.volume,
+            )
+        }
+    }
+
+    /** Builds MediaItems, configures the player and starts the foreground service. */
+    private suspend fun handleQueueReady(result: QueueBuildResult.Ready) {
+        val mediaItems = buildMediaItems(result.items)
+        Timber.i("playPlaylist: ${result.items.size} playable items, starting at ${result.startIndex}")
+        withContext(Dispatchers.Main.immediate) {
+            nothingToPlay = false
+            lastError = null
+            artworkByMediaId.clear()
+            artworkByMediaId.putAll(mediaItems.artwork)
+            exoPlayer.setMediaItems(mediaItems.items, result.startIndex, PlaybackConstants.TIME_UNSET)
+            exoPlayer.prepare()
+            exoPlayer.play()
+            _state.update { it.copy(queue = result.items) }
+            publishSnapshot()
+            startPlaybackService()
+        }
+    }
+
+    /** Holds a batch of built [MediaItem]s together with their extracted artwork bytes. */
     private data class BuiltMediaItems(
         val items: List<MediaItem>,
         val artwork: Map<String, ByteArray>,
     )
 
+    /**
+     * Converts each [QueueItem] into a Media3 [MediaItem] and extracts artwork in bulk.
+     *
+     * @return a pair of the MediaItem list and a map of songId -> artwork bytes.
+     */
     private fun buildMediaItems(items: List<QueueItem>): BuiltMediaItems {
         val mediaItems = ArrayList<MediaItem>(items.size)
         val artwork = HashMap<String, ByteArray>(items.size)
@@ -150,34 +162,41 @@ class PlayerController private constructor(
 
     // --- Transport controls ----------------------------------------------------------
 
+    /** Resumes playback. */
     fun play() {
         Timber.i("PlayerController.play: START")
         exoPlayer.play()
     }
 
+    /** Pauses playback. */
     fun pause() {
         Timber.i("PlayerController.pause: START")
         exoPlayer.pause()
     }
 
+    /** Toggles between play and pause. */
     fun togglePlayPause() {
         Timber.i("PlayerController.togglePlayPause: START")
         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
     }
 
-    /** Next song (restarts the current one when it is the last with repeat off). */
+    /** Skips to the next song (restarts the current one when it is the last with repeat off). */
     fun next() {
         Timber.i("PlayerController.next: START")
         exoPlayer.seekToNext()
     }
 
-    /** Previous song (restarts the current one if it started less than 3s ago). */
+    /** Returns to the previous song (restarts the current one if it started less than 3s ago). */
     fun previous() {
         Timber.i("PlayerController.previous: START")
         exoPlayer.seekToPrevious()
     }
 
-    /** Jumps to a specific queue position (by playlist-order index). */
+    /**
+     * Jumps to a specific queue position (by playlist-order index).
+     *
+     * @param index zero-based queue index.
+     */
     fun skipToMediaItem(index: Int) {
         Timber.i("PlayerController.skipToMediaItem: START index=$index")
         if (index !in 0 until exoPlayer.mediaItemCount) return
@@ -185,7 +204,11 @@ class PlayerController private constructor(
         exoPlayer.seekToDefaultPosition(index)
     }
 
-    /** Seeks the current song to [positionMs] and keeps playing. */
+    /**
+     * Seeks the current song to the given position and keeps playing.
+     *
+     * @param positionMs target position in milliseconds.
+     */
     fun seekTo(positionMs: Long) {
         Timber.i("PlayerController.seekTo: START positionMs=$positionMs")
         if (exoPlayer.mediaItemCount == 0) return
@@ -193,16 +216,27 @@ class PlayerController private constructor(
         exoPlayer.seekTo(positionMs.coerceAtLeast(0L))
     }
 
+    /**
+     * Enables or disables shuffle mode.
+     *
+     * @param enabled true to shuffle, false for sequential order.
+     */
     fun setShuffleEnabled(enabled: Boolean) {
         Timber.i("PlayerController.setShuffleEnabled: START enabled=$enabled")
         exoPlayer.shuffleModeEnabled = enabled
     }
 
+    /** Toggles shuffle mode on/off. */
     fun toggleShuffle() {
         Timber.i("PlayerController.toggleShuffle: START")
         exoPlayer.shuffleModeEnabled = !exoPlayer.shuffleModeEnabled
     }
 
+    /**
+     * Sets the repeat mode.
+     *
+     * @param mode one of [RepeatMode.OFF], [RepeatMode.ALL], or [RepeatMode.ONE].
+     */
     fun setRepeatMode(mode: RepeatMode) {
         Timber.i("PlayerController.setRepeatMode: START mode=$mode")
         exoPlayer.repeatMode = mode.media3Value
@@ -214,12 +248,17 @@ class PlayerController private constructor(
         exoPlayer.repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode).next().media3Value
     }
 
-    /** @param volume 0.0 (mute) .. 1.0 (full). */
+    /**
+     * Sets the player volume.
+     *
+     * @param volume 0.0 (mute) .. 1.0 (full).
+     */
     fun setVolume(volume: Float) {
         Timber.i("PlayerController.setVolume: START volume=$volume")
         exoPlayer.volume = volume.coerceIn(0f, 1f)
     }
 
+    /** Releases all resources held by this controller. */
     fun release() {
         Timber.i("PlayerController.release: START")
         tickerJob?.cancel()
@@ -294,11 +333,7 @@ class PlayerController private constructor(
         if (count == 0) return
         val currentIndex = exoPlayer.currentMediaItemIndex
         val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL
-        val targetIndex = when {
-            currentIndex + 1 < count -> currentIndex + 1
-            repeatAll -> 0
-            else -> -1
-        }
+        val targetIndex = resolveSkipTargetIndex(currentIndex, count, repeatAll)
         if (targetIndex < 0) {
             exoPlayer.stop()
             publishSnapshot()
@@ -311,6 +346,18 @@ class PlayerController private constructor(
         publishSnapshot()
     }
 
+    /**
+     * Computes the next index when skipping a broken item.
+     *
+     * @return the target index, or -1 if there is nothing left to play.
+     */
+    private fun resolveSkipTargetIndex(currentIndex: Int, count: Int, repeatAll: Boolean): Int = when {
+        currentIndex + 1 < count -> currentIndex + 1
+        repeatAll -> 0
+        else -> -1
+    }
+
+    /** Ensures the player is prepared when idle but has media items queued. */
     private fun ensurePrepared() {
         Timber.d("PlayerController.ensurePrepared: START")
         if (exoPlayer.playbackState == Player.STATE_IDLE && exoPlayer.mediaItemCount > 0) {
@@ -318,15 +365,17 @@ class PlayerController private constructor(
         }
     }
 
+    /**
+     * Starts the foreground [PlaybackService] and creates a [MediaController] that
+     * binds to it so the notification appears.
+     */
     private fun startPlaybackService() {
         Timber.i("startPlaybackService: starting PlaybackService")
         val intent = Intent(context, PlaybackService::class.java)
         ContextCompat.startForegroundService(context, intent)
-        // Create a MediaController to bind to the service. This triggers
-        // onGetSession() → addSession() → notification appears.
         val sessionToken = SessionToken(
             context,
-            android.content.ComponentName(context, PlaybackService::class.java)
+            android.content.ComponentName(context, PlaybackService::class.java),
         )
         Timber.i("startPlaybackService: calling MediaController.Builder.buildAsync")
         val future = MediaController.Builder(context, sessionToken).buildAsync()
@@ -341,11 +390,28 @@ class PlayerController private constructor(
         Timber.i("startPlaybackService: MediaController buildAsync called")
     }
 
-    /** Reads the player and pushes a fresh [PlayerUiState]. Must run on the main thread. */
+    /**
+     * Reads the player and pushes a fresh [PlayerUiState].
+     *
+     * Must run on the main thread.
+     */
     private fun publishSnapshot() {
         Timber.d("PlayerController.publishSnapshot: START")
+        val snapshot = buildPlayerSnapshot()
+        _state.update { current ->
+            PlayerStateMapper.toUiState(
+                snapshot = snapshot,
+                queue = current.queue,
+                nothingToPlay = nothingToPlay,
+                lastError = lastError,
+            )
+        }
+    }
+
+    /** Creates a snapshot of every relevant ExoPlayer field. */
+    private fun buildPlayerSnapshot(): PlayerSnapshot {
         val currentItem = exoPlayer.currentMediaItem
-        val snapshot = PlayerSnapshot(
+        return PlayerSnapshot(
             playbackState = exoPlayer.playbackState,
             isPlaying = exoPlayer.isPlaying,
             playWhenReady = exoPlayer.playWhenReady,
@@ -364,20 +430,13 @@ class PlayerController private constructor(
             currentAlbum = currentItem?.mediaMetadata?.albumTitle?.toString(),
             artworkBytes = currentItem?.mediaId?.let { artworkByMediaId[it] },
         )
-        _state.update { current ->
-            PlayerStateMapper.toUiState(
-                snapshot = snapshot,
-                queue = current.queue,
-                nothingToPlay = nothingToPlay,
-                lastError = lastError,
-            )
-        }
     }
 
     /**
-     * Polls [Player.currentPosition] into the state flow. 250ms is plenty smooth for a seek bar
-     * while costing ~nothing; seeks and state transitions are also pushed synchronously by the
-     * player listener.
+     * Polls [Player.currentPosition] into the state flow.
+     *
+     * 250ms is plenty smooth for a seek bar while costing ~nothing; seeks and state transitions
+     * are also pushed synchronously by the player listener.
      */
     private fun startPositionTicker() {
         tickerJob = scope.launch {
@@ -392,12 +451,20 @@ class PlayerController private constructor(
     }
 
     companion object {
+
+        /** Interval in milliseconds between position-ticker updates. */
         private const val TICK_INTERVAL_MS = 250L
 
         /**
          * Creates a controller backed by the shared process-wide [ExoPlayer] (see
          * [PlaybackEngine]) and its [MediaSession], so the UI and the background
          * media service always drive the same player.
+         *
+         * @param context used to obtain the application context.
+         * @param queueBuilder builds the playback queue from song lists.
+         * @param artworkExtractor extracts embedded album art.
+         * @param sessionActivityClass optional activity class for the notification tap target.
+         * @param scope coroutine scope for background work and the position ticker.
          */
         fun create(
             context: Context,
@@ -408,11 +475,9 @@ class PlayerController private constructor(
         ): PlayerController {
             Timber.i("PlayerController.create: START")
             val appCtx = context.applicationContext
-            Timber.i("PlayerController.create: getting ExoPlayer")
             val player = PlaybackEngine.exoPlayer(context)
-            Timber.i("PlayerController.create: ExoPlayer obtained, getting session")
             val sess = PlaybackEngine.session(context, sessionActivityClass)
-            Timber.i("PlayerController.create: session obtained, building controller")
+            Timber.i("PlayerController.create: DONE")
             return PlayerController(
                 context = appCtx,
                 exoPlayer = player,
@@ -420,7 +485,7 @@ class PlayerController private constructor(
                 artworkExtractor = artworkExtractor,
                 session = sess,
                 scope = scope,
-            ).also { Timber.i("PlayerController.create: DONE") }
+            )
         }
     }
 }

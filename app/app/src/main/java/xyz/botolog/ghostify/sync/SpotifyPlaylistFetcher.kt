@@ -13,9 +13,13 @@ import xyz.botolog.ghostify.python.PlaylistMetadata
  * call never holds the SQLite writer lock.
  */
 interface SpotifyPlaylistFetcher {
+
     /**
-     * @param playlistId the playlist id stored in `playlists.spotify_id`.
-     * @param origin where the playlist originated from (Spotify or YouTube).
+     * Fetches the playlist metadata and tracks from the remote origin.
+     *
+     * @param playlistId The playlist id stored in `playlists.spotify_id`.
+     * @param origin Where the playlist originated from (Spotify or YouTube).
+     * @return The fetched playlist metadata including ordered tracks.
      * @throws Exception on any failure (offline, 404, timeout). The use case
      *   converts a fetch failure into [SyncException.Network] and writes nothing.
      */

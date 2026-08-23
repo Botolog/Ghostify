@@ -52,6 +52,8 @@ class ChoreographerStallProbe : AutoCloseable, Choreographer.FrameCallback {
 
     companion object {
 
+        private const val LATCH_TIMEOUT_SECONDS = 30L
+
         /**
          * Run [block] on the main thread while a frame-gap probe is active and
          * return the resulting stall statistics.
@@ -71,7 +73,7 @@ class ChoreographerStallProbe : AutoCloseable, Choreographer.FrameCallback {
                     latch.countDown()
                 }
             }
-            if (!latch.await(30, TimeUnit.SECONDS)) {
+            if (!latch.await(LATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 probe.close()
             }
             return probe.stats()

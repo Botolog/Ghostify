@@ -52,7 +52,7 @@ sealed class AppError(
 
     /** String-resource key for localized variants; [userMessage] is the fallback text. */
     val userMessageResKey: String
-        get() = "error_" + code.name.lowercase()
+        get() = MESSAGE_KEY_PREFIX + code.name.lowercase()
 
     fun toUserMessage(): UserMessage {
         Timber.i("AppError.toUserMessage: START")
@@ -68,7 +68,9 @@ sealed class AppError(
 
     override fun toString(): String = "AppError(code=$code, detail=$detail)"
 
-    private companion object {
+    companion object {
+        private const val MESSAGE_KEY_PREFIX = "error_"
+
         /**
          * `Throwable(cause)` calls `cause.toString()` while initializing, which can itself
          * throw for pathological throwables (e.g. a `getMessage()` override that throws).

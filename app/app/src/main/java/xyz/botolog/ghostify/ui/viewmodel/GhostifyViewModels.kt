@@ -24,6 +24,16 @@ import java.util.UUID
  * rendered from the Library's `isAddDialogOpen` flag, so the Add VM's close
  * callback flips that flag. Detail VMs are cached per playlist id so leaving and
  * re-entering a playlist keeps its state.
+ *
+ * @property repo playlist persistence layer.
+ * @property songRepo song persistence layer.
+ * @property settings app-wide settings repository.
+ * @property bridge bridge to the Python playlist metadata fetcher.
+ * @property downloads download orchestration layer.
+ * @property syncer re-sync use case for playlists.
+ * @property player media playback controller.
+ * @property musicStore local file storage manager.
+ * @property newId function that generates a new unique id.
  */
 class GhostifyViewModels(
     private val repo: PlaylistRepository,
@@ -53,28 +63,49 @@ class GhostifyViewModels(
 
     private val settingsVm = SettingsViewModel(settings, repo, songRepo, musicStore)
 
+    /** Cache of detail VMs keyed by playlist id. */
     private val detailCache = HashMap<String, PlaylistDetailViewModel>()
 
+    /**
+     * Returns the singleton [LibraryContract] instance.
+     */
     fun library(): LibraryContract {
         Timber.i("GhostifyViewModels.library: START")
         return library
     }
 
+    /**
+     * Returns the singleton [AddPlaylistContract] instance.
+     */
     fun addPlaylist(): AddPlaylistContract {
         Timber.i("GhostifyViewModels.addPlaylist: START")
         return addPlaylist
     }
 
+    /**
+     * Returns the singleton [PlayerContract] instance.
+     */
     fun player(): PlayerContract {
         Timber.i("GhostifyViewModels.player: START")
         return playerVm
     }
 
+    /**
+     * Returns the singleton [SettingsContract] instance.
+     */
     fun settings(): SettingsContract {
         Timber.i("GhostifyViewModels.settings: START")
         return settingsVm
     }
 
+    /**
+     * Returns a cached [PlaylistDetailContract] for the given playlist.
+     *
+     * A new instance is created on first access and reused for subsequent calls
+     * with the same [playlistId].
+     *
+     * @param playlistId the id of the playlist to show.
+     */
     fun detailFor(playlistId: String): PlaylistDetailContract {
         Timber.i("GhostifyViewModels.detailFor: START")
         return detailCache.getOrPut(playlistId) {
@@ -89,7 +120,9 @@ class GhostifyViewModels(
         }
     }
 
-    /** Cancels every VM coroutine; call when the hosting activity is destroyed. */
+    /**
+     * Cancels every VM coroutine; call when the hosting activity is destroyed.
+     */
     fun clear() {
         Timber.i("GhostifyViewModels.clear: START")
         library.clear()

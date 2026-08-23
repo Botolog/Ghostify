@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
  */
 interface LibraryContract {
 
+    /** Observable UI state for the Library screen. */
     val state: StateFlow<LibraryUiState>
 
     /** User pressed the FAB → open the Add-playlist dialog. */
@@ -20,15 +21,31 @@ interface LibraryContract {
     /** User pressed the Settings action in the top bar. */
     fun onOpenSettings()
 
-    /** Reorder a playlist to a new position in the list. */
+    /**
+     * Reorder a playlist to a new position in the list.
+     *
+     * @param playlistId the id of the playlist to move.
+     * @param newSortOrder the target sort order index.
+     */
     fun reorderPlaylist(playlistId: String, newSortOrder: Int)
 
-    /** Delete a playlist and all its songs. */
+    /**
+     * Delete a playlist and all its songs.
+     *
+     * @param playlistId the id of the playlist to remove.
+     */
     fun deletePlaylist(playlistId: String)
 
     /** Kill the entire app process. */
     fun shutdownApp()
 
+    /**
+     * Immutable UI state for the Library screen.
+     *
+     * @property playlists ordered list of playlist rows to render.
+     * @property loading `true` while the initial playlist list is being loaded.
+     * @property isAddDialogOpen `true` when the Add-playlist dialog is visible.
+     */
     data class LibraryUiState(
         val playlists: List<PlaylistUi> = emptyList(),
         val loading: Boolean = true,

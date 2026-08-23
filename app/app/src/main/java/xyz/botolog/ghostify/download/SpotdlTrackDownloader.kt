@@ -25,6 +25,16 @@ class SpotdlTrackDownloader(
     private val call: SpotdlCall,
 ) : TrackDownloader {
 
+    /**
+     * Downloads a single track via the underlying [SpotdlCall].
+     *
+     * Cancellation exceptions are re-thrown to preserve structured concurrency.
+     * All other throwables are mapped to [DownloadError.Generic].
+     *
+     * @param song the song to download.
+     * @param onProgress callback receiving 0f..1f download progress.
+     * @return the result of the download attempt.
+     */
     override suspend fun download(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult {
         Timber.i("SpotdlTrackDownloader.download: START for song=${song.id}")
         currentCoroutineContext().ensureActive()
@@ -36,23 +46,36 @@ class SpotdlTrackDownloader(
             Timber.e(e, "SpotdlTrackDownloader: download FAILED for song=${song.id}")
             TrackDownloadResult(
                 songId = song.id,
-                error = DownloadError.Generic(e.message ?: "Download failed"),
+                error = DownloadError.Generic(e.message ?: DEFAULT_ERROR_MESSAGE),
             )
         }
         Timber.i("SpotdlTrackDownloader.download: returning ${if (result.isSuccess) "SUCCESS" else "FAILED"}")
         return result
     }
 
+    /**
+     * Best-effort cancellation. The Python bridge is told to abort via its own
+     * channel; not needed for the queue's correctness since coroutine cancellation
+     * interrupts the download (the wrapper's suspend call is cancellable).
+     */
     override suspend fun cancel(songId: String) {
         Timber.i("SpotdlTrackDownloader.cancel: START")
-        // The Python bridge is told to abort via its own channel; not needed for
-        // the queue's correctness since coroutine cancellation interrupts the
-        // download (the wrapper's suspend call is cancellable).
+    }
+
+    private companion object {
+        const val DEFAULT_ERROR_MESSAGE = "Download failed"
     }
 }
 
 /** The bridge function implemented by the Chaquopy/Python layer (ghostify_dl.py). */
 fun interface SpotdlCall {
+    /**
+     * Invokes the underlying downloader for a single track.
+     *
+     * @param song the song to download.
+     * @param onProgress callback receiving 0f..1f progress updates.
+     * @return the result of the download attempt.
+     */
     suspend fun invoke(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult
 }
 
@@ -69,53 +92,73 @@ class ChaquopySpotdlCall(
     private val settings: SettingsRepository,
 ) : SpotdlCall {
 
+    /**
+     * Downloads a single track using the Python bridge.
+     *
+     * @param song the song to download.
+     * @param onProgress callback receiving 0f..1f download progress.
+     * @return the result of the download attempt.
+     */
     override suspend fun invoke(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult {
         Timber.i("ChaquopySpotdlCall.invoke: START for song=${song.id}")
         currentCoroutineContext().ensureActive()
+        val config = buildDownloadConfig()
+        val url = song.sourceUrl
+        val listener = buildProgressListener(onProgress)
+        val result = withContext(Dispatchers.IO) {
+            mapBridgeResult(song, bridge.downloadBlocking(url, config, listener, song.ytId))
+        }
+        Timber.i("ChaquopySpotdlCall.invoke: returning ${if (result.isSuccess) "SUCCESS" else "FAILED"}")
+        return result
+    }
+
+    private suspend fun buildDownloadConfig(): TrackDownloadConfig {
         val bitrate = settings.getBitrate()
             .toIntOrNull()
             ?.takeIf { TrackDownloadConfig.isValidBitrate(it) }
             ?: TrackDownloadConfig.DEFAULT_BITRATE
-        val config = TrackDownloadConfig(
+        return TrackDownloadConfig(
             outputDir = musicStore.rootDir.absolutePath,
             bitrate = bitrate,
             outputTemplate = TrackDownloadConfig.DEFAULT_TEMPLATE,
-            ffmpeg = FfmpegLocator.executablePath ?: "ffmpeg",
+            ffmpeg = FfmpegLocator.executablePath ?: FFMPEG_DEFAULT,
         )
-        val url = song.sourceUrl
-        val listener = object : TrackProgressListener {
+    }
+
+    private fun buildProgressListener(onProgress: (Float) -> Unit): TrackProgressListener =
+        object : TrackProgressListener {
             override fun onDownloadStart(track: xyz.botolog.ghostify.trackdownload.TrackInfo) {
                 // Metadata resolved; conversion is about to begin.
             }
 
             override fun onProgress(percent: Int, message: String?) {
-                onProgress((percent / 100f).coerceIn(0f, 1f))
+                onProgress((percent / PERCENT_DIVISOR).coerceIn(MIN_FRACTION, MAX_FRACTION))
             }
 
             override fun onDownloadComplete(result: xyz.botolog.ghostify.trackdownload.TrackDownloadResult) {
                 // The download call itself returns the final result.
             }
         }
-        val result = withContext(Dispatchers.IO) {
-            when (val result = bridge.downloadBlocking(url, config, listener, song.ytId)) {
-                is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Downloaded ->
-                    TrackDownloadResult(songId = song.id, filePath = result.outputPath)
 
-                is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Skipped ->
-                    TrackDownloadResult(songId = song.id, filePath = result.outputPath)
+    private fun mapBridgeResult(
+        song: SongRecord,
+        result: xyz.botolog.ghostify.trackdownload.TrackDownloadResult,
+    ): TrackDownloadResult = when (result) {
+        is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Downloaded ->
+            TrackDownloadResult(songId = song.id, filePath = result.outputPath)
 
-                is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Failure ->
-                    TrackDownloadResult(songId = song.id, error = mapError(result.error))
-            }
-        }
-        Timber.i("ChaquopySpotdlCall.invoke: returning ${if (result.isSuccess) "SUCCESS" else "FAILED"}")
-        return result
+        is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Skipped ->
+            TrackDownloadResult(songId = song.id, filePath = result.outputPath)
+
+        is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Failure ->
+            TrackDownloadResult(songId = song.id, error = mapError(result.error))
     }
 
     private fun mapError(
         error: xyz.botolog.ghostify.trackdownload.DownloadError,
     ): DownloadError = when (error.kind) {
         DownloadErrorKind.INTERRUPTED -> DownloadError.Canceled
+
         DownloadErrorKind.NO_TRACK,
         DownloadErrorKind.SEARCH_FAILED,
         DownloadErrorKind.AUDIO_UNAVAILABLE,
@@ -135,8 +178,22 @@ class ChaquopySpotdlCall(
     }
 
     private fun looksLikeStorage(message: String): Boolean {
-        val m = message.lowercase()
-        return "enospc" in m || "no space" in m || "not enough space" in m ||
-            "disk full" in m || "out of space" in m
+        val lowered = message.lowercase()
+        return STORAGE_KEYWORDS.any { it in lowered }
+    }
+
+    private companion object {
+        const val FFMPEG_DEFAULT = "ffmpeg"
+        const val PERCENT_DIVISOR = 100f
+        const val MIN_FRACTION = 0f
+        const val MAX_FRACTION = 1f
+
+        val STORAGE_KEYWORDS = listOf(
+            "enospc",
+            "no space",
+            "not enough space",
+            "disk full",
+            "out of space",
+        )
     }
 }

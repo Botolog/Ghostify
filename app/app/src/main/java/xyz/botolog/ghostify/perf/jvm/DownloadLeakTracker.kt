@@ -57,7 +57,7 @@ class DownloadLeakTracker(
     /** Total wrappers still held. */
     fun retainedCount(): Int = active.size
 
-    /** owner tag -> count of retained wrappers. */
+    /** Owner tag → count of retained wrappers. */
     fun snapshot(): Map<String, Int> =
         active.values.groupingBy { it.ownerTag }.eachCount()
 }

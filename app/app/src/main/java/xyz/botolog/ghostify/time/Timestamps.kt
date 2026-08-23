@@ -16,15 +16,32 @@ import java.util.Locale
  */
 object Timestamps {
 
+    /** Sentinel value for an invalid or missing timestamp. */
     const val INVALID: Long = -1L
 
+    /**
+     * Converts epoch milliseconds to an [Instant].
+     *
+     * @param epochMs the epoch milliseconds to convert.
+     * @return the corresponding [Instant].
+     */
     fun fromEpochMs(epochMs: Long): Instant = Instant.ofEpochMilli(epochMs)
 
+    /**
+     * Returns true when [epochMs] represents a valid (positive) timestamp.
+     *
+     * @param epochMs the epoch milliseconds to validate.
+     */
     fun isValid(epochMs: Long): Boolean = epochMs > 0L
 
     /**
      * Human display for a given zone. The instant itself never changes with the zone;
      * only the rendering does. Returns "" for invalid/missing timestamps.
+     *
+     * @param epochMs the epoch milliseconds to format.
+     * @param zone the timezone to format in (defaults to system default).
+     * @param locale the locale for formatting (defaults to system default).
+     * @return the formatted datetime string, or "" for invalid timestamps.
      */
     fun format(
         epochMs: Long,

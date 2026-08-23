@@ -75,6 +75,9 @@ object SecurityScan {
     )
     private val TEST_PATH = Regex("""(^|[/\\])(src[/\\](test|androidTest|jvm-tests|instrumentedTest)|tests)[/\\]""")
 
+    private const val MANIFEST_FILENAME = "AndroidManifest.xml"
+    private const val EXTENSION_KT = "kt"
+
     private fun isTestFile(file: File) = TEST_PATH.containsMatchIn(file.path.replace('\\', '/'))
 
     private fun walk(repoRoot: File): List<File> =
@@ -126,69 +129,104 @@ object SecurityScan {
         Timber.i("SecurityScan.main: START")
         val root = File(args.firstOrNull() ?: locateRepoRoot())
         val findings = scan(root)
+        val scannedFileCount = walk(root).size
         for (f in findings) {
             println("${f.severity.name}\t${f.rule}\t${f.file.path}:${f.line}\t${f.detail}")
         }
-        val errors = findings.count { it.severity == Severity.ERROR }
-        println("security-scan: ${findings.size} finding(s), $errors error(s) across ${walk(root).size} file(s)")
-        if (errors > 0) kotlin.system.exitProcess(1)
+        val errorCount = findings.count { it.severity == Severity.ERROR }
+        println("security-scan: ${findings.size} finding(s), $errorCount error(s) across $scannedFileCount file(s)")
+        if (errorCount > 0) kotlin.system.exitProcess(1)
     }
 
     private fun scanFile(file: File, text: String): List<Finding> {
         val out = ArrayList<Finding>()
         val inTest = isTestFile(file)
-        val isManifest = file.name == "AndroidManifest.xml"
+        val isManifest = file.name == MANIFEST_FILENAME
 
         if (isManifest) {
-            for (issue in ManifestAudit.auditFile(file)) {
-                out += Finding(issue.rule, file, issue.line ?: 1, issue.message)
-            }
+            out += auditManifest(file)
         }
 
-        // Secret-shaped values anywhere in shipped source (T-168).
         if (!inTest) {
-            for (m in SecretRedactor.find(text)) {
-                out += Finding(R_SECRET_IN_SOURCE, file, lineOf(text, m.start), "possible secret '${m.key}'")
-            }
+            out += scanSecrets(file, text)
+            out += scanShippedCode(file, text)
         }
+
+        return out
+    }
+
+    /** Audits an AndroidManifest.xml file via [ManifestAudit]. */
+    private fun auditManifest(file: File): List<Finding> =
+        ManifestAudit.auditFile(file).map { issue ->
+            Finding(issue.rule, file, issue.line ?: 1, issue.message)
+        }
+
+    /** Scans for credential-shaped values in shipped source (T-168). */
+    private fun scanSecrets(file: File, text: String): List<Finding> =
+        SecretRedactor.find(text).map { m ->
+            Finding(R_SECRET_IN_SOURCE, file, lineOf(text, m.start), "possible secret '${m.key}'")
+        }
+
+    /** Scans non-test source for HTTP, stored secrets, log leaks, and direct Log calls. */
+    private fun scanShippedCode(file: File, text: String): List<Finding> {
+        val out = ArrayList<Finding>()
+        if (isSecurityComponent(file)) return out
 
         val lines = text.lines()
         for ((idx, raw) in lines.withIndex()) {
             val line = raw.trim()
             val lineNo = idx + 1
             if (line.isEmpty() || COMMENT_LINE.containsMatchIn(line)) continue
-            if (inTest) continue
 
-            if (!isSecurityComponent(file)) {
-                // T-171: cleartext network literal in shipped code.
-                if (HTTP_INSECURE.containsMatchIn(stripAllowed(line))) {
-                    out += Finding(R_CLEARTEXT_HTTP, file, lineNo, "cleartext http:// URL; use https://")
-                }
-                // T-168: persisted secret field.
-                if (file.extension == "kt" && DATA_CLASS_MARKER.containsMatchIn(text) && SECRET_FIELD.containsMatchIn(line)) {
-                    out += Finding(R_STORED_SECRET_FIELD, file, lineNo, "credential-named field would be persisted: $line")
-                }
-                // T-170: full Spotify URL reaching a logger other than LogPolicy.
-                if (FULL_SPOTIFY_URL.containsMatchIn(line) && !LOGPOLICY_CALL.containsMatchIn(line) &&
-                    (LOGCAT_CALL.containsMatchIn(line) || PRINT_SINK.containsMatchIn(line))
-                ) {
-                    out += Finding(R_SPOTIFY_URL_IN_LOG, file, lineNo, "full Spotify URL passed to a logger; route through LogPolicy")
-                }
-                // WARN: direct android.util.Log instead of LogPolicy.
-                if (DIRECT_LOG_API.containsMatchIn(line)) {
-                    out += Finding(R_DIRECT_LOG_API, file, lineNo, "direct android.util.Log call; log through LogPolicy")
-                }
-            }
+            out += checkCleartextHttp(file, line, lineNo)
+            out += checkStoredSecretField(file, text, line, lineNo)
+            out += checkSpotifyUrlInLog(file, line, lineNo)
+            out += checkDirectLogApi(file, line, lineNo)
         }
         return out
     }
 
+    /** T-171: cleartext network literal in shipped code. */
+    private fun checkCleartextHttp(file: File, line: String, lineNo: Int): List<Finding> =
+        if (HTTP_INSECURE.containsMatchIn(stripAllowed(line))) {
+            listOf(Finding(R_CLEARTEXT_HTTP, file, lineNo, "cleartext http:// URL; use https://"))
+        } else emptyList()
+
+    /** T-168: persisted secret field in a data class or entity. */
+    private fun checkStoredSecretField(
+        file: File,
+        fullText: String,
+        line: String,
+        lineNo: Int,
+    ): List<Finding> =
+        if (file.extension == EXTENSION_KT &&
+            DATA_CLASS_MARKER.containsMatchIn(fullText) &&
+            SECRET_FIELD.containsMatchIn(line)
+        ) {
+            listOf(Finding(R_STORED_SECRET_FIELD, file, lineNo, "credential-named field would be persisted: $line"))
+        } else emptyList()
+
+    /** T-170: full Spotify URL reaching a logger other than LogPolicy. */
+    private fun checkSpotifyUrlInLog(file: File, line: String, lineNo: Int): List<Finding> =
+        if (FULL_SPOTIFY_URL.containsMatchIn(line) &&
+            !LOGPOLICY_CALL.containsMatchIn(line) &&
+            (LOGCAT_CALL.containsMatchIn(line) || PRINT_SINK.containsMatchIn(line))
+        ) {
+            listOf(Finding(R_SPOTIFY_URL_IN_LOG, file, lineNo, "full Spotify URL passed to a logger; route through LogPolicy"))
+        } else emptyList()
+
+    /** WARN: direct android.util.Log instead of LogPolicy. */
+    private fun checkDirectLogApi(file: File, line: String, lineNo: Int): List<Finding> =
+        if (DIRECT_LOG_API.containsMatchIn(line)) {
+            listOf(Finding(R_DIRECT_LOG_API, file, lineNo, "direct android.util.Log call; log through LogPolicy"))
+        } else emptyList()
+
     private fun stripAllowed(line: String): String {
-        var s = line
+        var current = line
         while (true) {
-            val n = s.replace(HTTP_ALLOWED, "")
-            if (n == s) return s
-            s = n
+            val cleaned = current.replace(HTTP_ALLOWED, "")
+            if (cleaned == current) return current
+            current = cleaned
         }
     }
 

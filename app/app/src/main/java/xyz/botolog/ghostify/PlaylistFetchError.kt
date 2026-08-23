@@ -22,7 +22,7 @@ enum class PlaylistFetchErrorCode {
          * to an enum value, defaulting to [UNKNOWN] for anything unrecognised.
          */
         fun fromWire(value: String?): PlaylistFetchErrorCode {
-            for (code in values()) {
+            for (code in entries) {
                 if (code.name == value) return code
             }
             return UNKNOWN
@@ -43,13 +43,13 @@ data class PlaylistFetchError(
     val retryHint: String? = null
 ) {
     companion object {
+        private const val FALLBACK_MESSAGE = "The playlist could not be fetched."
+
         /** Fallback for failures that could not be classified. */
-        fun unknown(rawMessage: String?): PlaylistFetchError =
-            PlaylistFetchError(
-                code = PlaylistFetchErrorCode.UNKNOWN,
-                message = rawMessage?.takeIf { it.isNotBlank() }
-                    ?: "The playlist could not be fetched."
-            )
+        fun unknown(rawMessage: String?): PlaylistFetchError = PlaylistFetchError(
+            code = PlaylistFetchErrorCode.UNKNOWN,
+            message = rawMessage?.takeIf { it.isNotBlank() } ?: FALLBACK_MESSAGE,
+        )
     }
 }
 
@@ -58,6 +58,9 @@ data class PlaylistFetchError(
  * [Failure]; the bridge never throws to callers.
  */
 sealed class PlaylistFetchResult {
+    /** The fetch succeeded with the given [metadata]. */
     data class Success(val metadata: PlaylistMetadata) : PlaylistFetchResult()
+
+    /** The fetch failed with the given [error]. */
     data class Failure(val error: PlaylistFetchError) : PlaylistFetchResult()
 }

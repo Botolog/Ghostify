@@ -17,6 +17,13 @@ import timber.log.Timber
  */
 object KilledProcessRecoveryLogic {
 
+    /**
+     * Computes the [RecoveryPlan] needed to restore consistency after a killed process.
+     *
+     * @param songs current snapshot of all songs.
+     * @param playlists current snapshot of all playlists.
+     * @return a plan with the minimal set of resets needed.
+     */
     fun plan(songs: List<SongState>, playlists: List<PlaylistState>): RecoveryPlan {
         Timber.i("KilledProcessRecoveryLogic.plan: START")
         val songResets = songs.asSequence()
@@ -39,7 +46,13 @@ object KilledProcessRecoveryLogic {
         return result
     }
 
-    /** True when a second recovery pass would change nothing (idempotency check). */
+    /**
+     * True when a second recovery pass would change nothing (idempotency check).
+     *
+     * @param songs current snapshot of all songs.
+     * @param playlists current snapshot of all playlists.
+     * @return true if the state is already stable.
+     */
     fun isStable(songs: List<SongState>, playlists: List<PlaylistState>): Boolean {
         Timber.i("KilledProcessRecoveryLogic.isStable: START")
         val result = plan(songs, playlists).isEmpty

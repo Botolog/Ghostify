@@ -28,12 +28,21 @@ import xyz.botolog.ghostify.ui.playlist.PlaylistDetailScreen
 import xyz.botolog.ghostify.ui.settings.SettingsScreen
 import xyz.botolog.ghostify.ui.theme.GhostifyTheme
 
+/**
+ * Navigation route constants used by the [NavHost] inside [GhostifyApp].
+ */
 object Routes {
     const val LIBRARY = "library"
     const val PLAYER = "player"
     const val SETTINGS = "settings"
     const val PLAYLIST = "playlist/{playlistId}"
 
+    /**
+     * Builds the route string for the playlist detail screen.
+     *
+     * @param playlistId the unique identifier of the playlist.
+     * @return the full navigation route.
+     */
     fun playlist(playlistId: String) = "playlist/$playlistId"
 }
 
@@ -44,8 +53,10 @@ object Routes {
  * `viewmodels` component in the real app; by fakes in Compose UI tests), so this tree is
  * fully unit-testable without an app backend.
  *
+ * @param deps the bundle of ViewModel contracts that drive every screen.
  * @param initialRoute route the NavHost should start on. The app root maps a "launched from
  *   notification" intent to [Routes.PLAYER] so the player renders on cold start (T-143).
+ * @param modifier optional modifier applied to the root layout.
  */
 @Composable
 fun GhostifyApp(
@@ -117,6 +128,12 @@ fun GhostifyApp(
 /**
  * The bundle of ViewModel contracts the UI depends on. Supplied by the Android app's
  * composition root (Hilt) — or by fakes in tests.
+ *
+ * @property library contract driving the library screen playlist list.
+ * @property addPlaylist contract driving the add-playlist dialog.
+ * @property detailFor factory that creates the detail screen's contract for a given playlist id.
+ * @property player contract driving both the mini player and the full player screen.
+ * @property settings contract driving the settings screen.
  */
 data class GhostifyDependencies(
     val library: LibraryContract,

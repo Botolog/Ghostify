@@ -11,7 +11,10 @@ package xyz.botolog.ghostify.recovery
  * failure can never leave the DB half-repaired.
  */
 interface RecoveryDao {
+    /** Returns a snapshot of all songs with their current status. */
     fun songsSnapshot(): List<SongState>
+
+    /** Returns a snapshot of all playlists with their status and download count. */
     fun playlistsSnapshot(): List<PlaylistState>
 
     /** Reset the given song ids back to PENDING. */
@@ -20,7 +23,11 @@ interface RecoveryDao {
     /** Set a playlist to a consistent, non-DOWNLOADING status. */
     fun resetPlaylistStatus(id: String, toStatus: PlaylistStatus)
 
-    /** Apply a whole [RecoveryPlan] atomically. */
+    /**
+     * Apply a whole [RecoveryPlan] atomically.
+     *
+     * @param plan the plan containing song and playlist resets to apply.
+     */
     fun applyPlan(plan: RecoveryPlan) {
         resetSongsToPending(plan.songResets.map { it.id })
         plan.playlistResets.forEach { resetPlaylistStatus(it.id, it.toStatus) }

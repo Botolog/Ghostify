@@ -3,7 +3,6 @@ package xyz.botolog.ghostify.sync
 import xyz.botolog.ghostify.data.db.TransactionRunner
 import xyz.botolog.ghostify.data.db.dao.PlaylistDao
 import xyz.botolog.ghostify.data.db.dao.SongDao
-import xyz.botolog.ghostify.data.model.PlaylistOrigin
 import xyz.botolog.ghostify.data.model.SongStatus
 import java.util.UUID
 import timber.log.Timber
@@ -30,6 +29,16 @@ import timber.log.Timber
  *     already gone is a no-op (T-065).
  *  4. **In-flight protection.** `QUEUED`/`DOWNLOADING` rows are never touched or
  *     re-enqueued — a manual download owns them until it finishes (T-068).
+ *
+ * @property playlists DAO for the `playlists` table.
+ * @property songs DAO for the `songs` table.
+ * @property transactions Provides transactional write boundaries.
+ * @property fetcher Fetches playlist metadata from Spotify/YouTube.
+ * @property files Local file existence and deletion.
+ * @property enqueuer Starts pending downloads after a successful diff.
+ * @property locks Per-playlist mutex to serialize concurrent syncs.
+ * @property now Clock function returning epoch millis (injectable for testing).
+ * @property newId UUID generator (injectable for testing).
  */
 class SyncUseCase(
     private val playlists: PlaylistDao,
@@ -43,6 +52,18 @@ class SyncUseCase(
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
+    /**
+     * Re-syncs a single playlist against its remote origin.
+     *
+     * Acquires a per-playlist lock, fetches remote tracks, computes the diff,
+     * applies all mutations atomically, cleans up orphaned files, and enqueues
+     * any new downloads.
+     *
+     * @param playlistId The local playlist id to re-sync.
+     * @return A [SyncResult] summarising what changed.
+     * @throws SyncException.PlaylistNotFound if the playlist does not exist locally.
+     * @throws SyncException.Network if the remote fetch fails.
+     */
     suspend fun syncPlaylist(playlistId: String): SyncResult {
         Timber.i("SyncUseCase.syncPlaylist: START playlistId=$playlistId")
         val result = locks.withPlaylistLock(playlistId) { doSync(playlistId) }
@@ -50,54 +71,92 @@ class SyncUseCase(
         return result
     }
 
+    /**
+     * Core sync logic, always called under the playlist lock.
+     */
     private suspend fun doSync(playlistId: String): SyncResult {
         val playlist = playlists.getById(playlistId)
             ?: throw SyncException.PlaylistNotFound(playlistId)
 
-        // 1) Network I/O — never inside a DB transaction (T-067).
-        val remote = try {
-            fetcher.fetchPlaylist(playlist.spotifyId, playlist.origin)
+        val remote = fetchRemoteTracks(playlist.spotifyId, playlist.origin)
+
+        val plan = applyDiffWithinTransaction(playlistId, playlist, remote)
+
+        deleteOrphanedFiles(plan.deleteFilePaths)
+        enqueuePendingDownloadsIfNeeded(playlistId, plan)
+
+        return plan.toResult()
+    }
+
+    /**
+     * Fetches remote playlist tracks outside any DB transaction (T-067).
+     */
+    private suspend fun fetchRemoteTracks(
+        spotifyId: String,
+        origin: xyz.botolog.ghostify.data.model.PlaylistOrigin,
+    ): xyz.botolog.ghostify.python.PlaylistMetadata =
+        try {
+            fetcher.fetchPlaylist(playlistId = spotifyId, origin = origin)
         } catch (e: Exception) {
-            throw SyncException.Network(playlist.spotifyId, e)
+            throw SyncException.Network(spotifyId, e)
         }
 
-        // 2) Read + diff + write atomically. Any DAO failure rolls the whole
-        //    batch back: no partial rows, no half-updated playlist (T-067).
-        val plan = transactions.withinTransaction {
+    /**
+     * Reads current songs, computes the diff, and applies inserts/updates/deletes
+     * atomically. Any DAO failure rolls the whole batch back (T-067).
+     */
+    private suspend fun applyDiffWithinTransaction(
+        playlistId: String,
+        playlist: xyz.botolog.ghostify.data.db.entity.PlaylistEntity,
+        remote: xyz.botolog.ghostify.python.PlaylistMetadata,
+    ): SyncPlan =
+        transactions.withinTransaction {
             val stored = songs.getSongsForPlaylist(playlistId)
-            val p = SyncDiff.compute(playlistId, remote.tracks, stored, files, now, newId)
-            if (p.inserts.isNotEmpty()) songs.insertAll(p.inserts)
-            if (p.updates.isNotEmpty()) songs.updateAll(p.updates)
-            if (p.deleteSpotifyIds.isNotEmpty()) {
-                songs.deleteBySpotifyIds(playlistId, p.deleteSpotifyIds)
+            val plan = SyncDiff.compute(playlistId, remote.tracks, stored, files, now, newId)
+
+            if (plan.inserts.isNotEmpty()) songs.insertAll(plan.inserts)
+            if (plan.updates.isNotEmpty()) songs.updateAll(plan.updates)
+            if (plan.deleteSpotifyIds.isNotEmpty()) {
+                songs.deleteBySpotifyIds(playlistId, plan.deleteSpotifyIds)
             }
+
             playlists.update(
                 playlist.copy(
                     name = remote.name,
                     owner = remote.owner,
                     coverUrl = remote.coverUrl,
-                    trackCount = p.finalTrackCount,
+                    trackCount = plan.finalTrackCount,
                     lastSyncedAt = now(),
-                )
+                ),
             )
-            p
+
+            plan
         }
 
-        // 3) Disk cleanup after the commit (see class docs).
-        for (path in plan.deleteFilePaths) {
+    /**
+     * Deletes orphaned local files after the transaction commits (see class docs).
+     */
+    private fun deleteOrphanedFiles(filePaths: List<String>) {
+        for (path in filePaths) {
             runCatching { files.delete(path) }
         }
+    }
 
-        // 4) Kick off downloads for inserted + re-queued tracks. The enqueuer
-        //    claims PENDING -> QUEUED atomically, so a concurrent manual
-        //    download can never double-download a track (T-068).
+    /**
+     * Kicks off downloads for inserted + re-queued tracks.
+     *
+     * The enqueuer claims PENDING → QUEUED atomically, so a concurrent manual
+     * download can never double-download a track (T-068).
+     */
+    private suspend fun enqueuePendingDownloadsIfNeeded(playlistId: String, plan: SyncPlan) {
         if (plan.enqueueIds.isNotEmpty()) {
             enqueuer.enqueuePendingDownloads(playlistId)
         }
-
-        return plan.toResult()
     }
 
+    /**
+     * Converts a [SyncPlan] into a human-readable [SyncResult].
+     */
     private fun SyncPlan.toResult(): SyncResult {
         val resets = updates.count { it.status == SongStatus.PENDING && it.filePath == null }
         return SyncResult(

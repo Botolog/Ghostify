@@ -13,27 +13,50 @@ import kotlinx.coroutines.flow.StateFlow
  */
 interface AddPlaylistContract {
 
+    /** Observable UI state for the Add-playlist dialog. */
     val state: StateFlow<AddPlaylistUiState>
 
+    /**
+     * Called when the user edits the URL text field.
+     *
+     * Resets any previous fetch state so the dialog returns to its initial appearance.
+     *
+     * @param url the raw URL string entered by the user.
+     */
     fun onUrlChange(url: String)
 
-    /** Validated id (Spotify id or YouTube URL) obtained from the URL. */
+    /**
+     * Fetches playlist metadata from the remote source.
+     *
+     * @param playlistId validated Spotify id or YouTube URL.
+     * @param origin the platform the playlist originates from.
+     */
     fun fetch(playlistId: String, origin: PlaylistOrigin)
 
+    /** Persists the fetched playlist and its songs to the local database. */
     fun onSave()
 
+    /** Resets all state and closes the dialog. */
     fun onDismiss()
 
+    /**
+     * Immutable UI state for the Add-playlist dialog.
+     *
+     * @property url raw URL text from the input field.
+     * @property origin detected platform of the playlist.
+     * @property isFetching `true` while a remote metadata fetch is in progress.
+     * @property preview playlist preview shown after a successful fetch.
+     * @property fetchError human-readable error message when the fetch fails.
+     * @property duplicateWarning non-blocking warning when the playlist already exists locally.
+     * @property canSave `true` only after a successful fetch, enabling the Save button.
+     */
     data class AddPlaylistUiState(
         val url: String = "",
         val origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
         val isFetching: Boolean = false,
         val preview: PlaylistPreview? = null,
-        /** Readable fetch error (private / network / not found). */
         val fetchError: String? = null,
-        /** Set when this playlist is already saved — shown as a non-blocking warning. */
         val duplicateWarning: String? = null,
-        /** True only after a successful fetch, which is what enables Save. */
         val canSave: Boolean = false,
     )
 }

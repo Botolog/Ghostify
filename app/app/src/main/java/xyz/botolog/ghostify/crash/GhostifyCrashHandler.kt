@@ -20,6 +20,9 @@ import timber.log.Timber
  * Next-launch recovery: [CrashReporter] writes a marker + log before the process dies; on
  * the next cold start [xyz.botolog.ghostify.recovery.KilledProcessRecovery] resets any in-flight
  * state (e.g. DOWNLOADING songs back to PENDING) so nothing is stuck forever.
+ *
+ * @param reporter the crash reporter for persisting crash facts.
+ * @param previous the previously-installed handler to chain to after reporting.
  */
 class GhostifyCrashHandler(
     private val reporter: CrashReporter,
@@ -33,6 +36,7 @@ class GhostifyCrashHandler(
         previous?.uncaughtException(thread, throwable)
     }
 
+    /** Installs this handler as the JVM-wide default uncaught exception handler. */
     fun install() {
         Timber.i("GhostifyCrashHandler.install: START")
         Thread.setDefaultUncaughtExceptionHandler(this)

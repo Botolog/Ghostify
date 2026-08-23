@@ -8,11 +8,20 @@ import timber.log.Timber
  *
  * Runs at every cold start (in [StartupBootstrap]) before any network work, and is
  * idempotent — running it twice is a no-op the second time.
+ *
+ * @param dao the persistence contract for reading snapshots and applying plans.
+ * @param log optional logging callback for recovery diagnostics.
  */
 class KilledProcessRecovery(
     private val dao: RecoveryDao,
     private val log: (String) -> Unit = {},
 ) {
+    /**
+     * Runs the killed-process recovery: computes a plan from the current DB
+     * snapshot, applies it atomically, and returns what changed.
+     *
+     * @return a [RecoveryReport] describing the applied plan.
+     */
     fun recover(): RecoveryReport {
         Timber.i("KilledProcessRecovery.recover: START")
         val plan = KilledProcessRecoveryLogic.plan(dao.songsSnapshot(), dao.playlistsSnapshot())

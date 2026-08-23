@@ -2,6 +2,7 @@
 
 package xyz.botolog.ghostify.ui.player
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -42,7 +43,11 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
+import xyz.botolog.ghostify.ui.model.NowPlaying
 
+/**
+ * Test tag constants for the mini player. Used by Compose UI tests to locate elements.
+ */
 object MiniPlayerTestTags {
     const val BAR = "mini_player"
     const val COVER = "mini_cover"
@@ -54,6 +59,14 @@ object MiniPlayerTestTags {
     const val NEXT = "mini_next"
     const val SHUFFLE = "mini_shuffle"
 }
+
+private val COVER_SIZE = 44.dp
+private val BAR_HORIZONTAL_PADDING = 10.dp
+private val BAR_VERTICAL_PADDING = 6.dp
+private val SEEK_BAR_HEIGHT = 26.dp
+private val SEEK_BAR_HORIZONTAL_PADDING = 14.dp
+private val TRACK_HEIGHT = 4.dp
+private val THUMB_SIZE = DpSize(4.dp, 4.dp)
 
 /**
  * Spotify-style persistent now-playing bar rendered at the bottom of every screen
@@ -67,6 +80,9 @@ object MiniPlayerTestTags {
  *   playlist bounds.
  *
  * Renders nothing when [PlayerUiState.empty] is true (nothing loaded).
+ *
+ * @param contract ViewModel contract driving the player state and actions.
+ * @param modifier optional modifier applied to the surface root.
  */
 @Composable
 fun MiniPlayer(
@@ -87,91 +103,140 @@ fun MiniPlayer(
     ) {
         Column {
             MiniSeekBar(state = state, contract = contract)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AsyncImage(
-                    model = nowPlaying.coverUrl,
-                    contentDescription = "Album art",
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .testTag(MiniPlayerTestTags.COVER),
-                    contentScale = ContentScale.Crop,
-                )
-
-                Spacer(modifier = Modifier.width(10.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = nowPlaying.title,
-                        style = MaterialTheme.typography.bodyLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag(MiniPlayerTestTags.TITLE),
-                    )
-                    Text(
-                        text = nowPlaying.artist,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag(MiniPlayerTestTags.ARTIST),
-                    )
-                }
-
-                IconToggleButton(
-                    checked = state.shuffle,
-                    onCheckedChange = { contract.toggleShuffle() },
-                    modifier = Modifier.testTag(MiniPlayerTestTags.SHUFFLE),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (state.shuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-
-                IconButton(
-                    onClick = contract::previous,
-                    modifier = Modifier.testTag(MiniPlayerTestTags.PREV),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.SkipPrevious,
-                        contentDescription = "Previous",
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-
-                IconButton(
-                    onClick = contract::togglePlay,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag(MiniPlayerTestTags.PLAY),
-                ) {
-                    Icon(
-                        imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (state.isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-
-                IconButton(
-                    onClick = contract::next,
-                    modifier = Modifier.testTag(MiniPlayerTestTags.NEXT),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.SkipNext,
-                        contentDescription = "Next",
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-            }
+            MiniPlayerControls(
+                state = state,
+                contract = contract,
+                nowPlaying = nowPlaying,
+            )
         }
+    }
+}
+
+/**
+ * Row of mini player controls: cover art, title/artist, shuffle, and transport buttons.
+ */
+@Composable
+private fun MiniPlayerControls(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    nowPlaying: NowPlaying,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = BAR_HORIZONTAL_PADDING, vertical = BAR_VERTICAL_PADDING),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = nowPlaying.coverUrl,
+            contentDescription = "Album art",
+            modifier = Modifier
+                .size(COVER_SIZE)
+                .clip(RoundedCornerShape(6.dp))
+                .testTag(MiniPlayerTestTags.COVER),
+            contentScale = ContentScale.Crop,
+        )
+
+        Spacer(modifier = Modifier.width(10.dp))
+
+        MiniTrackInfo(title = nowPlaying.title, artist = nowPlaying.artist, modifier = Modifier.weight(1f))
+
+        MiniShuffleToggle(
+            isChecked = state.shuffle,
+            onToggle = contract::toggleShuffle,
+        )
+
+        MiniTransportControls(contract = contract, isPlaying = state.isPlaying)
+    }
+}
+
+/**
+ * Displays the now-playing track title and artist name.
+ */
+@Composable
+private fun MiniTrackInfo(title: String, artist: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag(MiniPlayerTestTags.TITLE),
+        )
+        Text(
+            text = artist,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag(MiniPlayerTestTags.ARTIST),
+        )
+    }
+}
+
+/**
+ * Shuffle toggle button for the mini player.
+ */
+@Composable
+private fun MiniShuffleToggle(
+    isChecked: Boolean,
+    onToggle: () -> Unit,
+) {
+    IconToggleButton(
+        checked = isChecked,
+        onCheckedChange = { onToggle() },
+        modifier = Modifier.testTag(MiniPlayerTestTags.SHUFFLE),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Shuffle,
+            contentDescription = "Shuffle",
+            tint = if (isChecked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/**
+ * Transport controls (previous, play/pause, next) for the mini player.
+ */
+@Composable
+private fun MiniTransportControls(
+    contract: PlayerContract,
+    isPlaying: Boolean,
+) {
+    IconButton(
+        onClick = contract::previous,
+        modifier = Modifier.testTag(MiniPlayerTestTags.PREV),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.SkipPrevious,
+            contentDescription = "Previous",
+            modifier = Modifier.size(28.dp),
+        )
+    }
+
+    IconButton(
+        onClick = contract::togglePlay,
+        modifier = Modifier
+            .size(48.dp)
+            .testTag(MiniPlayerTestTags.PLAY),
+    ) {
+        Icon(
+            imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            contentDescription = if (isPlaying) "Pause" else "Play",
+            modifier = Modifier.size(32.dp),
+        )
+    }
+
+    IconButton(
+        onClick = contract::next,
+        modifier = Modifier.testTag(MiniPlayerTestTags.NEXT),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.SkipNext,
+            contentDescription = "Next",
+            modifier = Modifier.size(28.dp),
+        )
     }
 }
 
@@ -183,20 +248,20 @@ fun MiniPlayer(
 private fun MiniSeekBar(state: PlayerUiState, contract: PlayerContract) {
     if (state.durationMs > 0) {
         val maxMs = state.durationMs
-        val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        val interactionSource = remember { MutableInteractionSource() }
         Slider(
             value = state.positionMs.coerceIn(0L, maxMs).toFloat(),
             onValueChange = { contract.seekTo(it.toLong()) },
             valueRange = 0f..maxMs.toFloat(),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(26.dp)
-                .padding(horizontal = 14.dp)
+                .height(SEEK_BAR_HEIGHT)
+                .padding(horizontal = SEEK_BAR_HORIZONTAL_PADDING)
                 .testTag(MiniPlayerTestTags.SEEK),
             track = { sliderState ->
                 SliderDefaults.Track(
                     sliderState = sliderState,
-                    modifier = Modifier.height(4.dp),
+                    modifier = Modifier.height(TRACK_HEIGHT),
                     thumbTrackGapSize = 0.dp,
                     colors = SliderDefaults.colors(
                         activeTrackColor = MaterialTheme.colorScheme.primary,
@@ -207,7 +272,7 @@ private fun MiniSeekBar(state: PlayerUiState, contract: PlayerContract) {
             thumb = {
                 SliderDefaults.Thumb(
                     interactionSource = interactionSource,
-                    thumbSize = DpSize(4.dp, 4.dp),
+                    thumbSize = THUMB_SIZE,
                 )
             },
         )

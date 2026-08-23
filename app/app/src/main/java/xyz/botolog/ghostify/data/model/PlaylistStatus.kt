@@ -1,6 +1,15 @@
 package xyz.botolog.ghostify.data.model
 
-/** Lifecycle state of a saved playlist. */
+/**
+ * Lifecycle state of a saved playlist.
+ *
+ * Drives UI display and download-manager behaviour. Transitions are:
+ * ```
+ *   NEW → DOWNLOADING → READY
+ *              ↓
+ *           ERROR → (retry) → DOWNLOADING
+ * ```
+ */
 enum class PlaylistStatus {
     /** Metadata saved, tracks fetched, nothing downloaded yet. */
     NEW,
@@ -12,5 +21,5 @@ enum class PlaylistStatus {
     DOWNLOADING,
 
     /** A previous sync/download attempt failed partway. */
-    ERROR
+    ERROR;
 }

@@ -39,16 +39,25 @@ data class HeapGrowthReport(
 
     override fun toString(): String =
         "samples=$samples duration=${durationMillis}ms delta=${"%.1f".format(deltaMiB)}MiB " +
-            "slope=${"%.1f".format(slopeBytesPerMinute / (1024.0 * 1024.0))}MiB/min " +
+            "slope=${"%.1f".format(slopeBytesPerMinute / BYTES_PER_MIB)}MiB/min " +
             "corr=${"%.3f".format(correlation)} unbounded=$unbounded"
 
     companion object {
+        /** One MiB in bytes. */
+        private const val BYTES_PER_MIB = 1024.0 * 1024.0
+
         /** A trend line must be this correlated with time before we call it a leak. */
         const val MIN_CORRELATION = 0.85
     }
 }
 
 object HeapGrowthAnalyzer {
+
+    /** One minute in milliseconds. */
+    private const val MS_PER_MINUTE = 60_000.0
+
+    /** One MiB in bytes. */
+    private const val BYTES_PER_MIB = 1024.0 * 1024.0
 
     /**
      * Default leak threshold: ~2 MiB / minute of steady, correlated growth.
@@ -77,6 +86,23 @@ object HeapGrowthAnalyzer {
             return HeapGrowthReport(n, duration, start.usedBytes, end.usedBytes, 0, Double.NaN, Double.NaN, slopeThresholdBytesPerMinute)
         }
 
+        val (slopePerMs, correlation) = computeLeastSquares(sorted, n)
+        val slopePerMinute = if (slopePerMs.isNaN()) Double.NaN else slopePerMs * MS_PER_MINUTE
+
+        return HeapGrowthReport(
+            samples = n,
+            durationMillis = duration,
+            startBytes = start.usedBytes,
+            endBytes = end.usedBytes,
+            deltaBytes = end.usedBytes - start.usedBytes,
+            slopeBytesPerMinute = slopePerMinute,
+            correlation = correlation,
+            slopeThresholdBytesPerMinute = slopeThresholdBytesPerMinute,
+        )
+    }
+
+    /** Computes slope and correlation via least-squares regression. */
+    private fun computeLeastSquares(sorted: List<HeapSample>, n: Int): Pair<Double, Double> {
         val meanX = sorted.sumOf { it.atMillis.toDouble() } / n
         val meanY = sorted.sumOf { it.usedBytes.toDouble() } / n
         var sxx = 0.0
@@ -90,18 +116,7 @@ object HeapGrowthAnalyzer {
             syy += dy * dy
         }
         val slopePerMs = if (sxx == 0.0) Double.NaN else sxy / sxx
-        val slopePerMinute = if (slopePerMs.isNaN()) Double.NaN else slopePerMs * 60_000.0
         val correlation = if (sxx == 0.0 || syy == 0.0) Double.NaN else sxy / sqrt(sxx * syy)
-
-        return HeapGrowthReport(
-            samples = n,
-            durationMillis = duration,
-            startBytes = start.usedBytes,
-            endBytes = end.usedBytes,
-            deltaBytes = end.usedBytes - start.usedBytes,
-            slopeBytesPerMinute = slopePerMinute,
-            correlation = correlation,
-            slopeThresholdBytesPerMinute = slopeThresholdBytesPerMinute,
-        )
+        return slopePerMs to correlation
     }
 }

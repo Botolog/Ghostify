@@ -11,17 +11,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * Full light + dark M3 theme for the whole app. Every screen is rendered inside
- * this composable (via the UI component's MainActivity), so the dark/light
- * guarantee from T-175 holds globally as long as screens read colors from
+ * Full light + dark Material 3 theme for the whole app. Every screen is rendered inside
+ * this composable (via the UI component's MainActivity), so the dark/light guarantee
+ * from T-175 holds globally as long as screens read colors from
  * `MaterialTheme.colorScheme` — the release checks in `checks/CI-CHECKLIST.md`
  * enforce that convention.
  *
- * - [darkTheme]: defaults to the system uiMode (works with Android 12+ per-app
+ * @param darkTheme defaults to the system uiMode (works with Android 12+ per-app
  *   and user theme settings).
- * - [dynamicColor]: on Android 12+ the scheme derives from the wallpaper. The
+ * @param dynamicColor on Android 12+ the scheme derives from the wallpaper. The
  *   render tests pass `dynamicColor = false` explicitly so their assertions are
  *   deterministic across devices and wallpapers.
+ * @param content the composable content to render inside the themed wrapper.
  */
 @Composable
 fun GhostifyTheme(
@@ -44,6 +45,7 @@ fun GhostifyTheme(
     )
 }
 
+/** Static light color scheme used as fallback below API 31 or when dynamic color is disabled. */
 private val LightColors = lightColorScheme(
     primary = Purple40,
     secondary = PurpleGrey40,
@@ -54,6 +56,7 @@ private val LightColors = lightColorScheme(
     onSurface = LightOnSurface,
 )
 
+/** Static dark color scheme used as fallback below API 31 or when dynamic color is disabled. */
 private val DarkColors = darkColorScheme(
     primary = Purple80,
     secondary = PurpleGrey80,

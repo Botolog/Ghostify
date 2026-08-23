@@ -21,16 +21,20 @@ import java.util.concurrent.TimeUnit
  */
 class FileLoggingTree(
     private val context: Context,
-    private val maxFileSizeBytes: Long = 1024 * 1024,
-    private val maxFileCount: Int = 5,
+    private val maxFileSizeBytes: Long = DEFAULT_MAX_FILE_SIZE_BYTES,
+    private val maxFileCount: Int = DEFAULT_MAX_FILE_COUNT,
 ) : Timber.Tree() {
 
-    val logDir: File = File(context.filesDir, "logs").also { it.mkdirs() }
+    val logDir: File = File(context.filesDir, LOG_DIR_NAME).also { it.mkdirs() }
 
-    private val tsFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
-    private val fileTsFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
+    private val tsFormat = SimpleDateFormat(TIMESTAMP_FORMAT, Locale.US)
+    private val fileTsFormat = SimpleDateFormat(FILE_TIMESTAMP_FORMAT, Locale.US)
     private val executor = ThreadPoolExecutor(
-        1, 1, 0L, TimeUnit.MILLISECONDS, LinkedBlockingQueue()
+        THREAD_POOL_CORE_COUNT,
+        THREAD_POOL_MAX_COUNT,
+        KEEP_ALIVE_MILLIS,
+        TimeUnit.MILLISECONDS,
+        LinkedBlockingQueue(),
     )
 
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
@@ -40,19 +44,27 @@ class FileLoggingTree(
 
     private fun writeLog(priority: Int, tag: String?, message: String, t: Throwable?) {
         val ts = tsFormat.format(Date())
-        val lvl = when (priority) {
-            Log.VERBOSE -> "V"
-            Log.DEBUG -> "D"
-            Log.INFO -> "I"
-            Log.WARN -> "W"
-            Log.ERROR -> "E"
-            Log.ASSERT -> "A"
-            else -> "?"
-        }
+        val lvl = priorityToLabel(priority)
         val line = buildString {
             append("[$ts] $lvl/$tag: $message\n")
             if (t != null) append("${Log.getStackTraceString(t)}\n")
         }
+        appendToFile(line)
+    }
+
+    /** Maps Android log priority to a single-character label. */
+    private fun priorityToLabel(priority: Int): String = when (priority) {
+        Log.VERBOSE -> LABEL_VERBOSE
+        Log.DEBUG -> LABEL_DEBUG
+        Log.INFO -> LABEL_INFO
+        Log.WARN -> LABEL_WARN
+        Log.ERROR -> LABEL_ERROR
+        Log.ASSERT -> LABEL_ASSERT
+        else -> LABEL_UNKNOWN
+    }
+
+    /** Appends [line] to the current log file, rotating if needed. */
+    private fun appendToFile(line: String) {
         try {
             val file = currentFile()
             rotateIfFull()
@@ -89,5 +101,23 @@ class FileLoggingTree(
 
     fun clearLogs() {
         logDir.listFiles()?.forEach { it.delete() }
+    }
+
+    companion object {
+        private const val DEFAULT_MAX_FILE_SIZE_BYTES = 1024L * 1024L
+        private const val DEFAULT_MAX_FILE_COUNT = 5
+        private const val LOG_DIR_NAME = "logs"
+        private const val TIMESTAMP_FORMAT = "yyyy-MM-dd HH:mm:ss.SSS"
+        private const val FILE_TIMESTAMP_FORMAT = "yyyy-MM-dd_HH-mm-ss"
+        private const val THREAD_POOL_CORE_COUNT = 1
+        private const val THREAD_POOL_MAX_COUNT = 1
+        private const val KEEP_ALIVE_MILLIS = 0L
+        private const val LABEL_VERBOSE = "V"
+        private const val LABEL_DEBUG = "D"
+        private const val LABEL_INFO = "I"
+        private const val LABEL_WARN = "W"
+        private const val LABEL_ERROR = "E"
+        private const val LABEL_ASSERT = "A"
+        private const val LABEL_UNKNOWN = "?"
     }
 }

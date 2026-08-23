@@ -10,19 +10,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,10 +44,14 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
+import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.model.QueueItem
 import xyz.botolog.ghostify.ui.util.DurationFormat
 import xyz.botolog.ghostify.ui.util.RepeatMode
 
+/**
+ * Test tag constants for the full player screen. Used by Compose UI tests to locate elements.
+ */
 object PlayerTestTags {
     const val COVER = "player_cover"
     const val TITLE = "player_title"
@@ -68,9 +71,29 @@ object PlayerTestTags {
     const val QUEUE_SHEET = "queue_sheet"
     const val EMPTY = "player_empty"
 
+    /**
+     * Returns the test tag for a specific queue item.
+     *
+     * @param index zero-based position in the queue.
+     */
     fun queueItem(index: Int) = "queue_item_$index"
 }
 
+private val ARTWORK_HEIGHT = 280.dp
+private val PLAYER_HORIZONTAL_PADDING = 24.dp
+private val PLAY_BUTTON_SIZE = 72.dp
+private val PLAY_ICON_SIZE = 48.dp
+private val TRANSPORT_ICON_SIZE = 36.dp
+private val VOLUME_ICON_SIZE = 20.dp
+
+/**
+ * Full-screen player showing album art, track info, seek bar, transport controls,
+ * volume slider, and queue sheet.
+ *
+ * @param contract ViewModel contract driving the player state and actions.
+ * @param onBack callback invoked when the back action is triggered.
+ * @param modifier optional modifier applied to the screen root.
+ */
 @Composable
 fun PlayerScreen(
     contract: PlayerContract,
@@ -87,6 +110,9 @@ fun PlayerScreen(
     PlayerContent(state = state, contract = contract, modifier = modifier)
 }
 
+/**
+ * Empty state shown when no track is loaded in the player.
+ */
 @Composable
 private fun EmptyPlayer(modifier: Modifier) {
     Column(
@@ -111,6 +137,9 @@ private fun EmptyPlayer(modifier: Modifier) {
     }
 }
 
+/**
+ * Main content of the player screen, composed of artwork, info, seek bar, and controls.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PlayerContent(
@@ -118,80 +147,31 @@ private fun PlayerContent(
     contract: PlayerContract,
     modifier: Modifier,
 ) {
-    val nowPlaying = state.nowPlaying
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = PLAYER_HORIZONTAL_PADDING),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(modifier = Modifier.height(24.dp))
-
-        AsyncImage(
-            model = nowPlaying?.coverUrl,
-            contentDescription = "Album art",
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(280.dp)
-                .testTag(PlayerTestTags.COVER),
-            contentScale = ContentScale.Crop,
-        )
+        PlayerArtwork(coverUrl = state.nowPlaying?.coverUrl)
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        Text(
-            text = nowPlaying?.title.orEmpty(),
-            style = MaterialTheme.typography.headlineSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.testTag(PlayerTestTags.TITLE),
-        )
-        Text(
-            text = nowPlaying?.artist.orEmpty(),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.testTag(PlayerTestTags.ARTIST),
-        )
-        Text(
-            text = nowPlaying?.album.orEmpty(),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.outline,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.testTag(PlayerTestTags.ALBUM),
-        )
+        PlayerTrackInfo(nowPlaying = state.nowPlaying)
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        SeekBar(state = state, contract = contract)
+        PlayerSeekBar(state = state, contract = contract)
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = DurationFormat.format(state.positionMs),
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.testTag(PlayerTestTags.POSITION_LABEL),
-            )
-            Text(
-                text = DurationFormat.format(state.durationMs),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        PlayerTimeLabels(positionMs = state.positionMs, durationMs = state.durationMs)
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        TransportControls(state = state, contract = contract)
+        PlayerTransportControls(state = state, contract = contract)
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        VolumeControl(state = state, contract = contract)
+        PlayerVolumeControl(state = state, contract = contract)
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -208,8 +188,57 @@ private fun PlayerContent(
     }
 }
 
+/**
+ * Displays the album artwork for the currently playing track.
+ */
 @Composable
-private fun SeekBar(state: PlayerUiState, contract: PlayerContract) {
+private fun PlayerArtwork(coverUrl: Any?) {
+    AsyncImage(
+        model = coverUrl,
+        contentDescription = "Album art",
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(ARTWORK_HEIGHT)
+            .testTag(PlayerTestTags.COVER),
+        contentScale = ContentScale.Crop,
+    )
+}
+
+/**
+ * Displays the track title, artist, and album name for the currently playing track.
+ */
+@Composable
+private fun PlayerTrackInfo(nowPlaying: NowPlaying?) {
+    Text(
+        text = nowPlaying?.title.orEmpty(),
+        style = MaterialTheme.typography.headlineSmall,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.testTag(PlayerTestTags.TITLE),
+    )
+    Text(
+        text = nowPlaying?.artist.orEmpty(),
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.testTag(PlayerTestTags.ARTIST),
+    )
+    Text(
+        text = nowPlaying?.album.orEmpty(),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.outline,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.testTag(PlayerTestTags.ALBUM),
+    )
+}
+
+/**
+ * Draggable seek bar for navigating within the current track.
+ */
+@Composable
+private fun PlayerSeekBar(state: PlayerUiState, contract: PlayerContract) {
     val maxMs = if (state.durationMs > 0) state.durationMs else 1L
     Slider(
         value = state.positionMs.coerceIn(0L, maxMs).toFloat(),
@@ -221,8 +250,33 @@ private fun SeekBar(state: PlayerUiState, contract: PlayerContract) {
     )
 }
 
+/**
+ * Displays the current position and total duration timestamps below the seek bar.
+ */
 @Composable
-private fun TransportControls(state: PlayerUiState, contract: PlayerContract) {
+private fun PlayerTimeLabels(positionMs: Long, durationMs: Long) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = DurationFormat.format(positionMs),
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.testTag(PlayerTestTags.POSITION_LABEL),
+        )
+        Text(
+            text = DurationFormat.format(durationMs),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Transport controls: shuffle, previous, play/pause, next, and repeat buttons.
+ */
+@Composable
+private fun PlayerTransportControls(state: PlayerUiState, contract: PlayerContract) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -244,19 +298,19 @@ private fun TransportControls(state: PlayerUiState, contract: PlayerContract) {
             onClick = contract::previous,
             modifier = Modifier.testTag(PlayerTestTags.PREV),
         ) {
-            Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(36.dp))
+            Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
         }
 
         IconButton(
             onClick = contract::togglePlay,
             modifier = Modifier
-                .size(72.dp)
+                .size(PLAY_BUTTON_SIZE)
                 .testTag(PlayerTestTags.PLAY),
         ) {
             Icon(
                 imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 contentDescription = if (state.isPlaying) "Pause" else "Play",
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(PLAY_ICON_SIZE),
             )
         }
 
@@ -264,7 +318,7 @@ private fun TransportControls(state: PlayerUiState, contract: PlayerContract) {
             onClick = contract::next,
             modifier = Modifier.testTag(PlayerTestTags.NEXT),
         ) {
-            Icon(Icons.Filled.SkipNext, contentDescription = "Next", modifier = Modifier.size(36.dp))
+            Icon(Icons.Filled.SkipNext, contentDescription = "Next", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
         }
 
         IconToggleButton(
@@ -281,13 +335,16 @@ private fun TransportControls(state: PlayerUiState, contract: PlayerContract) {
     }
 }
 
+/**
+ * Volume slider with a speaker icon and percentage label.
+ */
 @Composable
-private fun VolumeControl(state: PlayerUiState, contract: PlayerContract) {
+private fun PlayerVolumeControl(state: PlayerUiState, contract: PlayerContract) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(VOLUME_ICON_SIZE))
         Slider(
             value = state.volume.coerceIn(0f, 1f),
             onValueChange = contract::setVolume,
@@ -304,6 +361,9 @@ private fun VolumeControl(state: PlayerUiState, contract: PlayerContract) {
     }
 }
 
+/**
+ * Bottom sheet displaying the upcoming queue with clickable items to jump to any position.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QueueSheet(
@@ -324,38 +384,54 @@ private fun QueueSheet(
         )
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(queue) { index, item ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag(PlayerTestTags.queueItem(index))
-                        .clickable { contract.jumpToQueueIndex(index) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (item.isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = item.artist,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Text(
-                        text = DurationFormat.format(item.durationMs),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                QueueItemRow(
+                    item = item,
+                    index = index,
+                    onClick = { contract.jumpToQueueIndex(index) },
+                )
             }
         }
         Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+/**
+ * A single row in the queue bottom sheet showing track title, artist, and duration.
+ */
+@Composable
+private fun QueueItemRow(
+    item: QueueItem,
+    index: Int,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(PlayerTestTags.queueItem(index))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (item.isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = DurationFormat.format(item.durationMs),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

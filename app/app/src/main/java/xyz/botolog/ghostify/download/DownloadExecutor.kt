@@ -16,14 +16,28 @@ import java.util.concurrent.ConcurrentHashMap
  *    backgrounding and process death (T-050/T-051).
  */
 interface DownloadExecutor {
-    /** Starts a run for [playlistId]. Returns false if it could not start. */
+    /**
+     * Starts a download run for [playlistId].
+     *
+     * @param playlistId the playlist to download.
+     * @return `true` if the run was started, `false` if it could not start.
+     */
     fun execute(playlistId: String): Boolean
 
-    /** Requests cancellation of a running download for [playlistId]. */
+    /**
+     * Requests cancellation of a running download for [playlistId].
+     *
+     * @param playlistId the playlist whose download should be canceled.
+     */
     fun cancel(playlistId: String)
 }
 
-/** Executes download runs in-process on the given [scope]. */
+/**
+ * Executes download runs in-process on the given [scope].
+ *
+ * Tracks active jobs per playlist in a thread-safe map. Duplicate calls to
+ * [execute] for the same playlist are rejected.
+ */
 class InlineDownloadExecutor(
     private val manager: DownloadManager,
     private val scope: CoroutineScope,
@@ -31,6 +45,12 @@ class InlineDownloadExecutor(
 
     private val jobs = ConcurrentHashMap<String, Job>()
 
+    /**
+     * Launches a download run as a coroutine in [scope].
+     *
+     * @param playlistId the playlist to download.
+     * @return `true` if the run was started, `false` if already running.
+     */
     override fun execute(playlistId: String): Boolean {
         Timber.i("InlineDownloadExecutor.execute: START")
         if (jobs.containsKey(playlistId)) {
@@ -50,6 +70,11 @@ class InlineDownloadExecutor(
         return true
     }
 
+    /**
+     * Cancels the in-flight download run for [playlistId] by canceling the coroutine.
+     *
+     * @param playlistId the playlist whose download should be canceled.
+     */
     override fun cancel(playlistId: String) {
         Timber.i("InlineDownloadExecutor.cancel: START")
         // Cancelling the run coroutine interrupts an in-flight `TrackDownloader`
@@ -57,6 +82,12 @@ class InlineDownloadExecutor(
         jobs.remove(playlistId)?.cancel()
     }
 
+    /**
+     * Checks whether a download run is currently active for [playlistId].
+     *
+     * @param playlistId the playlist to check.
+     * @return `true` if a run is in progress.
+     */
     fun isRunning(playlistId: String): Boolean {
         Timber.i("InlineDownloadExecutor.isRunning: START")
         val result = jobs.containsKey(playlistId)

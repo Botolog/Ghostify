@@ -27,6 +27,13 @@ import timber.log.Timber
  * (a duplicate press is a benign no-op); "re-sync" is guarded by an in-VM flag and
  * is safe to run while a download is active (the SyncUseCase only enqueues PENDING
  * tracks); "play" only builds a queue from DOWNLOADED tracks.
+ *
+ * @property playlistId the database id of the playlist to display.
+ * @property repo playlist persistence layer.
+ * @property songRepo song persistence layer.
+ * @property downloads download orchestration layer.
+ * @property syncer re-sync use case for playlists.
+ * @property player media playback controller.
  */
 class PlaylistDetailViewModel(
     private val playlistId: String,
@@ -40,7 +47,10 @@ class PlaylistDetailViewModel(
     private val _state = MutableStateFlow(PlaylistDetailUiState(playlistId = playlistId))
     override val state: StateFlow<PlaylistDetailUiState> = _state.asStateFlow()
 
+    /** Tracks whether a sync operation is currently in progress. */
     private val syncing = MutableStateFlow(false)
+
+    /** Holds the most recent load or sync error message. */
     private val error = MutableStateFlow<String?>(null)
 
     init {
@@ -58,7 +68,10 @@ class PlaylistDetailViewModel(
                 .catch { e ->
                     Timber.e(e, "PlaylistDetailViewModel: playlist stream FAILED")
                     _state.update {
-                        it.copy(loading = false, error = e.message ?: "Could not load the playlist.")
+                        it.copy(
+                            loading = false,
+                            error = e.message ?: PLAYLIST_LOAD_ERROR,
+                        )
                     }
                 }
                 .collect { _state.value = it }
@@ -77,18 +90,16 @@ class PlaylistDetailViewModel(
             syncing.value = true
             try {
                 val result = syncer.syncPlaylist(playlistId)
-                // New / re-queued tracks need downloading; a running run makes
-                // this a no-op (single-flight inside the manager).
                 if (result.added > 0 || result.requeued > 0) {
                     downloads.downloadAll(playlistId)
                 }
                 error.value = null
             } catch (e: SyncException) {
                 Timber.e(e, "PlaylistDetailViewModel.sync: FAILED")
-                error.value = e.message ?: "Sync failed."
+                error.value = e.message ?: SYNC_FAILED_ERROR
             } catch (e: Exception) {
                 Timber.e(e, "PlaylistDetailViewModel.sync: FAILED")
-                error.value = e.message ?: "Sync failed."
+                error.value = e.message ?: SYNC_FAILED_ERROR
             } finally {
                 syncing.value = false
             }
@@ -98,10 +109,7 @@ class PlaylistDetailViewModel(
     override fun playAll() {
         Timber.i("PlaylistDetailViewModel.playAll: START")
         launch {
-            val songs = songRepo.getSongs(playlistId)
-                .filter { it.status == SongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
-                .sortedBy { it.position }
-                .map { it.toPlayerSong() }
+            val songs = getDownloadedSongs()
             player.playPlaylist(songs)
         }
     }
@@ -119,10 +127,7 @@ class PlaylistDetailViewModel(
     override fun playFromSong(songId: String) {
         Timber.i("PlaylistDetailViewModel.playFromSong: START $songId")
         launch {
-            val songs = songRepo.getSongs(playlistId)
-                .filter { it.status == SongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
-                .sortedBy { it.position }
-                .map { it.toPlayerSong() }
+            val songs = getDownloadedSongs()
             player.playPlaylist(songs, startSongId = songId)
         }
     }
@@ -149,6 +154,24 @@ class PlaylistDetailViewModel(
         }
     }
 
+    /**
+     * Returns all downloaded songs in this playlist, sorted by position.
+     */
+    private suspend fun getDownloadedSongs() = songRepo.getSongs(playlistId)
+        .filter { it.status == SongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
+        .sortedBy { it.position }
+        .map { it.toPlayerSong() }
+
+    /**
+     * Builds a [PlaylistDetailUiState] by merging database data, download progress,
+     * and transient flags into a single snapshot.
+     *
+     * @param playlist the playlist entity, or `null` if not found.
+     * @param songs the full list of songs in the playlist.
+     * @param progress the current download progress, or `null` when idle.
+     * @param isSyncing whether a sync operation is in progress.
+     * @param loadError the most recent error message, or `null`.
+     */
     private fun mapToUi(
         playlist: xyz.botolog.ghostify.data.db.entity.PlaylistEntity?,
         songs: List<xyz.botolog.ghostify.data.db.entity.SongEntity>,
@@ -160,12 +183,12 @@ class PlaylistDetailViewModel(
             return PlaylistDetailUiState(
                 playlistId = playlistId,
                 loading = false,
-                error = loadError ?: "Playlist not found.",
+                error = loadError ?: PLAYLIST_NOT_FOUND_ERROR,
             )
         }
         val sorted = songs.sortedBy { it.position }
         val downloaded = sorted.count { it.status == SongStatus.DOWNLOADED }
-        val running = progress?.state == DownloadRunState.RUNNING
+        val isRunning = progress?.state == DownloadRunState.RUNNING
         return PlaylistDetailUiState(
             playlistId = playlistId,
             name = playlist.name,
@@ -174,10 +197,21 @@ class PlaylistDetailViewModel(
             downloadedCount = downloaded,
             trackCount = playlist.trackCount,
             loading = false,
-            isDownloadingAll = running,
-            downloadAllProgress = if (running) progress?.overallPercent?.toInt() else null,
+            isDownloadingAll = isRunning,
+            downloadAllProgress = if (isRunning) progress?.overallPercent?.toInt() else null,
             isSyncing = isSyncing,
             error = loadError,
         )
+    }
+
+    companion object {
+        /** Error message shown when the playlist cannot be loaded from the database. */
+        private const val PLAYLIST_NOT_FOUND_ERROR = "Playlist not found."
+
+        /** Error message shown when the playlist stream fails. */
+        private const val PLAYLIST_LOAD_ERROR = "Could not load the playlist."
+
+        /** Error message shown when a sync operation fails without a specific message. */
+        private const val SYNC_FAILED_ERROR = "Sync failed."
     }
 }

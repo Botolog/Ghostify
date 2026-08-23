@@ -88,8 +88,8 @@ class GhostifyApplication : Application() {
             val ffmpeg = FfmpegLocator.ensureExecutable(this)
             val ffmpegDir = ffmpeg.parentFile?.absolutePath ?: ffmpeg.absolutePath
             Python.getInstance()
-                .getModule("ghostify_dl")
-                .callAttr("prepend_path", ffmpegDir)
+                .getModule(MODULE_GHOSTIFY_DL)
+                .callAttr(FN_PREPEND_PATH, ffmpegDir)
             Log.i(TAG, "Python + ffmpeg ready")
         } catch (t: Throwable) {
             Log.e(TAG, "Python runtime failed to start; running in degraded mode.", t)
@@ -98,6 +98,8 @@ class GhostifyApplication : Application() {
 
     private companion object {
         const val TAG = "GhostifyApp"
+        private const val MODULE_GHOSTIFY_DL = "ghostify_dl"
+        private const val FN_PREPEND_PATH = "prepend_path"
     }
 }
 

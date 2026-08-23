@@ -13,47 +13,53 @@ import xyz.botolog.ghostify.data.model.PlaylistStatus
  * `spotify_id` is unique per origin: saving the same Spotify playlist twice
  * (e.g. re-running the "Add playlist" flow) must collapse onto a single row
  * instead of duplicating it. For YouTube-origin playlists, `spotify_id`
- * stores the watch URL / playlist URL and the `origin` column distinguishes
- * it.
+ * stores the watch URL / playlist URL and the [origin] column distinguishes it.
  *
- * @param origin whether this playlist was fetched from Spotify or YouTube.
- *   Drives UI tinting and download routing.
+ * @property id Unique row identifier (UUID).
+ * @property spotifyId Spotify playlist id, or a YouTube playlist URL for YouTube origin.
+ * @property name Display name of the playlist.
+ * @property owner Playlist owner name (e.g. Spotify username).
+ * @property coverUrl URL of the playlist cover artwork.
+ * @property trackCount Number of tracks in the playlist (derived, never trusted from callers).
+ * @property status Current lifecycle state of this playlist.
+ * @property createdAt Epoch millis when this row was first inserted.
+ * @property lastSyncedAt Epoch millis of the most recent successful sync.
+ * @property sortOrder User-defined sort position (lower = higher in list). Falls back to created_at.
+ * @property origin Where this playlist was fetched from (Spotify / YouTube).
  */
 @Entity(
     tableName = "playlists",
     indices = [
-        Index(value = ["spotify_id", "origin"], unique = true)
-    ]
+        Index(value = ["spotify_id", "origin"], unique = true),
+    ],
 )
 data class PlaylistEntity(
     @PrimaryKey
     val id: String,
 
-    @androidx.room.ColumnInfo(name = "spotify_id")
+    @ColumnInfo(name = "spotify_id")
     val spotifyId: String,
 
     val name: String,
     val owner: String? = null,
 
-    @androidx.room.ColumnInfo(name = "cover_url")
+    @ColumnInfo(name = "cover_url")
     val coverUrl: String? = null,
 
-    @androidx.room.ColumnInfo(name = "track_count")
+    @ColumnInfo(name = "track_count")
     val trackCount: Int = 0,
 
     val status: PlaylistStatus = PlaylistStatus.NEW,
 
-    @androidx.room.ColumnInfo(name = "created_at")
+    @ColumnInfo(name = "created_at")
     val createdAt: Long = System.currentTimeMillis(),
 
-    @androidx.room.ColumnInfo(name = "last_synced_at")
+    @ColumnInfo(name = "last_synced_at")
     val lastSyncedAt: Long? = null,
 
-    /** User-defined sort position (lower = higher in list). Falls back to created_at. */
-    @androidx.room.ColumnInfo(name = "sort_order", defaultValue = "0")
+    @ColumnInfo(name = "sort_order", defaultValue = "0")
     val sortOrder: Int = 0,
 
-    /** Where this playlist was fetched from (Spotify / YouTube). */
     @ColumnInfo(name = "origin", defaultValue = "SPOTIFY")
     val origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
 )

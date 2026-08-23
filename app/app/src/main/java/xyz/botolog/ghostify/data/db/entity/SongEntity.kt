@@ -21,22 +21,37 @@ import xyz.botolog.ghostify.data.model.SongStatus
  *    spotify lookup used by the sync diff.
  *  - `(playlist_id, position)` serves the "ordered track list" query.
  *  - `(playlist_id, status)` serves the "download these statuses" queries.
+ *
+ * @property id Unique row identifier (UUID).
+ * @property playlistId Foreign key to the parent [PlaylistEntity].
+ * @property spotifyId Spotify track identifier, unique within a playlist.
+ * @property title Track title from the Spotify catalogue.
+ * @property artists Comma-separated artist names.
+ * @property album Album name, if available.
+ * @property durationMs Track duration in milliseconds.
+ * @property coverUrl URL of the album/track artwork.
+ * @property ytId YouTube video id, resolved during download.
+ * @property filePath Local file path after successful download, `null` otherwise.
+ * @property error Last failure reason; non-null only while [status] is [SongStatus.FAILED].
+ * @property status Current download lifecycle state.
+ * @property position Playlist ordering (0-based).
+ * @property addedAt Epoch millis when this row was first inserted.
  */
 @Entity(
     tableName = "songs",
     indices = [
         Index(value = ["playlist_id", "spotify_id"], unique = true),
         Index(value = ["playlist_id", "position"]),
-        Index(value = ["playlist_id", "status"])
+        Index(value = ["playlist_id", "status"]),
     ],
     foreignKeys = [
         ForeignKey(
             entity = PlaylistEntity::class,
             parentColumns = ["id"],
             childColumns = ["playlist_id"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ]
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
 )
 data class SongEntity(
     @PrimaryKey
@@ -64,14 +79,12 @@ data class SongEntity(
     @ColumnInfo(name = "file_path")
     val filePath: String? = null,
 
-    /** Last failure reason; non-null only while status == FAILED. */
     val error: String? = null,
 
     val status: SongStatus = SongStatus.PENDING,
 
-    /** Playlist ordering (0-based). */
     val position: Int = 0,
 
     @ColumnInfo(name = "added_at")
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
 )

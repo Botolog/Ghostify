@@ -28,6 +28,9 @@ import timber.log.Timber
  * download badges (downloaded count / progress percent / status) are merged from
  * each playlist's [DownloadManager.observeProgress] stream so the library stays
  * correct before, during and after a download run.
+ *
+ * @property repo playlist persistence layer.
+ * @property downloads download orchestration layer.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModel(
@@ -47,8 +50,8 @@ class LibraryViewModel(
                         flowOf(emptyList())
                     } else {
                         combine(playlists.map { downloads.observeProgress(it.id) }) { progress ->
-                            playlists.mapIndexed { i, playlist ->
-                                mapPlaylist(playlist, progress[i])
+                            playlists.mapIndexed { index, playlist ->
+                                mapPlaylist(playlist, progress[index])
                             }
                         }
                     }
@@ -70,7 +73,6 @@ class LibraryViewModel(
 
     override fun onOpenSettings() {
         Timber.i("LibraryViewModel.onOpenSettings: START")
-        // Navigation to Settings is owned by the screen's callback; nothing to do.
     }
 
     override fun reorderPlaylist(playlistId: String, newSortOrder: Int) {
@@ -88,27 +90,44 @@ class LibraryViewModel(
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 
-    /** Non-contract hook used by the Add-dialog wiring to close itself. */
+    /**
+     * Non-contract hook used by the Add-dialog wiring to close itself.
+     */
     fun closeAddDialog() {
         Timber.i("LibraryViewModel.closeAddDialog: START")
         _state.update { it.copy(isAddDialogOpen = false) }
     }
 
-    private fun mapPlaylist(p: PlaylistEntity, progress: DownloadProgress): PlaylistUi {
-        val perSong = progress.perSong
-        val downloaded = perSong.values.count { it.status == DownloadStatus.DOWNLOADED }
-        val running = progress.state == DownloadRunState.RUNNING
+    /**
+     * Maps a database [PlaylistEntity] and its live [DownloadProgress] onto
+     * a render-ready [PlaylistUi] row.
+     *
+     * @param entity the playlist row from the database.
+     * @param progress the current download progress for this playlist.
+     */
+    private fun mapPlaylist(entity: PlaylistEntity, progress: DownloadProgress): PlaylistUi {
+        val downloaded = countDownloaded(progress)
+        val isRunning = progress.state == DownloadRunState.RUNNING
         return PlaylistUi(
-            id = p.id,
-            name = p.name,
-            owner = p.owner.orEmpty(),
-            coverUrl = p.coverUrl,
-            trackCount = p.trackCount,
+            id = entity.id,
+            name = entity.name,
+            owner = entity.owner.orEmpty(),
+            coverUrl = entity.coverUrl,
+            trackCount = entity.trackCount,
             downloadedCount = downloaded,
-            status = if (running) UiPlaylistStatus.DOWNLOADING else p.status.toUi(),
-            origin = p.origin,
-            progressPercent = if (running) progress.overallPercent.toInt() else null,
-            lastSyncedAt = p.lastSyncedAt,
+            status = if (isRunning) UiPlaylistStatus.DOWNLOADING else entity.status.toUi(),
+            origin = entity.origin,
+            progressPercent = if (isRunning) progress.overallPercent.toInt() else null,
+            lastSyncedAt = entity.lastSyncedAt,
         )
     }
+
+    /**
+     * Counts how many songs in the progress map have been fully downloaded.
+     *
+     * @param progress the download progress snapshot.
+     * @return the number of downloaded songs.
+     */
+    private fun countDownloaded(progress: DownloadProgress): Int =
+        progress.perSong.values.count { it.status == DownloadStatus.DOWNLOADED }
 }

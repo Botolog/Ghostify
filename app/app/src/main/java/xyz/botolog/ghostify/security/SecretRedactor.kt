@@ -33,8 +33,9 @@ import timber.log.Timber
 object SecretRedactor {
 
     internal val PLACEHOLDERS = setOf(
-        "", "none", "null", "true", "false", "0", "your-api-key", "your-api-key-here",
-        "changeme", "secret", "password", "xxx", "lorem-ipsum", "example", "test",
+        "", "none", "null", "true", "false", "0",
+        "your-api-key", "your-api-key-here", "changeme", "secret",
+        "password", "xxx", "lorem-ipsum", "example", "test",
         "spotify", "client_id", "client_secret", "api_key", "apikey",
     )
 
@@ -101,18 +102,20 @@ object SecretRedactor {
     fun find(text: String): List<SecretMatch> {
         Timber.i("SecretRedactor.find: START")
         val out = ArrayList<SecretMatch>()
+        out += findAssignments(text)
+        out += findBearerTokens(text)
+        out += findPemBlocks(text)
+        Timber.i("SecretRedactor.find: returning ${out.size} matches")
+        return out
+    }
+
+    /** Finds credential assignments of the form `KEY = VALUE`. */
+    private fun findAssignments(text: String): List<SecretMatch> {
+        val out = ArrayList<SecretMatch>()
         for (m in ASSIGNMENT.findAll(text)) {
             val key = normalizeKey(m.groupValues[1])
             val value: String
             val g: MatchGroup
-            // Pick the group that *participated* (non-null), not the first
-            // non-empty one: a quoted alternative can legitimately match the
-            // empty string (e.g. `client_secret = ""`), in which case
-            // groupValues is "" but the group DID participate, while the bare
-            // alternative is `None` — and indexing `groups[4]!!` on a None
-            // would NPE. `groupValues[n]` returns "" for both "matched empty"
-            // and "didn't participate", so participation (`groups[n] != null`)
-            // is the only correct discriminator.
             when {
                 m.groups[2] != null -> { value = m.groupValues[2]; g = m.groups[2]!! }
                 m.groups[3] != null -> { value = m.groupValues[3]; g = m.groups[3]!! }
@@ -124,16 +127,27 @@ object SecretRedactor {
                 out.add(SecretMatch(key, value, g.range.first, g.range.last + 1))
             }
         }
+        return out
+    }
+
+    /** Finds Bearer/Basic authorization tokens. */
+    private fun findBearerTokens(text: String): List<SecretMatch> {
+        val out = ArrayList<SecretMatch>()
         for (m in BEARER.findAll(text)) {
             val token = m.groupValues[2]
             if (looksLikeSecret(token, quoted = true)) {
                 out.add(SecretMatch("auth", token, m.groups[2]!!.range.first, m.groups[2]!!.range.last + 1))
             }
         }
+        return out
+    }
+
+    /** Finds PEM private key blocks. */
+    private fun findPemBlocks(text: String): List<SecretMatch> {
+        val out = ArrayList<SecretMatch>()
         for (m in PEM_BLOCK.findAll(text)) {
             out.add(SecretMatch("private_key", m.groupValues[0], m.range.first, m.range.last + 1))
         }
-        Timber.i("SecretRedactor.find: returning ${out.size} matches")
         return out
     }
 
@@ -174,6 +188,8 @@ object SecretRedactor {
         return camel.lowercase().replace('-', '_').replace(Regex("_+"), "_").trim('_')
     }
 
+    private const val QUERY_REDACTED_SUFFIX = "=[REDACTED]"
+
     /**
      * Replaces every credential-shaped value with a masked marker, so logs and
      * stored strings never leak the value itself. Idempotent.
@@ -181,15 +197,25 @@ object SecretRedactor {
     fun redact(text: String): String {
         Timber.i("SecretRedactor.redact: START")
         if (text.isEmpty()) return text
+        val redactedAssignments = redactAssignments(text)
+        val result = redactQuerySecrets(redactedAssignments)
+        Timber.i("SecretRedactor.redact: returning $result")
+        return result
+    }
+
+    /** Replaces credential assignments with `<REDACTED:key>` markers. */
+    private fun redactAssignments(text: String): String {
         val sb = StringBuilder(text)
         for (m in find(text).sortedByDescending { it.start }) {
             sb.replace(m.start, m.endExclusive, "<REDACTED:${m.key}>")
         }
-        sb.replace(0, sb.length, QUERY_SECRET.replace(sb.toString()) { match ->
-            match.groupValues[1] + "=[REDACTED]"
-        })
-        val result = sb.toString()
-        Timber.i("SecretRedactor.redact: returning $result")
-        return result
+        return sb.toString()
+    }
+
+    /** Replaces sensitive query-string parameter values with `[REDACTED]`. */
+    private fun redactQuerySecrets(text: String): String {
+        return QUERY_SECRET.replace(text) { match ->
+            match.groupValues[1] + QUERY_REDACTED_SUFFIX
+        }
     }
 }

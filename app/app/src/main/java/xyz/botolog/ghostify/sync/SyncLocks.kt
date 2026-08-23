@@ -15,15 +15,28 @@ import timber.log.Timber
  * Deadlock-safety (T-068): the manual-download path (DownloadManager) never
  * acquires this lock, and [SyncUseCase] never holds it while blocking on the
  * download queue in a way that waits for a manual download to release the DB.
- * Lock ordering is: playlist lock -> (short) DB transaction -> queue lock;
- * the download manager holds queue lock -> (short) DB transaction. There is no
+ * Lock ordering is: playlist lock → (short) DB transaction → queue lock;
+ * the download manager holds queue lock → (short) DB transaction. There is no
  * cycle, so no deadlock.
  */
 class SyncLocks {
 
+    /** Guards mutations to [locks]. */
     private val guard = Mutex()
+
+    /** Per-playlist mutex instances, created on demand. */
     private val locks = HashMap<String, Mutex>()
 
+    /**
+     * Executes [block] while holding the mutex for [playlistId].
+     *
+     * If two coroutines call this concurrently with the same [playlistId],
+     * the second one suspends until the first releases the lock.
+     *
+     * @param playlistId The playlist to serialize.
+     * @param block The work to perform under the lock.
+     * @return The result of [block].
+     */
     suspend fun <T> withPlaylistLock(playlistId: String, block: suspend () -> T): T {
         Timber.i("SyncLocks.withPlaylistLock: START playlistId=$playlistId")
         val lock = guard.withLock { locks.getOrPut(playlistId) { Mutex() } }

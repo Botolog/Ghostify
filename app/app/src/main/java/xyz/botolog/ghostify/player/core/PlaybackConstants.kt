@@ -9,6 +9,11 @@ package xyz.botolog.ghostify.player.core
  */
 object PlaybackConstants {
 
-    /** Mirrors `androidx.media3.common.C.TIME_UNSET`. */
+    /**
+     * Sentinel value indicating that the duration is not yet known.
+     *
+     * Mirrors `androidx.media3.common.C.TIME_UNSET`. Used by the player before
+     * the media duration has been determined.
+     */
     const val TIME_UNSET: Long = Long.MIN_VALUE + 1
 }

@@ -9,6 +9,12 @@ import timber.log.Timber
  */
 object DownloadSelector {
 
+    /**
+     * Selects downloadable songs from the given list, sorted by playlist position.
+     *
+     * @param songs all songs in the playlist.
+     * @return songs eligible for download, ordered by [SongRecord.position].
+     */
     fun select(songs: List<SongRecord>): List<SongRecord> {
         Timber.i("DownloadSelector.select: START")
         val result = songs

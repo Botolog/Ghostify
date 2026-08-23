@@ -11,7 +11,13 @@ import timber.log.Timber
  */
 object NotificationActionPolicy {
 
-    /** Buttons that occupy the compact (collapsed) media view. Never includes STOP. */
+    /**
+     * Returns the buttons that occupy the compact (collapsed) media view.
+     *
+     * Never includes STOP — the compact row is strictly transport controls.
+     *
+     * @return ordered list of compact-view actions.
+     */
     fun compactActions(): List<PlaybackAction> {
         Timber.i("NotificationActionPolicy.compactActions: START")
         val result = PlaybackAction.COMPACT
@@ -19,7 +25,14 @@ object NotificationActionPolicy {
         return result
     }
 
-    /** Buttons in the expanded notification. Always includes STOP for teardown (T-097). */
+    /**
+     * Returns the buttons in the expanded notification.
+     *
+     * Always includes STOP so the user can tear down playback from the
+     * notification without hunting for the app (T-097, T-100).
+     *
+     * @return ordered list of expanded-view actions.
+     */
     fun expandedActions(): List<PlaybackAction> {
         Timber.i("NotificationActionPolicy.expandedActions: START")
         val result = PlaybackAction.EXPANDED
@@ -29,8 +42,12 @@ object NotificationActionPolicy {
 
     /**
      * Whether the play/pause button should currently present the *pause* glyph
-     * (i.e. media is actively playing). Drives both the button icon and the
-     * `android.media.session` PLAY_PAUSE state.
+     * (i.e. media is actively playing).
+     *
+     * Drives both the button icon and the `android.media.session` PLAY_PAUSE state.
+     *
+     * @param isPlaying current playback state.
+     * @return true if the pause glyph should be shown.
      */
     fun playPauseShowsPause(isPlaying: Boolean): Boolean {
         Timber.i("NotificationActionPolicy.playPauseShowsPause: START")

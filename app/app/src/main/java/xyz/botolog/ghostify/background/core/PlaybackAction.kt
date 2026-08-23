@@ -8,13 +8,22 @@ package xyz.botolog.ghostify.background.core
  * notification without hunting for the app (T-097, T-100).
  */
 enum class PlaybackAction {
+
+    /** Jump to the previous track. */
     PREVIOUS,
+
+    /** Toggle between play and pause. */
     PLAY_PAUSE,
+
+    /** Jump to the next track. */
     NEXT,
+
+    /** Stop playback and tear down the foreground service. */
     STOP,
     ;
 
     companion object {
+
         /** Buttons shown in the compact (headset / Android Auto row) view. */
         val COMPACT: List<PlaybackAction> = listOf(PREVIOUS, PLAY_PAUSE, NEXT)
 

@@ -21,7 +21,9 @@ class DownloadProvider private constructor(
 
     private val app: Context = context.applicationContext
 
-    private val repo: DownloadRepository by lazy { repoOverride ?: SpotdlDataWiring.buildRepository(app) }
+    private val repo: DownloadRepository by lazy {
+        repoOverride ?: SpotdlDataWiring.buildRepository(app)
+    }
 
     private val settingsRepo: xyz.botolog.ghostify.data.repo.SettingsRepository by lazy {
         val db = xyz.botolog.ghostify.data.db.AppDatabase.get(app)
@@ -57,6 +59,9 @@ class DownloadProvider private constructor(
         }
     }
 
+    /**
+     * Returns the shared [DownloadManager] instance.
+     */
     fun manager(): DownloadManager {
         Timber.i("DownloadProvider.manager: START")
         val result = manager
@@ -64,6 +69,9 @@ class DownloadProvider private constructor(
         return result
     }
 
+    /**
+     * Returns a new [DownloadRecovery] bound to the same repository.
+     */
     fun recovery(): DownloadRecovery {
         Timber.i("DownloadProvider.recovery: START")
         val result = DownloadRecovery(repo)
@@ -75,6 +83,11 @@ class DownloadProvider private constructor(
         @Volatile
         private var instance: DownloadProvider? = null
 
+        /**
+         * Returns the singleton [DownloadProvider], creating it if necessary.
+         *
+         * @param context application context.
+         */
         fun get(context: Context): DownloadProvider {
             Timber.i("DownloadProvider.get: START")
             val result = instance ?: synchronized(this) {
@@ -92,6 +105,7 @@ class DownloadProvider private constructor(
             }
         }
 
+        /** Resets the singleton instance. Used in tests. */
         fun reset() {
             Timber.i("DownloadProvider.reset: START")
             synchronized(this) {
@@ -103,6 +117,12 @@ class DownloadProvider private constructor(
 
 /** Points the download component at the canonical Room-backed repository. */
 object SpotdlDataWiring {
+    /**
+     * Builds a [DownloadRepository] backed by the Room database.
+     *
+     * @param app application context.
+     * @return a fully wired [DownloadRepository].
+     */
     fun buildRepository(app: Context): DownloadRepository {
         Timber.i("SpotdlDataWiring.buildRepository: START")
         val db = xyz.botolog.ghostify.data.db.AppDatabase.get(app)

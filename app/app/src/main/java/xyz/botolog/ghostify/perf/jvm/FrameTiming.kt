@@ -63,6 +63,8 @@ data class FrameTimingStats(
 
 object FrameTiming {
 
+    private const val PERCENT_FORMAT = "%.2fms"
+
     /**
      * Linear-interpolated percentile of a sorted list (`q` in 0..100). This is
      * the same definition used by common profiling tools.
@@ -88,7 +90,7 @@ object FrameTiming {
         budgetMs: Double = JankBudget.FRAME_BUDGET_MS,
     ): FrameTimingStats {
         if (durationsMs.isEmpty()) {
-            return FrameTimingStats(0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0, budgetMs)
+            return emptyStats(budgetMs)
         }
         val sorted = durationsMs.sorted()
         val n = sorted.size
@@ -107,4 +109,17 @@ object FrameTiming {
             budgetMs = budgetMs,
         )
     }
+
+    private fun emptyStats(budgetMs: Double): FrameTimingStats = FrameTimingStats(
+        sampleCount = 0,
+        minMs = Double.NaN,
+        maxMs = Double.NaN,
+        meanMs = Double.NaN,
+        p50Ms = Double.NaN,
+        p90Ms = Double.NaN,
+        p95Ms = Double.NaN,
+        p99Ms = Double.NaN,
+        jankyFrames = 0,
+        budgetMs = budgetMs,
+    )
 }

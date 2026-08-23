@@ -27,6 +27,9 @@ import timber.log.Timber
  * §7) dispatch it on a background dispatcher; this class additionally
  * serializes concurrent calls on a single instance so the Chaquopy
  * interpreter is never touched concurrently (T-029).
+ *
+ * @param moduleName the Python module to invoke (default "ghostify_dl").
+ * @param options default options passed to the Python fetch function.
  */
 class PlaylistMetadataBridge(
     private val moduleName: String = DEFAULT_MODULE_NAME,
@@ -44,30 +47,43 @@ class PlaylistMetadataBridge(
         playlistId: String,
         origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
     ): PlaylistFetchResult {
-        val pythonFn = if (origin == PlaylistOrigin.YOUTUBE) {
-            "fetch_playlist_youtube"
-        } else {
-            "fetch_playlist"
-        }
+        val pythonFn = pythonFunctionName(origin)
         Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: START id=$playlistId origin=$origin fn=$pythonFn")
         synchronized(this) {
-            return try {
-                val python = Python.getInstance()
-                val module = python.getModule(moduleName)
-                val result = module.callAttr(
-                    pythonFn, playlistId, toPyOptions(python, options)
-                )
-                val parsed = parseSuccess(result)
-                Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: returning $parsed")
-                parsed
-            } catch (e: PyException) {
-                Timber.e(e, "PlaylistMetadataBridge: fetchPlaylistBlocking FAILED")
-                parsePyException(e)
-            } catch (e: RuntimeException) {
-                Timber.e(e, "PlaylistMetadataBridge: fetchPlaylistBlocking FAILED (RuntimeException)")
-                PlaylistFetchResult.Failure(PlaylistFetchError.unknown(e.message))
-            }
+            return executeFetch(playlistId, pythonFn)
         }
+    }
+
+    /**
+     * Resolves the Python function name for the given playlist [origin].
+     */
+    private fun pythonFunctionName(origin: PlaylistOrigin): String =
+        if (origin == PlaylistOrigin.YOUTUBE) FN_FETCH_YOUTUBE else FN_FETCH_SPOTIFY
+
+    /**
+     * Invokes the Python bridge, parses the result, and maps all failures to
+     * typed [PlaylistFetchResult] values.
+     */
+    private fun executeFetch(
+        playlistId: String,
+        pythonFn: String,
+    ): PlaylistFetchResult = try {
+        val python = Python.getInstance()
+        val module = python.getModule(moduleName)
+        val result = module.callAttr(
+            pythonFn,
+            playlistId,
+            toPyOptions(python, options),
+        )
+        val parsed = parseSuccess(result)
+        Timber.i("PlaylistMetadataBridge.fetchPlaylistBlocking: returning $parsed")
+        parsed
+    } catch (e: PyException) {
+        Timber.e(e, "PlaylistMetadataBridge: fetchPlaylistBlocking FAILED")
+        parsePyException(e)
+    } catch (e: RuntimeException) {
+        Timber.e(e, "PlaylistMetadataBridge: fetchPlaylistBlocking FAILED (RuntimeException)")
+        PlaylistFetchResult.Failure(PlaylistFetchError.unknown(e.message))
     }
 
     // ------------------------------------------------------------------
@@ -160,11 +176,15 @@ class PlaylistMetadataBridge(
 
     companion object {
         const val DEFAULT_MODULE_NAME = "ghostify_dl"
+        private const val FN_FETCH_SPOTIFY = "fetch_playlist"
+        private const val FN_FETCH_YOUTUBE = "fetch_playlist_youtube"
+        private const val DEFAULT_TIMEOUT = 300.0
+        private const val DEFAULT_YT_TIMEOUT = 8.0
 
         val DEFAULT_OPTIONS: Map<String, Any> = mapOf(
-            "timeout" to 300.0,
+            "timeout" to DEFAULT_TIMEOUT,
             "resolve_yt" to true,
-            "per_track_yt_timeout" to 8.0
+            "per_track_yt_timeout" to DEFAULT_YT_TIMEOUT,
         )
 
         /**
@@ -173,7 +193,7 @@ class PlaylistMetadataBridge(
          * the Python exception type name.
          */
         private val CODE_PATTERN = Regex(
-            "\\b(?:NO_NETWORK|RATE_LIMITED|PRIVATE|TIMEOUT|NOT_FOUND|UNKNOWN)\\b"
+            "\\b(?:NO_NETWORK|RATE_LIMITED|PRIVATE|TIMEOUT|NOT_FOUND|UNKNOWN)\\b",
         )
     }
 }

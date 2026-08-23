@@ -20,6 +20,12 @@ import timber.log.Timber
 class IllegalStateTransition(from: DownloadStatus, to: DownloadStatus) :
     IllegalStateException("Illegal download status transition: $from -> $to")
 
+/**
+ * State machine that governs legal [DownloadStatus] transitions.
+ *
+ * All status mutations in the download pipeline must go through this object
+ * to guarantee database consistency.
+ */
 object SongStateMachine {
 
     private val transitions: Map<DownloadStatus, Set<DownloadStatus>> = mapOf(
@@ -36,6 +42,13 @@ object SongStateMachine {
         DownloadStatus.DOWNLOADED to emptySet(),
     )
 
+    /**
+     * Checks whether a transition from [from] to [to] is legal.
+     *
+     * @param from the current status.
+     * @param to the desired target status.
+     * @return `true` if the transition is allowed.
+     */
     fun canTransition(from: DownloadStatus, to: DownloadStatus): Boolean {
         Timber.i("SongStateMachine.canTransition: START")
         val result = transitions[from]?.contains(to) == true
@@ -43,6 +56,14 @@ object SongStateMachine {
         return result
     }
 
+    /**
+     * Validates and returns the target status, or throws [IllegalStateTransition].
+     *
+     * @param from the current status.
+     * @param to the desired target status.
+     * @return [to] if the transition is legal.
+     * @throws IllegalStateTransition if the transition is not allowed.
+     */
     fun requireTransition(from: DownloadStatus, to: DownloadStatus): DownloadStatus {
         Timber.i("SongStateMachine.requireTransition: START")
         if (!canTransition(from, to)) {
@@ -53,6 +74,12 @@ object SongStateMachine {
         return to
     }
 
+    /**
+     * Returns the set of statuses reachable from [from].
+     *
+     * @param from the current status.
+     * @return the set of legal target statuses.
+     */
     fun legalTargets(from: DownloadStatus): Set<DownloadStatus> {
         Timber.i("SongStateMachine.legalTargets: START")
         val result = transitions[from] ?: emptySet()

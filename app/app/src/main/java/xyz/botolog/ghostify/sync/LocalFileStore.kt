@@ -10,14 +10,20 @@ package xyz.botolog.ghostify.sync
 interface LocalFileStore {
 
     /**
-     * True when [filePath] names an existing regular file on disk.
-     * Null and blank paths are "not present" (they never cause a crash).
+     * Checks whether a file exists at the given path.
+     *
+     * @param filePath Absolute path to the file, or `null`/blank for "not present".
+     * @return `true` if a regular file exists at [filePath], `false` otherwise.
      */
     fun exists(filePath: String?): Boolean
 
     /**
-     * Deletes the file at [filePath]. Deleting an already-missing file is a
-     * no-op success (T-065). Implementations must not throw for blank paths.
+     * Deletes the file at [filePath].
+     *
+     * Deleting an already-missing file is a no-op success (T-065).
+     * Implementations must not throw for blank paths.
+     *
+     * @param filePath Absolute path to the file to delete.
      */
     fun delete(filePath: String)
 }

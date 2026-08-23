@@ -37,20 +37,24 @@ class DownloadWorker(
     override suspend fun doWork(): Result {
         Timber.i("DownloadWorker.doWork: START")
         val playlistId = inputData.getString(KEY_PLAYLIST_ID)
-            ?: return Result.failure(workDataOf(KEY_ERROR to "missing playlist_id"))
+            ?: return Result.failure(workDataOf(KEY_ERROR to MISSING_PLAYLIST_ID_ERROR))
 
-        try {
-            setForeground(createForegroundInfo())
-        } catch (t: Throwable) {
-            Timber.e(t, "DownloadWorker: foreground promotion FAILED")
-            // Foreground promotion is best-effort; the download must still run.
-        }
+        promoteToForeground()
 
         val manager = DownloadProvider.get(applicationContext).manager()
         val outcome = manager.runSynchronously(playlistId)
         Timber.i("DownloadWorker.doWork: returning $outcome")
         return when (outcome) {
             RunOutcome.IDLE, RunOutcome.COMPLETED, RunOutcome.CANCELED -> Result.success()
+        }
+    }
+
+    private suspend fun promoteToForeground() {
+        try {
+            setForeground(createForegroundInfo())
+        } catch (t: Throwable) {
+            Timber.e(t, "DownloadWorker: foreground promotion FAILED")
+            // Foreground promotion is best-effort; the download must still run.
         }
     }
 
@@ -67,8 +71,8 @@ class DownloadWorker(
         val context = applicationContext
         ensureChannel(context)
         return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("Ghostify")
-            .setContentText("Downloading playlist\u2026")
+            .setContentTitle(NOTIFICATION_TITLE)
+            .setContentText(NOTIFICATION_TEXT)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -79,9 +83,19 @@ class DownloadWorker(
     companion object {
         const val KEY_PLAYLIST_ID = "playlist_id"
         const val KEY_ERROR = "download_error"
+
         private const val NOTIFICATION_ID = 4100
         private const val CHANNEL_ID = "ghostify_downloads"
+        private const val NOTIFICATION_TITLE = "Ghostify"
+        private const val NOTIFICATION_TEXT = "Downloading playlist\u2026"
+        private const val MISSING_PLAYLIST_ID_ERROR = "missing playlist_id"
 
+        /**
+         * Builds a [OneTimeWorkRequest] for downloading the given playlist.
+         *
+         * @param playlistId the playlist to download.
+         * @return a configured work request.
+         */
         fun buildRequest(playlistId: String): androidx.work.OneTimeWorkRequest {
             Timber.i("DownloadWorker.buildRequest: START")
             val result = OneTimeWorkRequestBuilder<DownloadWorker>()
@@ -96,10 +110,12 @@ class DownloadWorker(
             manager.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "Downloads",
+                    CHANNEL_NAME,
                     NotificationManager.IMPORTANCE_LOW,
                 ),
             )
         }
+
+        private const val CHANNEL_NAME = "Downloads"
     }
 }

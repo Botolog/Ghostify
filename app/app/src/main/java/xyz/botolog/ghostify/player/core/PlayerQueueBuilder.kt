@@ -10,10 +10,16 @@ import java.io.File
  * filesystem, and so the app can later plug in stricter checks (e.g. spotdl's sidecar).
  */
 fun interface FileValidator {
+    /**
+     * Checks whether the file at the given path is safe for playback.
+     *
+     * @param filePath Absolute path to the file to validate.
+     * @return `true` if the file exists, is a regular file, and is non-empty.
+     */
     fun isPlayable(filePath: String): Boolean
 
     companion object {
-        /** Files must exist, be regular files and non-empty. */
+        /** Default validator: files must exist, be regular files, and be non-empty. */
         val Default: FileValidator = DefaultFileValidator
     }
 }
@@ -36,48 +42,86 @@ private object DefaultFileValidator : FileValidator {
  * - [QueueBuildResult.NothingToPlay] when no song is playable.
  * - The queue is a pure snapshot: it never observes the database. Rebuilding is an explicit
  *   opt-in by the caller (this is what keeps an already-playing queue stable).
+ *
+ * @property fileValidator Validator used to check whether files exist on disk and are playable.
  */
 class PlayerQueueBuilder(
     private val fileValidator: FileValidator = FileValidator.Default,
 ) {
     /**
-     * @param songs songs of the playlist, in playlist order.
-     * @param startSongId optional song to start from; falls back to the first item.
+     * Builds a playback queue from the given songs.
+     *
+     * @param songs Songs of the playlist, in playlist order.
+     * @param startSongId Optional song ID to start from; falls back to the first item.
+     * @return [QueueBuildResult.Ready] with playable items and start index,
+     *   or [QueueBuildResult.NothingToPlay] if no songs are playable.
      */
     fun build(songs: List<Song>, startSongId: String? = null): QueueBuildResult {
         Timber.i("PlayerQueueBuilder.build: START songs=${songs.size}, startSongId=$startSongId")
-        val items = songs
-            .filter(Song::isDownloaded)
-            .mapNotNull { song ->
-                val path = song.filePath?.trim().orEmpty()
-                if (path.isEmpty() || !fileValidator.isPlayable(path)) {
-                    null
-                } else {
-                    QueueItem(
-                        songId = song.id,
-                        title = song.title.ifBlank { null },
-                        artist = song.artists.ifBlank { null },
-                        album = song.album.ifBlank { null },
-                        durationMs = song.durationMs?.takeIf { it > 0L },
-                        filePath = path,
-                        indexInQueue = -1, // assigned below
-                        coverUrl = song.coverUrl,
-                    )
-                }
-            }
-            .mapIndexed { index, item -> item.copy(indexInQueue = index) }
+        val items = buildQueueItems(songs)
 
         if (items.isEmpty()) {
             Timber.i("PlayerQueueBuilder.build: returning NothingToPlay")
             return QueueBuildResult.NothingToPlay
         }
 
-        val startIndex = startSongId
+        val startIndex = resolveStartIndex(items, startSongId)
+        Timber.i("PlayerQueueBuilder.build: returning Ready items=${items.size}, startIndex=$startIndex")
+        return QueueBuildResult.Ready(items = items, startIndex = startIndex)
+    }
+
+    /**
+     * Filters and maps songs into queue items, assigning queue indices.
+     *
+     * Only songs that are downloaded and pass the file validator are included.
+     *
+     * @param songs Input songs in playlist order.
+     * @return Ordered list of [QueueItem]s with assigned indices.
+     */
+    private fun buildQueueItems(songs: List<Song>): List<QueueItem> =
+        songs
+            .filter(Song::isDownloaded)
+            .mapNotNull { song -> createQueueItemIfPlayable(song) }
+            .mapIndexed { index, item -> item.copy(indexInQueue = index) }
+
+    /**
+     * Creates a [QueueItem] for a song if its file is valid for playback.
+     *
+     * @param song The song to create a queue item for.
+     * @return A [QueueItem] if the file is valid, or `null` if it should be skipped.
+     */
+    private fun createQueueItemIfPlayable(song: Song): QueueItem? {
+        val path = song.filePath?.trim().orEmpty()
+        if (path.isEmpty() || !fileValidator.isPlayable(path)) {
+            return null
+        }
+        return QueueItem(
+            songId = song.id,
+            title = song.title.ifBlank { null },
+            artist = song.artists.ifBlank { null },
+            album = song.album.ifBlank { null },
+            durationMs = song.durationMs?.takeIf { it > 0L },
+            filePath = path,
+            indexInQueue = INDEX_PLACEHOLDER,
+            coverUrl = song.coverUrl,
+        )
+    }
+
+    /**
+     * Resolves the starting index for playback within the built queue.
+     *
+     * @param items Built queue items.
+     * @param startSongId Optional song ID to start from.
+     * @return The index of the matching song, or 0 if not found.
+     */
+    private fun resolveStartIndex(items: List<QueueItem>, startSongId: String?): Int =
+        startSongId
             ?.let { id -> items.indexOfFirst { it.songId == id } }
             ?.takeIf { it >= 0 }
             ?: 0
 
-        Timber.i("PlayerQueueBuilder.build: returning Ready items=${items.size}, startIndex=$startIndex")
-        return QueueBuildResult.Ready(items = items, startIndex = startIndex)
+    companion object {
+        /** Placeholder index assigned before the final queue index is resolved. */
+        private const val INDEX_PLACEHOLDER = -1
     }
 }

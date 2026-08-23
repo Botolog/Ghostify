@@ -70,13 +70,7 @@ class DownloadManager(
             Timber.i("DownloadManager.downloadAll: returning false (token exists)")
             return false
         }
-        val executor = executorRef.get() ?: defaultInlineExecutor
-        val started = try {
-            executor.execute(playlistId)
-        } catch (t: Throwable) {
-            Timber.e(t, "DownloadManager: execute FAILED")
-            false
-        }
+        val started = startExecution(playlistId)
         if (!started) {
             tokens.remove(playlistId)
         }
@@ -112,6 +106,11 @@ class DownloadManager(
         }
     }
 
+    /**
+     * Returns whether a download run is active for [playlistId].
+     *
+     * @param playlistId the playlist to check.
+     */
     fun isRunning(playlistId: String): Boolean {
         Timber.i("DownloadManager.isRunning: START")
         val result = executions.contains(playlistId) || tokens.containsKey(playlistId)
@@ -123,6 +122,8 @@ class DownloadManager(
      * Live progress flow. Derived from the authoritative repository snapshot, so
      * it is correct before, during and after a run, including FAILED songs and
      * process death.
+     *
+     * @param playlistId the playlist to observe.
      */
     fun observeProgress(playlistId: String): Flow<DownloadProgress> {
         Timber.i("DownloadManager.observeProgress: START")
@@ -141,6 +142,9 @@ class DownloadManager(
     /**
      * Executes a run in the calling coroutine (used by the WorkManager worker).
      * Deduplicated against concurrent runs for the same playlist.
+     *
+     * @param playlistId the playlist to download.
+     * @return the outcome of the run.
      */
     suspend fun runSynchronously(playlistId: String): RunOutcome {
         Timber.i("DownloadManager.runSynchronously: START")
@@ -152,30 +156,51 @@ class DownloadManager(
         runState.update { it + (playlistId to DownloadRunState.RUNNING) }
         Timber.d("DownloadManager: state changed to RUNNING for $playlistId")
         fractions.update { it - playlistId }
-        val result = try {
-            runner.run(
-                playlistId = playlistId,
-                cancellationToken = { token.get() },
-                onProgress = { p ->
-                    runState.update { it + (playlistId to p.state) }
-                    Timber.d("DownloadManager: state changed to ${p.state} for $playlistId")
-                },
-                onSongProgress = { songId, fraction ->
-                    fractions.update { map ->
-                        val current = map[playlistId].orEmpty()
-                        map + (playlistId to (current + (songId to fraction)))
-                    }
-                },
-            )
+        return try {
+            executeRunner(playlistId, token)
         } catch (t: Throwable) {
             Timber.e(t, "DownloadManager: runSynchronously FAILED")
             throw t
         } finally {
-            executions.remove(playlistId)
-            tokens.remove(playlistId)
-            runState.update { it - playlistId }
+            cleanupAfterRun(playlistId)
         }
+    }
+
+    private fun startExecution(playlistId: String): Boolean {
+        val executor = executorRef.get() ?: defaultInlineExecutor
+        return try {
+            executor.execute(playlistId)
+        } catch (t: Throwable) {
+            Timber.e(t, "DownloadManager: execute FAILED")
+            false
+        }
+    }
+
+    private suspend fun executeRunner(
+        playlistId: String,
+        token: AtomicBoolean,
+    ): RunOutcome {
+        val result = runner.run(
+            playlistId = playlistId,
+            cancellationToken = { token.get() },
+            onProgress = { p ->
+                runState.update { it + (playlistId to p.state) }
+                Timber.d("DownloadManager: state changed to ${p.state} for $playlistId")
+            },
+            onSongProgress = { songId, fraction ->
+                fractions.update { map ->
+                    val current = map[playlistId].orEmpty()
+                    map + (playlistId to (current + (songId to fraction)))
+                }
+            },
+        )
         Timber.i("DownloadManager.runSynchronously: returning $result")
         return result
+    }
+
+    private fun cleanupAfterRun(playlistId: String) {
+        executions.remove(playlistId)
+        tokens.remove(playlistId)
+        runState.update { it - playlistId }
     }
 }

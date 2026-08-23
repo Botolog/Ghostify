@@ -1,7 +1,6 @@
 package xyz.botolog.ghostify.perf.android
 
 import android.app.Activity
-import android.util.SparseIntArray
 import androidx.core.app.FrameMetricsAggregator
 import xyz.botolog.ghostify.perf.FrameTiming
 import xyz.botolog.ghostify.perf.FrameTimingStats
@@ -35,7 +34,11 @@ class FrameStatsCollector(private val activity: Activity) : AutoCloseable {
         aggregator.add(activity)
     }
 
-    /** All recorded TOTAL_DURATION frames in ms (chronological per frame index). */
+    /**
+     * All recorded TOTAL_DURATION frames in ms (chronological per frame index).
+     *
+     * @return list of frame durations, or empty if no metrics are available.
+     */
     fun snapshotFrameDurationsMs(): List<Double> {
         val metrics = aggregator.getMetrics() ?: return emptyList()
         if (metrics.isEmpty()) return emptyList()

@@ -46,6 +46,8 @@ import timber.log.Timber
 class PlaybackService : MediaSessionService() {
 
     companion object {
+
+        /** Notification channel ID used by [PlaybackNotificationProvider]. */
         const val NOTIFICATION_ID: Int = 1
     }
 
@@ -58,21 +60,31 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Timber.i("PlaybackService.onCreate: START")
-        try {
-            Timber.i("PlaybackService.onCreate: setting notification provider")
-            setMediaNotificationProvider(
-                PlaybackNotificationProvider(this, R.drawable.ic_notification)
-            )
-            Timber.i("PlaybackService.onCreate: notification provider set, calling initSessionAndPlayer")
-        } catch (t: Throwable) {
-            Timber.e(t, "PlaybackService.onCreate: notification provider FAILED")
-            throw t
-        }
+        setNotificationProvider()
         initSessionAndPlayer()
         Timber.i("PlaybackService.onCreate: DONE")
     }
 
-    /** Hands out the session created eagerly in [onCreate]. */
+    /** Sets the custom notification provider that includes a Shutdown button. */
+    private fun setNotificationProvider() {
+        try {
+            Timber.i("PlaybackService.onCreate: setting notification provider")
+            setMediaNotificationProvider(
+                PlaybackNotificationProvider(this, R.drawable.ic_notification),
+            )
+            Timber.i("PlaybackService.onCreate: notification provider set")
+        } catch (t: Throwable) {
+            Timber.e(t, "PlaybackService.onCreate: notification provider FAILED")
+            throw t
+        }
+    }
+
+    /**
+     * Hands out the session created eagerly in [onCreate].
+     *
+     * @param controllerInfo info about the connecting controller.
+     * @return the shared [MediaSession].
+     */
     override fun onGetSession(
         controllerInfo: MediaSession.ControllerInfo,
     ): MediaSession {
@@ -82,68 +94,121 @@ class PlaybackService : MediaSessionService() {
         return s
     }
 
+    /** Initialises the shared ExoPlayer, AudioFocusController, noisy receiver and MediaSession. */
     private fun initSessionAndPlayer() {
         if (session != null) return
         Timber.i("initSessionAndPlayer: START")
         try {
-            Timber.i("initSessionAndPlayer: calling PlaybackEngine.exoPlayer(this)")
-            val p = PlaybackEngine.exoPlayer(this)
-            Timber.i("initSessionAndPlayer: ExoPlayer obtained, creating PlayerControlAdapter")
+            val p = obtainPlayer()
             val control = PlayerControlAdapter(p)
-            Timber.i("initSessionAndPlayer: PlayerControlAdapter created, creating AudioFocusController")
-            val focus = AudioFocusController(AndroidAudioFocusDriver(this), control, FocusPolicy())
-            Timber.i("initSessionAndPlayer: AudioFocusController created, setting focusController")
-            control.focusController = focus
-            Timber.i("initSessionAndPlayer: creating AudioBecomingNoisyReceiver")
+            val focus = createFocusController(control)
             val noisy = AudioBecomingNoisyReceiver(control)
-            Timber.i("initSessionAndPlayer: AudioBecomingNoisyReceiver created, adding player listener")
-
-            p.addListener(object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    if (isPlaying) playbackEverStarted = true
-                }
-
-                override fun onPlaybackStateChanged(state: Int) {
-                    if (state == Player.STATE_IDLE && playbackEverStarted) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        focusController?.abandon()
-                        stopSelf()
-                    }
-                }
-            })
-
-            Timber.i("initSessionAndPlayer: calling PlaybackEngine.session(this, MainActivity)")
-            session = PlaybackEngine.session(this, MainActivity::class.java, object : MediaSession.Callback {
-                override fun onCustomCommand(
-                    session: MediaSession,
-                    controller: MediaSession.ControllerInfo,
-                    customCommand: SessionCommand,
-                    args: android.os.Bundle,
-                ): ListenableFuture<SessionResult> {
-                    if (customCommand.customAction == PlaybackNotificationProvider.ACTION_SHUTDOWN) {
-                        Timber.i("PlaybackService: shutdown command received, killing process")
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        player?.stop()
-                        session?.release()
-                        Process.killProcess(Process.myPid())
-                    }
-                    return com.google.common.util.concurrent.Futures.immediateFuture(
-                        SessionResult(SessionResult.RESULT_SUCCESS)
-                    )
-                }
-            })
-            Timber.i("initSessionAndPlayer: session created, assigning fields")
-            player = p
-            focusController = focus
-            noisyReceiver = noisy
-            Timber.i("initSessionAndPlayer: registering noisy receiver")
-            registerReceiver(noisy, IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+            p.addListener(buildAutoStopListener(focus))
+            session = buildSession(p, focus)
+            assignFields(p, focus, noisy)
+            registerNoisyReceiver(noisy)
             playbackEverStarted = false
             Timber.i("initSessionAndPlayer: DONE - session=${session != null}, player=${player != null}")
         } catch (t: Throwable) {
             Timber.e(t, "initSessionAndPlayer: CRASHED at step")
             throw t
         }
+    }
+
+    /** Obtains the shared [ExoPlayer] from [PlaybackEngine]. */
+    private fun obtainPlayer(): ExoPlayer {
+        Timber.i("initSessionAndPlayer: calling PlaybackEngine.exoPlayer(this)")
+        val p = PlaybackEngine.exoPlayer(this)
+        Timber.i("initSessionAndPlayer: ExoPlayer obtained")
+        return p
+    }
+
+    /**
+     * Creates an [AudioFocusController] wired to the given [control] adapter.
+     *
+     * @param control the player control adapter that will receive focus-driven actions.
+     */
+    private fun createFocusController(control: PlayerControlAdapter): AudioFocusController {
+        Timber.i("initSessionAndPlayer: creating AudioFocusController")
+        val driver = AndroidAudioFocusDriver(this)
+        val focus = AudioFocusController(driver, control, FocusPolicy())
+        control.focusController = focus
+        Timber.i("initSessionAndPlayer: AudioFocusController created")
+        return focus
+    }
+
+    /**
+     * Builds a [Player.Listener] that automatically stops the service when the
+     * player reaches idle after playback has occurred.
+     *
+     * @param focus the audio-focus controller to abandon focus on stop.
+     */
+    private fun buildAutoStopListener(focus: AudioFocusController): Player.Listener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying) playbackEverStarted = true
+        }
+
+        override fun onPlaybackStateChanged(state: Int) {
+            if (state == Player.STATE_IDLE && playbackEverStarted) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                focus.abandon()
+                stopSelf()
+            }
+        }
+    }
+
+    /**
+     * Builds the [MediaSession] via [PlaybackEngine], including a custom-command
+     * handler for the shutdown action.
+     *
+     * @param p the shared [ExoPlayer].
+     * @param focus the audio-focus controller (unused here but kept for symmetry).
+     */
+    private fun buildSession(p: ExoPlayer, focus: AudioFocusController): MediaSession {
+        Timber.i("initSessionAndPlayer: calling PlaybackEngine.session(this, MainActivity)")
+        return PlaybackEngine.session(this, MainActivity::class.java, buildShutdownCallback())
+    }
+
+    /** Returns a [MediaSession.Callback] that handles the shutdown custom command. */
+    private fun buildShutdownCallback(): MediaSession.Callback = object : MediaSession.Callback {
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: android.os.Bundle,
+        ): ListenableFuture<SessionResult> {
+            if (customCommand.customAction == PlaybackNotificationProvider.ACTION_SHUTDOWN) {
+                Timber.i("PlaybackService: shutdown command received, killing process")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                player?.stop()
+                this@PlaybackService.session?.release()
+                Process.killProcess(Process.myPid())
+            }
+            return com.google.common.util.concurrent.Futures.immediateFuture(
+                SessionResult(SessionResult.RESULT_SUCCESS),
+            )
+        }
+    }
+
+    /** Stores the constructed objects as service-level fields. */
+    private fun assignFields(
+        p: ExoPlayer,
+        focus: AudioFocusController,
+        noisy: AudioBecomingNoisyReceiver,
+    ) {
+        Timber.i("initSessionAndPlayer: assigning fields")
+        player = p
+        focusController = focus
+        noisyReceiver = noisy
+    }
+
+    /**
+     * Registers the noisy-receiver for the [android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY]
+     * broadcast.
+     */
+    private fun registerNoisyReceiver(noisy: AudioBecomingNoisyReceiver) {
+        Timber.i("initSessionAndPlayer: registering noisy receiver")
+        registerReceiver(noisy, IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

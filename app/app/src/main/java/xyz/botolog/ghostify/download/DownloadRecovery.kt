@@ -14,6 +14,9 @@ import timber.log.Timber
  */
 class DownloadRecovery(private val repo: DownloadRepository) {
 
+    /**
+     * Recovers all playlists by resetting any in-flight songs to [DownloadStatus.PENDING].
+     */
     suspend fun recoverAll() {
         Timber.i("DownloadRecovery.recoverAll: START")
         for (playlistId in repo.allPlaylistIds()) {
@@ -21,8 +24,14 @@ class DownloadRecovery(private val repo: DownloadRepository) {
         }
     }
 
+    /**
+     * Recovers a single playlist by resetting its in-flight songs to [DownloadStatus.PENDING].
+     *
+     * @param playlistId the playlist to recover.
+     */
     suspend fun recoverPlaylist(playlistId: String) {
         Timber.i("DownloadRecovery.recoverPlaylist: START")
+        require(playlistId.isNotBlank()) { "playlistId must not be blank" }
         repo.songsFor(playlistId)
             .filter { it.status.isRecoverable }
             .forEach { repo.setStatus(it.id, DownloadStatus.PENDING) }

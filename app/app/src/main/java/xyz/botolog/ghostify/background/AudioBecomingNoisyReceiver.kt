@@ -14,6 +14,8 @@ import timber.log.Timber
  * The pause is delegated to the injected [PlaybackControl] so the receiver itself
  * holds no player state and is trivial to drive in tests (Robolectric delivers
  * the broadcast; a fake control records the pause call).
+ *
+ * @param control the playback control that will be paused on a noisy event.
  */
 class AudioBecomingNoisyReceiver(
     private val control: PlaybackControl,

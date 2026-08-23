@@ -26,6 +26,11 @@ class RoomDownloadRepository(
     private val playlistDao: PlaylistDao,
 ) : DownloadRepository {
 
+    /**
+     * Returns all songs for a playlist, mapped to [SongRecord] domain objects.
+     *
+     * @param playlistId the playlist to query.
+     */
     override suspend fun songsFor(playlistId: String): List<SongRecord> {
         Timber.i("RoomDownloadRepository.songsFor: START")
         val result = songDao.getSongsForPlaylist(playlistId).map { it.toRecord() }
@@ -33,6 +38,11 @@ class RoomDownloadRepository(
         return result
     }
 
+    /**
+     * Returns a live flow of songs for a playlist, mapped to [SongRecord] domain objects.
+     *
+     * @param playlistId the playlist to observe.
+     */
     override fun observeSongs(playlistId: String): Flow<List<SongRecord>> {
         Timber.i("RoomDownloadRepository.observeSongs: START")
         val flow = songDao.observeSongsForPlaylist(playlistId).map { list -> list.map { it.toRecord() } }
@@ -40,6 +50,11 @@ class RoomDownloadRepository(
         return flow
     }
 
+    /**
+     * Returns a single song by ID, or `null` if not found.
+     *
+     * @param songId the song to retrieve.
+     */
     override suspend fun getSong(songId: String): SongRecord? {
         Timber.i("RoomDownloadRepository.getSong: START")
         val result = songDao.getById(songId)?.toRecord()
@@ -47,6 +62,15 @@ class RoomDownloadRepository(
         return result
     }
 
+    /**
+     * Applies a status transition to a single song after validating it through
+     * [SongStateMachine].
+     *
+     * @param songId the song to update.
+     * @param status the target status.
+     * @param filePath optional file path to set.
+     * @param error optional error message to set.
+     */
     override suspend fun setStatus(
         songId: String,
         status: DownloadStatus,
@@ -62,6 +86,12 @@ class RoomDownloadRepository(
         Timber.d("RoomDownloadRepository: song $songId state changed to $status")
     }
 
+    /**
+     * Bulk-updates the status of multiple songs without transition validation.
+     *
+     * @param songIds the songs to update.
+     * @param status the target status.
+     */
     override suspend fun setStatuses(
         songIds: Collection<String>,
         status: DownloadStatus,
@@ -71,19 +101,33 @@ class RoomDownloadRepository(
         Timber.d("RoomDownloadRepository: ${songIds.size} songs state changed to $status")
     }
 
+    /**
+     * Returns the playlist-level status, or `null` if the playlist is unknown.
+     *
+     * @param playlistId the playlist to query.
+     */
     override suspend fun getPlaylistStatus(playlistId: String): PlaylistStatus? {
         Timber.i("RoomDownloadRepository.getPlaylistStatus: START")
-        val result = playlistDao.getPlaylistStatus(playlistId)?.let { it.toPlaylistStatus() }
+        val result = playlistDao.getPlaylistStatus(playlistId)?.toPlaylistStatus()
         Timber.i("RoomDownloadRepository.getPlaylistStatus: returning $result")
         return result
     }
 
+    /**
+     * Sets the playlist-level status.
+     *
+     * @param playlistId the playlist to update.
+     * @param status the target status.
+     */
     override suspend fun setPlaylistStatus(playlistId: String, status: PlaylistStatus) {
         Timber.i("RoomDownloadRepository.setPlaylistStatus: START")
-        playlistDao.setPlaylistStatus(playlistId, status.toPlaylistStatus())
+        playlistDao.setPlaylistStatus(playlistId, status.toCanonicalStatus())
         Timber.d("RoomDownloadRepository: playlist $playlistId state changed to $status")
     }
 
+    /**
+     * Returns all known playlist IDs.
+     */
     override suspend fun allPlaylistIds(): List<String> {
         Timber.i("RoomDownloadRepository.allPlaylistIds: START")
         val result = playlistDao.allPlaylistIds()
@@ -118,6 +162,7 @@ private fun CanonicalSongStatus.toDownloadStatus(): DownloadStatus = when (this)
     CanonicalSongStatus.REMOVED -> DownloadStatus.CANCELED
 }
 
+/** Download-manager `DownloadStatus` -> canonical `songs.status`. */
 private fun DownloadStatus.toSongStatus(): CanonicalSongStatus = when (this) {
     DownloadStatus.PENDING -> CanonicalSongStatus.PENDING
     DownloadStatus.QUEUED -> CanonicalSongStatus.QUEUED
@@ -127,8 +172,10 @@ private fun DownloadStatus.toSongStatus(): CanonicalSongStatus = when (this) {
     DownloadStatus.CANCELED -> CanonicalSongStatus.CANCELED
 }
 
+/** Canonical playlist status -> download-manager [PlaylistStatus]. */
 private fun CanonicalPlaylistStatus.toPlaylistStatus(): PlaylistStatus =
     PlaylistStatus.valueOf(name)
 
-private fun PlaylistStatus.toPlaylistStatus(): CanonicalPlaylistStatus =
+/** Download-manager [PlaylistStatus] -> canonical playlist status. */
+private fun PlaylistStatus.toCanonicalStatus(): CanonicalPlaylistStatus =
     CanonicalPlaylistStatus.valueOf(name)

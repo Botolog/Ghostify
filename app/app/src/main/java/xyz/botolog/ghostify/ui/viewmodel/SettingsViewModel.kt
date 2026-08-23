@@ -24,6 +24,11 @@ import timber.log.Timber
  *
  * Cache stats are derived from [MusicStore.orphanFiles] against every file path
  * the database knows about, so clear-cache never touches library files.
+ *
+ * @property settings app-wide settings repository.
+ * @property playlistRepo playlist persistence layer.
+ * @property songRepo song persistence layer.
+ * @property musicStore local file storage manager.
  */
 class SettingsViewModel(
     private val settings: SettingsRepository,
@@ -37,24 +42,7 @@ class SettingsViewModel(
 
     init {
         Timber.i("SettingsViewModel: init")
-        launch {
-            combine(
-                settings.observeBitrate(),
-                settings.observeConcurrency(),
-                settings.observeAutoDownload(),
-            ) { bitrate, concurrency, autoDownload ->
-                _state.update {
-                    it.copy(
-                        bitrate = bitrateFromKbps(bitrate),
-                        storagePath = musicStore.rootDir.absolutePath,
-                        concurrentDownloads = concurrency,
-                        autoDownloadOnAdd = autoDownload,
-                    )
-                }
-            }
-                .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
-                .collect { }
-        }
+        launch { observeSettings() }
         launch { refreshCacheStats() }
     }
 
@@ -65,13 +53,11 @@ class SettingsViewModel(
 
     override fun changeStoragePath() {
         Timber.i("SettingsViewModel.changeStoragePath: START")
-        // v1: media always lives in app-scoped storage (no storage permission);
-        // the "Change" control is intentionally inert until a SAF picker ships.
     }
 
     override fun setConcurrency(count: Int) {
         Timber.i("SettingsViewModel.setConcurrency: START")
-        launch { settings.setConcurrency(count.coerceAtLeast(1)) }
+        launch { settings.setConcurrency(count.coerceAtLeast(MIN_CONCURRENCY)) }
     }
 
     override fun setAutoDownload(enabled: Boolean) {
@@ -82,32 +68,71 @@ class SettingsViewModel(
     override fun clearCache() {
         Timber.i("SettingsViewModel.clearCache: START")
         launch {
-            _state.update { it.copy(isClearingCache = true) }
-            try {
-                val known = collectAllSongPaths()
-                musicStore.clearOrphans(known)
-            } catch (e: Exception) {
-                Timber.e(e, "SettingsViewModel.clearCache: FAILED")
-            } finally {
-                _state.update { it.copy(isClearingCache = false) }
-            }
+            performClearCache()
             refreshCacheStats()
         }
     }
 
+    /**
+     * Observes the settings repository and keeps the UI state in sync.
+     */
+    private suspend fun observeSettings() {
+        combine(
+            settings.observeBitrate(),
+            settings.observeConcurrency(),
+            settings.observeAutoDownload(),
+        ) { bitrate, concurrency, autoDownload ->
+            _state.update {
+                it.copy(
+                    bitrate = bitrateFromKbps(bitrate),
+                    storagePath = musicStore.rootDir.absolutePath,
+                    concurrentDownloads = concurrency,
+                    autoDownloadOnAdd = autoDownload,
+                )
+            }
+        }
+            .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
+            .collect { }
+    }
+
+    /**
+     * Clears orphan cache files and shows the loading indicator during the operation.
+     */
+    private suspend fun performClearCache() {
+        _state.update { it.copy(isClearingCache = true) }
+        try {
+            val knownPaths = collectAllSongPaths()
+            musicStore.clearOrphans(knownPaths)
+        } catch (e: Exception) {
+            Timber.e(e, "SettingsViewModel.clearCache: FAILED")
+        } finally {
+            _state.update { it.copy(isClearingCache = false) }
+        }
+    }
+
+    /**
+     * Recalculates cache statistics and updates the UI state.
+     */
     private suspend fun refreshCacheStats() {
-        val known = collectAllSongPaths()
-        val orphans = musicStore.orphanFiles(known)
+        val knownPaths = collectAllSongPaths()
+        val orphans = musicStore.orphanFiles(knownPaths)
         _state.update {
             it.copy(
                 cacheStats = CacheStats(
                     fileCount = orphans.size,
-                    sizeBytes = orphans.sumOf { f -> runCatching { f.length() }.getOrDefault(0L) },
+                    sizeBytes = orphans.sumOf { file ->
+                        runCatching { file.length() }.getOrDefault(0L)
+                    },
                 ),
             )
         }
     }
 
+    /**
+     * Collects all song file paths across every playlist in the database.
+     *
+     * @return list of non-blank file paths known to the library.
+     */
     private suspend fun collectAllSongPaths(): List<String> {
         val playlists = playlistRepo.observePlaylists().first()
         return buildList {
@@ -117,5 +142,10 @@ class SettingsViewModel(
                 }
             }
         }
+    }
+
+    companion object {
+        /** Minimum allowed value for concurrent downloads. */
+        private const val MIN_CONCURRENCY = 1
     }
 }

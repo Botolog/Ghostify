@@ -18,6 +18,10 @@ import timber.log.Timber
  *
  * All decisions are delegated to [FocusPolicy]; this class owns the history
  * flags and applies the reactions.
+ *
+ * @param driver the platform-specific focus driver (production or test fake).
+ * @param control the playback surface driven by focus decisions.
+ * @param policy pure focus-change policy that produces [FocusAction] values.
  */
 class AudioFocusController(
     private val driver: AudioFocusDriver,
@@ -35,10 +39,17 @@ class AudioFocusController(
     /** True when *we* paused because of a transient focus loss (not the user). */
     private var pausedByTransient = false
 
+    /** Callback registered with the driver that routes focus changes to [handleFocusChange]. */
     val focusListener: AudioFocusDriver.AudioFocusChangeListener =
         AudioFocusDriver.AudioFocusChangeListener { loss -> handleFocusChange(loss) }
 
-    /** Call exactly once when requesting focus to begin playback. */
+    /**
+     * Requests audio focus and reports whether playback may begin.
+     *
+     * Call exactly once when starting playback.
+     *
+     * @return [PlayDecision.GRANTED] if focus was acquired, [PlayDecision.DENIED] otherwise.
+     */
     fun requestFocus(): PlayDecision {
         Timber.i("AudioFocusController.requestFocus: START")
         val result = driver.requestFocus(focusListener)
@@ -52,7 +63,11 @@ class AudioFocusController(
         return decision
     }
 
-    /** Release focus (call when stopping playback / tearing down the player). */
+    /**
+     * Releases audio focus and resets internal state.
+     *
+     * Call when stopping playback or tearing down the player.
+     */
     fun abandon() {
         Timber.i("AudioFocusController.abandon: START")
         if (hasFocus) {
@@ -63,20 +78,23 @@ class AudioFocusController(
         }
     }
 
+    /** Routes a focus-loss event through the policy and applies the resulting action. */
     private fun handleFocusChange(loss: AudioFocusLoss) {
         val action = policy.decide(loss, control.isPlaying, isDucking, pausedByTransient)
         Timber.d("AudioFocusController: state changed to $action (loss=$loss)")
+        applyFocusAction(action, loss)
+        cleanupAfterPermanentLoss(loss)
+    }
+
+    /**
+     * Applies the [FocusAction] produced by the policy.
+     *
+     * @param action the action to apply.
+     * @param loss the original focus-loss event (used to decide transient vs permanent).
+     */
+    private fun applyFocusAction(action: FocusAction, loss: AudioFocusLoss) {
         when (action) {
-            FocusAction.PAUSE -> {
-                val playingBefore = control.isPlaying
-                control.pause()
-                // Remember *our* pause so a later GAIN resumes only if we paused.
-                if (loss == AudioFocusLoss.LOSS) {
-                    pausedByTransient = false // permanent: no resume, not "transient"
-                } else {
-                    pausedByTransient = playingBefore
-                }
-            }
+            FocusAction.PAUSE -> applyPause(loss)
             FocusAction.DUCK -> {
                 control.setDucking(true)
                 isDucking = true
@@ -95,12 +113,33 @@ class AudioFocusController(
             }
             FocusAction.NOOP -> Unit
         }
-        // Permanent loss: hand focus back to the system regardless of the action.
+    }
+
+    /**
+     * Pauses playback and records whether the pause was transient.
+     *
+     * @param loss the focus-loss event (permanent vs transient determines resume behaviour).
+     */
+    private fun applyPause(loss: AudioFocusLoss) {
+        val playingBefore = control.isPlaying
+        control.pause()
         if (loss == AudioFocusLoss.LOSS) {
-            driver.abandon()
-            hasFocus = false
             pausedByTransient = false
-            isDucking = false
+        } else {
+            pausedByTransient = playingBefore
         }
+    }
+
+    /**
+     * On permanent loss, hands focus back to the system regardless of the action taken.
+     *
+     * @param loss the focus-loss event.
+     */
+    private fun cleanupAfterPermanentLoss(loss: AudioFocusLoss) {
+        if (loss != AudioFocusLoss.LOSS) return
+        driver.abandon()
+        hasFocus = false
+        pausedByTransient = false
+        isDucking = false
     }
 }

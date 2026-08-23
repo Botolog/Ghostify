@@ -41,7 +41,13 @@ internal object FfmpegLocator {
     @Volatile
     private var cached: File? = null
 
-    /** Returns the bundled executable, run in place from the APK lib dir. */
+    /**
+     * Returns the bundled ffmpeg executable, made executable if needed.
+     *
+     * @param context the application context for accessing the native library directory.
+     * @return the executable [File] in the APK's native library directory.
+     * @throws IllegalArgumentException if the bundled binary is missing.
+     */
     fun ensureExecutable(context: Context): File {
         Timber.i("FfmpegLocator.ensureExecutable: START")
         cached?.let {

@@ -100,7 +100,12 @@ object SpotifySanitizer {
         Timber.i("SpotifySanitizer.shortIdOf: START")
         if (spotifyUrl == null) return null
         val m = OPEN_SPOTIFY.find(spotifyUrl) ?: return null
-        val result = m.value.substringAfterLast('/').substringBefore('?').substringBefore('#').trimEnd('/').ifEmpty { null }
+        val result = m.value
+            .substringAfterLast('/')
+            .substringBefore('?')
+            .substringBefore('#')
+            .trimEnd('/')
+            .ifEmpty { null }
         Timber.i("SpotifySanitizer.shortIdOf: returning $result")
         return result
     }

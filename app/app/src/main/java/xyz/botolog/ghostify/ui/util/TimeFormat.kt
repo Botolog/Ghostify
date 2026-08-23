@@ -5,10 +5,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * Formats an epoch-millisecond timestamp as a short, human readable "time ago" string
+ * Formats an epoch-millisecond timestamp as a short, human-readable "time ago" string
  * used for the playlist "last synced" label.
  *
- * Pure Kotlin (JVM testable): [nowMs] is injected so callers (and tests) stay deterministic.
+ * This is a pure Kotlin utility (JVM testable): [nowMs] is injected so callers (and tests)
+ * stay deterministic.
  */
 object TimeFormat {
 
@@ -21,8 +22,11 @@ object TimeFormat {
         DateTimeFormatter.ofPattern("MMM d, yyyy").withZone(ZoneId.systemDefault())
 
     /**
+     * Formats [epochMs] as a relative "time ago" string.
+     *
      * @param epochMs timestamp to format; `null` means the playlist was never synced.
      * @param nowMs current wall-clock time, injected for determinism.
+     * @return human-readable relative time string (e.g. "Just now", "3m ago", "Jan 5, 2025").
      */
     fun formatRelative(epochMs: Long?, nowMs: Long): String {
         if (epochMs == null) return "Never"

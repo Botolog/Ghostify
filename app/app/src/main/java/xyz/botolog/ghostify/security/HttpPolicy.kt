@@ -51,12 +51,12 @@ object HttpPolicy {
     fun stripUserInfo(url: String): String {
         Timber.i("HttpPolicy.stripUserInfo: START")
         return try {
-            val u = URI(url)
-            if (u.userInfo == null) {
+            val uri = URI(url)
+            if (uri.userInfo == null) {
                 Timber.i("HttpPolicy.stripUserInfo: returning $url")
                 url
             } else {
-                val result = URI(u.scheme, null, u.host, u.port, u.path, u.query, u.fragment).toString()
+                val result = URI(uri.scheme, null, uri.host, uri.port, uri.path, uri.query, uri.fragment).toString()
                 Timber.i("HttpPolicy.stripUserInfo: returning $result")
                 result
             }

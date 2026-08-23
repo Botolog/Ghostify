@@ -12,5 +12,16 @@ package xyz.botolog.ghostify.data.db
  * the `androidx.room.withTransaction` extension.
  */
 interface TransactionRunner {
+
+    /**
+     * Executes [block] inside a single database transaction.
+     *
+     * If [block] completes successfully, the transaction is committed.
+     * If [block] throws, the transaction is rolled back and the exception propagates.
+     *
+     * @param R The return type of the transactional block.
+     * @param block The suspend lambda to execute within the transaction.
+     * @return The result of [block].
+     */
     suspend fun <R> withinTransaction(block: suspend () -> R): R
 }

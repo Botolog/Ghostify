@@ -12,6 +12,12 @@ import timber.log.Timber
  */
 class DownloadScheduler(private val workManager: WorkManager) : DownloadExecutor {
 
+    /**
+     * Enqueues a unique download work request for the given playlist.
+     *
+     * @param playlistId the playlist to download.
+     * @return always `true`; WorkManager handles deduplication.
+     */
     override fun execute(playlistId: String): Boolean {
         Timber.i("DownloadScheduler.execute: START")
         val request = DownloadWorker.buildRequest(playlistId)
@@ -24,12 +30,25 @@ class DownloadScheduler(private val workManager: WorkManager) : DownloadExecutor
         return true
     }
 
+    /**
+     * Cancels any running or pending download work for the given playlist.
+     *
+     * @param playlistId the playlist whose work should be canceled.
+     */
     override fun cancel(playlistId: String) {
         Timber.i("DownloadScheduler.cancel: START")
         workManager.cancelUniqueWork(uniqueName(playlistId))
     }
 
     companion object {
-        fun uniqueName(playlistId: String): String = "ghostify.download.$playlistId"
+        private const val UNIQUE_NAME_PREFIX = "ghostify.download."
+
+        /**
+         * Generates a unique work name for the given playlist.
+         *
+         * @param playlistId the playlist identifier.
+         * @return a unique string suitable for WorkManager.
+         */
+        fun uniqueName(playlistId: String): String = "$UNIQUE_NAME_PREFIX$playlistId"
     }
 }

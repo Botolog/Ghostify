@@ -31,9 +31,12 @@ object RetainedHeapProbe {
      * wrapper objects are collected before we measure retained growth.
      */
     fun gcAndWait() {
-        for (i in 0 until 3) {
+        repeat(GC_PASS_COUNT) {
             System.gc()
-            Thread.sleep(50)
+            Thread.sleep(GC_SLEEP_MILLIS)
         }
     }
+
+    private const val GC_PASS_COUNT = 3
+    private const val GC_SLEEP_MILLIS = 50L
 }

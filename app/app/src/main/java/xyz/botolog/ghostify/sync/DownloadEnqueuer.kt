@@ -12,5 +12,11 @@ package xyz.botolog.ghostify.sync
  * SQLite transaction.)
  */
 fun interface DownloadEnqueuer {
+
+    /**
+     * Enqueues all PENDING tracks for the given playlist into the download queue.
+     *
+     * @param playlistId The playlist whose pending tracks should be downloaded.
+     */
     suspend fun enqueuePendingDownloads(playlistId: String)
 }

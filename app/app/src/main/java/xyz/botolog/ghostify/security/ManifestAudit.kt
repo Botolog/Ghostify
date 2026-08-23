@@ -31,12 +31,23 @@ import org.w3c.dom.Element
  */
 object ManifestAudit {
 
-    /** Rule ids shared with [SecurityScan] and the Python scan script. */
+    /**
+     * Rule ids shared with [SecurityScan] and the Python scan script.
+     */
     const val R_EXPORTED_COMPONENT = "EXPORTED_COMPONENT"
     const val R_STORAGE_PERMISSION = "STORAGE_PERMISSION"
     const val R_CLEARTEXT_MANIFEST = "CLEARTEXT_MANIFEST"
     const val R_DEBUGGABLE = "DEBUGGABLE"
     const val R_PROVIDER = "PROVIDER"
+
+    private const val TAG_APPLICATION = "application"
+    private const val TAG_USES_PERMISSION = "uses-permission"
+    private const val ATTR_CLEARTEXT = "android:usesCleartextTraffic"
+    private const val ATTR_DEBUGGABLE = "android:debuggable"
+    private const val ATTR_EXPORTED = "android:exported"
+    private const val ATTR_NAME = "android:name"
+    private const val ACTION_MAIN = "android.intent.action.MAIN"
+    private const val CATEGORY_LAUNCHER = "android.intent.category.LAUNCHER"
 
     /** Components that the OS (not other apps) binds and that must be exported. */
     private val EXPORTED_ALLOWLIST = setOf(
@@ -74,32 +85,48 @@ object ManifestAudit {
             issues += Issue(R_EXPORTED_COMPONENT, "manifest is not parseable XML")
             return issues
         }
-        val app = doc.getElementsByTagName("application").item(0) as? Element ?: return issues
+        val app = doc.getElementsByTagName(TAG_APPLICATION).item(0) as? Element ?: return issues
 
-        if (app.getAttribute("android:usesCleartextTraffic") == "true") {
+        checkCleartextAndDebuggable(app, issues)
+        checkStoragePermissions(doc, issues)
+        checkExportedComponents(doc, issues)
+
+        Timber.i("ManifestAudit.audit: returning ${issues.size} issues")
+        return issues
+    }
+
+    /** Checks for cleartext traffic and debuggable flags. */
+    private fun checkCleartextAndDebuggable(app: Element, issues: MutableList<Issue>) {
+        if (app.getAttribute(ATTR_CLEARTEXT) == "true") {
             issues += Issue(R_CLEARTEXT_MANIFEST, "android:usesCleartextTraffic=\"true\" allows cleartext HTTP (T-171)")
             Timber.w("ManifestAudit: cleartext traffic enabled in manifest")
         }
-        if (app.getAttribute("android:debuggable") == "true") {
+        if (app.getAttribute(ATTR_DEBUGGABLE) == "true") {
             issues += Issue(R_DEBUGGABLE, "android:debuggable=\"true\" must never ship")
             Timber.e("ManifestAudit: debuggable=true found in manifest")
         }
+    }
 
-        for (i in 0 until doc.getElementsByTagName("uses-permission").length) {
-            val perm = doc.getElementsByTagName("uses-permission").item(i)
-            val name = perm.attributes?.getNamedItem("android:name")?.nodeValue ?: continue
+    /** Checks for broad storage permissions. */
+    private fun checkStoragePermissions(doc: Document, issues: MutableList<Issue>) {
+        for (i in 0 until doc.getElementsByTagName(TAG_USES_PERMISSION).length) {
+            val perm = doc.getElementsByTagName(TAG_USES_PERMISSION).item(i)
+            val name = perm.attributes?.getNamedItem(ATTR_NAME)?.nodeValue ?: continue
             if (name in STORAGE_PERMISSIONS) {
                 issues += Issue(R_STORAGE_PERMISSION, "broad storage permission $name exports app data surface (T-169)")
                 Timber.w("ManifestAudit: storage permission $name declared")
             }
         }
+    }
 
-        for (tag in listOf("activity", "activity-alias", "service", "receiver", "provider")) {
+    /** Checks for exported components without allowlisted reason. */
+    private fun checkExportedComponents(doc: Document, issues: MutableList<Issue>) {
+        for (tag in COMPONENT_TAGS) {
             val nodes = doc.getElementsByTagName(tag)
             for (i in 0 until nodes.length) {
                 val el = nodes.item(i) as Element
-                val name = el.getAttribute("android:name").ifEmpty { "?" }
-                val exported = el.getAttribute("android:exported")
+                val name = el.getAttribute(ATTR_NAME).ifEmpty { "?" }
+                val exported = el.getAttribute(ATTR_EXPORTED)
                 val isLauncher = tag == "activity" && hasLauncherIntent(el)
                 val allowlisted = name in EXPORTED_ALLOWLIST
                 if (exported == "true" && !isLauncher && !allowlisted) {
@@ -118,9 +145,9 @@ object ManifestAudit {
                 }
             }
         }
-        Timber.i("ManifestAudit.audit: returning ${issues.size} issues")
-        return issues
     }
+
+    private val COMPONENT_TAGS = listOf("activity", "activity-alias", "service", "receiver", "provider")
 
     private fun hasLauncherIntent(el: Element): Boolean {
         val filters = el.getElementsByTagName("intent-filter")
@@ -131,10 +158,10 @@ object ManifestAudit {
             var hasMain = false
             var hasLauncher = false
             for (j in 0 until actions.length) {
-                if ((actions.item(j) as Element).getAttribute("android:name") == "android.intent.action.MAIN") hasMain = true
+                if ((actions.item(j) as Element).getAttribute(ATTR_NAME) == ACTION_MAIN) hasMain = true
             }
             for (j in 0 until categories.length) {
-                if ((categories.item(j) as Element).getAttribute("android:name") == "android.intent.category.LAUNCHER") hasLauncher = true
+                if ((categories.item(j) as Element).getAttribute(ATTR_NAME) == CATEGORY_LAUNCHER) hasLauncher = true
             }
             if (hasMain && hasLauncher) return true
         }
@@ -144,9 +171,9 @@ object ManifestAudit {
     private fun parse(manifestXml: String): Document? = try {
         val factory = DocumentBuilderFactory.newInstance().apply {
             setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setFeature(FEATURE_DISALLOW_DOCTYPE, true)
+            setFeature(FEATURE_EXTERNAL_GENERAL_ENTITIES, false)
+            setFeature(FEATURE_EXTERNAL_PARAMETER_ENTITIES, false)
             isExpandEntityReferences = false
             isNamespaceAware = false
         }
@@ -155,4 +182,8 @@ object ManifestAudit {
         Timber.e(t, "ManifestAudit: parse FAILED")
         null
     }
+
+    private const val FEATURE_DISALLOW_DOCTYPE = "http://apache.org/xml/features/disallow-doctype-decl"
+    private const val FEATURE_EXTERNAL_GENERAL_ENTITIES = "http://xml.org/sax/features/external-general-entities"
+    private const val FEATURE_EXTERNAL_PARAMETER_ENTITIES = "http://xml.org/sax/features/external-parameter-entities"
 }
