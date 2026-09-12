@@ -53,6 +53,18 @@ android {
             // binary can be exec()'d by Python subprocesses (FfmpegLocator).
             useLegacyPackaging = true
             keepDebugSymbols += "libffmpeg.so"
+            doNotStrip += listOf(
+                "libandroidx.graphics.path.so",
+                "libchaquopy_java.so",
+                "libcrypto_chaquopy.so",
+                "libcrypto_python.so",
+                "libffmpeg.so",
+                "libpython3.11.so",
+                "libsqlite3_chaquopy.so",
+                "libsqlite3_python.so",
+                "libssl_chaquopy.so",
+                "libssl_python.so",
+            )
         }
     }
 }
