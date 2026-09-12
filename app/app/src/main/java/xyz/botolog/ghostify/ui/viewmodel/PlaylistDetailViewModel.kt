@@ -17,8 +17,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChangedBy
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import timber.log.Timber
 
@@ -59,23 +57,23 @@ class PlaylistDetailViewModel(
 
     /** Cached tracks list — only rebuilt when the underlying songs change. */
     private var cachedTracks: List<TrackUi> = emptyList()
+    private var lastSongsKey: List<Pair<String, DataSongStatus>> = emptyList()
 
     init {
         Timber.i("PlaylistDetailViewModel: init")
         launch {
-            repo.observeSongs(playlistId)
-                .distinctUntilChangedBy { songs -> songs.map { it.id to it.status } }
-                .collect { songs ->
-                    cachedTracks = songs.sortedBy { it.position }.map { it.toTrackUi() }
-                }
-        }
-        launch {
             combine(
                 repo.observePlaylist(playlistId),
+                repo.observeSongs(playlistId),
                 downloads.observeProgress(playlistId),
                 syncing,
                 error,
-            ) { playlist, progress, isSyncing, loadError ->
+            ) { playlist, songs, progress, isSyncing, loadError ->
+                val songsKey = songs.map { it.id to it.status }
+                if (songsKey != lastSongsKey) {
+                    lastSongsKey = songsKey
+                    cachedTracks = songs.sortedBy { it.position }.map { it.toTrackUi() }
+                }
                 mapToUi(playlist, progress, isSyncing, loadError)
             }
                 .catch { e ->
