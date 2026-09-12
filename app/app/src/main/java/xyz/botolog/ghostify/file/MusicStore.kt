@@ -17,7 +17,7 @@ import java.io.File
  * re-sync logic relies on to avoid re-downloading existing tracks.
  */
 class MusicStore(
-    private val root: File,
+    root: File,
     private val fs: FileSystem = JvmFileSystem,
 ) {
 
@@ -27,10 +27,18 @@ class MusicStore(
     }
 
     /** Absolute, normalized root directory. */
-    val rootDir: File get() = root
+    @Volatile
+    var rootDir: File = root
+        private set
+
+    /** Updates the store root directory (e.g. when the user changes it in Settings). */
+    fun updateRoot(newRoot: File) {
+        rootDir = newRoot
+        ensureRoot()
+    }
 
     /** Creates the store directory if it does not exist. True if present afterwards. */
-    fun ensureRoot(): Boolean = fs.exists(root) || root.mkdirs()
+    fun ensureRoot(): Boolean = fs.exists(rootDir) || rootDir.mkdirs()
 
     // ---- Output path resolution (T-150) ------------------------------------
 
@@ -40,7 +48,7 @@ class MusicStore(
      * `file_path` is always this path, so it always matches disk after download.
      */
     fun resolveOutputPath(artists: String, title: String): File =
-        root.resolve(FileNames.trackFileName(artists, title))
+        rootDir.resolve(FileNames.trackFileName(artists, title))
 
     /** DB form of [resolveOutputPath] — the absolute path string stored in `songs.file_path`. */
     fun dbFilePath(artists: String, title: String): String =
@@ -58,7 +66,7 @@ class MusicStore(
         if (fs.exists(expected)) return expected
 
         val stem = expected.name.removeSuffix(FileNames.MP3_EXTENSION)
-        return fs.listFiles(root)
+        return fs.listFiles(rootDir)
             .asSequence()
             .filter { fs.isFile(it) && it.name.endsWith(FileNames.MP3_EXTENSION) }
             .filter { nameMatchesStem(it.name, stem) }
@@ -128,7 +136,7 @@ class MusicStore(
      */
     fun orphanFiles(dbFilePaths: Collection<String>): List<File> {
         val known = knownPaths(dbFilePaths)
-        return fs.listFiles(root)
+        return fs.listFiles(rootDir)
             .filter { fs.isFile(it) }
             .filterNot { it.absolutePath in known }
             .sortedBy { it.name }
@@ -171,11 +179,11 @@ class MusicStore(
 
     /** Size of every regular file currently in the store. */
     fun storeUsedBytes(): Long =
-        fs.listFiles(root).filter { fs.isFile(it) }.sumOf { fs.length(it) }
+        fs.listFiles(rootDir).filter { fs.isFile(it) }.sumOf { fs.length(it) }
 
-    fun freeBytes(): Long = fs.freeSpace(root)
+    fun freeBytes(): Long = fs.freeSpace(rootDir)
 
-    fun totalBytes(): Long = fs.totalSpace(root)
+    fun totalBytes(): Long = fs.totalSpace(rootDir)
 
     fun diskSpace(): DiskSpaceReport =
         DiskSpaceReport(usedBytes = storeUsedBytes(), freeBytes = freeBytes(), totalBytes = totalBytes())

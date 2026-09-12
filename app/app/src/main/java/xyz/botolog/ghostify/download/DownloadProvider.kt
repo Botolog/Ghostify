@@ -39,14 +39,24 @@ class DownloadProvider private constructor(
     /** Builds the Chaquopy-backed [TrackDownloader] with the real bridge + store. */
     private fun buildWiredDownloader(): TrackDownloader {
         val db = xyz.botolog.ghostify.data.db.AppDatabase.get(app)
-        val store = xyz.botolog.ghostify.file.musicStore(app)
         return SpotdlTrackDownloader(
             ChaquopySpotdlCall(
                 bridge = xyz.botolog.ghostify.trackdownload.TrackDownloadBridge(),
-                musicStore = store,
+                musicStore = sharedMusicStore,
                 settings = xyz.botolog.ghostify.data.repo.SettingsRepository(db.settingDao()),
             )
         )
+    }
+
+    /**
+     * Accepts the shared [MusicStore] from [GhostifyContainer] so that storage
+     * path changes made in Settings apply to downloads.
+     */
+    private var sharedMusicStore: xyz.botolog.ghostify.file.MusicStore =
+        xyz.botolog.ghostify.file.musicStore(app)
+
+    fun setMusicStore(store: xyz.botolog.ghostify.file.MusicStore) {
+        sharedMusicStore = store
     }
 
     private val manager: DownloadManager by lazy {

@@ -1,7 +1,12 @@
 package xyz.botolog.ghostify.ui.settings
 
 import android.content.Intent
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -31,11 +37,16 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -48,6 +59,7 @@ import xyz.botolog.ghostify.GhostifyApplication
 import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
+import xyz.botolog.ghostify.ui.viewmodel.SettingsViewModel
 
 /**
  * Test tag constants for the settings screen. Used by Compose UI tests to locate elements.
@@ -92,6 +104,61 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by contract.state.collectAsState()
+    var showPermissionRationale by remember { mutableStateOf(false) }
+
+    val storagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (contract is SettingsViewModel) {
+            contract.handleStoragePickerResult(uri)
+        }
+    }
+
+    val manageStorageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        // After returning from settings, check if permission was granted and proceed
+        if (hasManageStoragePermission()) {
+            storagePickerLauncher.launch(null)
+        }
+    }
+
+    if (showPermissionRationale) {
+        AlertDialog(
+            onDismissRequest = { showPermissionRationale = false },
+            title = { Text("Storage permission needed") },
+            text = {
+                Text(
+                    "Ghostify needs access to all files to save songs to your chosen folder. " +
+                    "You'll be taken to the system settings page to enable this."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermissionRationale = false
+                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                    manageStorageLauncher.launch(intent)
+                }) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionRationale = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        contract.openStoragePicker.collect {
+            if (hasManageStoragePermission()) {
+                storagePickerLauncher.launch(null)
+            } else {
+                showPermissionRationale = true
+            }
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -197,10 +264,38 @@ private fun BitrateSetting(state: SettingsUiState, contract: SettingsContract) {
 }
 
 /**
- * Storage location display with a "Change" button.
+ * Storage location display with "Change" and "Reset" buttons.
  */
 @Composable
 private fun StorageSetting(state: SettingsUiState, contract: SettingsContract) {
+    var showResetDialog by remember { mutableStateOf(false) }
+
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            title = { Text("Reset storage location") },
+            text = {
+                Text(
+                    "This will move future downloads back to the app's internal storage folder. " +
+                    "Songs already downloaded to the custom folder will NOT be moved."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    contract.resetStoragePath()
+                    showResetDialog = false
+                }) {
+                    Text("Reset")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     Text("Storage location", style = MaterialTheme.typography.bodyLarge)
     Row(
         modifier = Modifier
@@ -224,6 +319,12 @@ private fun StorageSetting(state: SettingsUiState, contract: SettingsContract) {
             modifier = Modifier.testTag(SettingsTestTags.CHANGE_STORAGE),
         ) {
             Text("Change")
+        }
+        Spacer(modifier = Modifier.width(INNER_SPACING))
+        OutlinedButton(
+            onClick = { showResetDialog = true },
+        ) {
+            Text("Reset")
         }
     }
 }
@@ -409,4 +510,16 @@ private fun VersionInfo() {
             .padding(top = SECTION_SPACING_LARGE)
             .testTag("setting_version"),
     )
+}
+
+/**
+ * Checks if the app has MANAGE_EXTERNAL_STORAGE permission.
+ * On API < 30 this always returns true (not needed).
+ */
+private fun hasManageStoragePermission(): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Environment.isExternalStorageManager()
+    } else {
+        true
+    }
 }

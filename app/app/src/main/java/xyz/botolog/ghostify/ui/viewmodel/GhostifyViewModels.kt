@@ -36,6 +36,7 @@ import java.util.UUID
  * @property newId function that generates a new unique id.
  */
 class GhostifyViewModels(
+    private val context: android.content.Context,
     private val repo: PlaylistRepository,
     private val songRepo: SongRepository,
     private val settings: SettingsRepository,
@@ -61,7 +62,7 @@ class GhostifyViewModels(
 
     private val playerVm = PlayerViewModel(player)
 
-    private val settingsVm = SettingsViewModel(settings, repo, songRepo, musicStore)
+    private val settingsVm = SettingsViewModel(context, settings, repo, songRepo, musicStore)
 
     /** Cache of detail VMs keyed by playlist id. */
     private val detailCache = HashMap<String, PlaylistDetailViewModel>()

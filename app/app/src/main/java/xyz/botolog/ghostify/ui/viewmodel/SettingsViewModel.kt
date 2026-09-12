@@ -1,15 +1,21 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
+import android.content.Context
+import android.net.Uri
 import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.data.repo.SettingsRepository
 import xyz.botolog.ghostify.data.repo.SongRepository
 import xyz.botolog.ghostify.file.MusicStore
+import xyz.botolog.ghostify.file.resolveTreeUriToPath
 import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
@@ -31,6 +37,7 @@ import timber.log.Timber
  * @property musicStore local file storage manager.
  */
 class SettingsViewModel(
+    private val context: Context,
     private val settings: SettingsRepository,
     private val playlistRepo: PlaylistRepository,
     private val songRepo: SongRepository,
@@ -40,10 +47,14 @@ class SettingsViewModel(
     private val _state = MutableStateFlow(SettingsUiState())
     override val state: StateFlow<SettingsUiState> = _state.asStateFlow()
 
+    private val _openStoragePicker = MutableSharedFlow<Unit>()
+    override val openStoragePicker: SharedFlow<Unit> = _openStoragePicker.asSharedFlow()
+
     init {
         Timber.i("SettingsViewModel: init")
         launch { observeSettings() }
         launch { refreshCacheStats() }
+        launch { initStorageFromSettings() }
     }
 
     override fun setBitrate(bitrate: Bitrate) {
@@ -53,6 +64,45 @@ class SettingsViewModel(
 
     override fun changeStoragePath() {
         Timber.i("SettingsViewModel.changeStoragePath: START")
+        launch { _openStoragePicker.emit(Unit) }
+    }
+
+    override fun setStoragePath(path: String) {
+        Timber.i("SettingsViewModel.setStoragePath: path=$path")
+        launch {
+            settings.setStorageDir(path)
+            val dir = java.io.File(path)
+            musicStore.updateRoot(dir)
+            Timber.i("SettingsViewModel: MusicStore root updated to ${dir.absolutePath}")
+        }
+    }
+
+    override fun resetStoragePath() {
+        Timber.i("SettingsViewModel.resetStoragePath: START")
+        val defaultName = SettingsRepository.DEFAULT_STORAGE_DIR
+        launch {
+            settings.setStorageDir(defaultName)
+            val dir = xyz.botolog.ghostify.file.resolveStorageDir(context, defaultName)
+            musicStore.updateRoot(dir)
+            Timber.i("SettingsViewModel: MusicStore root reset to ${dir.absolutePath}")
+        }
+    }
+
+    /**
+     * Resolves a SAF tree URI to a filesystem path and saves it.
+     * Called by the UI after the SAF picker returns.
+     */
+    fun handleStoragePickerResult(uri: Uri?) {
+        if (uri == null) {
+            Timber.w("SettingsViewModel: storage picker returned null URI")
+            return
+        }
+        val path = resolveTreeUriToPath(context, uri)
+        if (path != null) {
+            setStoragePath(path)
+        } else {
+            Timber.e("SettingsViewModel: failed to resolve SAF URI to path: $uri")
+        }
     }
 
     override fun setConcurrency(count: Int) {
@@ -74,6 +124,24 @@ class SettingsViewModel(
     }
 
     /**
+     * Reads the saved storage path from settings and updates MusicStore root.
+     * If the saved value is a relative name (default), resolves it under app external storage.
+     * If it's an absolute path (from SAF picker), uses it directly.
+     */
+    private suspend fun initStorageFromSettings() {
+        val savedPath = settings.getStorageDir()
+        val dir = if (savedPath.startsWith("/")) {
+            // Absolute path from SAF picker
+            java.io.File(savedPath)
+        } else {
+            // Relative name — resolve under app external storage
+            xyz.botolog.ghostify.file.resolveStorageDir(context, savedPath)
+        }
+        musicStore.updateRoot(dir)
+        Timber.i("SettingsViewModel: MusicStore root initialized to ${dir.absolutePath}")
+    }
+
+    /**
      * Observes the settings repository and keeps the UI state in sync.
      */
     private suspend fun observeSettings() {
@@ -81,11 +149,12 @@ class SettingsViewModel(
             settings.observeBitrate(),
             settings.observeConcurrency(),
             settings.observeAutoDownload(),
-        ) { bitrate, concurrency, autoDownload ->
+            settings.observeStorageDir(),
+        ) { bitrate, concurrency, autoDownload, storageDir ->
             _state.update {
                 it.copy(
                     bitrate = bitrateFromKbps(bitrate),
-                    storagePath = musicStore.rootDir.absolutePath,
+                    storagePath = storageDir,
                     concurrentDownloads = concurrency,
                     autoDownloadOnAdd = autoDownload,
                 )

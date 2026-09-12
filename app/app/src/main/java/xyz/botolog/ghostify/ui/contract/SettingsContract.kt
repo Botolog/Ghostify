@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.ui.contract
 
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -16,6 +17,9 @@ interface SettingsContract {
     /** Observable UI state for the Settings screen. */
     val state: StateFlow<SettingsUiState>
 
+    /** One-shot event to request the UI to open the SAF directory picker. */
+    val openStoragePicker: SharedFlow<Unit>
+
     /**
      * Update the download bitrate preference.
      *
@@ -24,9 +28,21 @@ interface SettingsContract {
     fun setBitrate(bitrate: Bitrate)
 
     /**
-     * Opens the storage-picker flow (SAF); the contract writes the chosen path.
+     * Triggers the SAF storage-picker flow via [openStoragePicker].
      */
     fun changeStoragePath()
+
+    /**
+     * Persists a chosen storage directory from the SAF picker.
+     *
+     * @param path the resolved filesystem path from the SAF picker.
+     */
+    fun setStoragePath(path: String)
+
+    /**
+     * Resets the storage path to the app-scoped default (getExternalFilesDir).
+     */
+    fun resetStoragePath()
 
     /**
      * Update the maximum number of concurrent downloads.
@@ -51,7 +67,7 @@ interface SettingsContract {
      * Immutable UI state for the Settings screen.
      *
      * @property bitrate current download bitrate preference.
-     * @property storagePath absolute path to the app-scoped music directory.
+     * @property storagePath absolute path to the music directory.
      * @property concurrentDownloads maximum number of parallel downloads.
      * @property autoDownloadOnAdd `true` when auto-download is enabled.
      * @property cacheStats current cache statistics (orphan file count and size).

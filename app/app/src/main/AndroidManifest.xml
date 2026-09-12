@@ -24,8 +24,11 @@
     <!-- Media playback must survive screen-off. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- No storage permission: all media lives in app-scoped storage
-         (getExternalFilesDir) — see PROJECT.md §8. -->
+    <!-- No READ/WRITE storage permission: media lives in app-scoped storage
+         (getExternalFilesDir) by default. MANAGE_EXTERNAL_STORAGE is requested
+         only when the user explicitly chooses a custom storage folder (SAF picker). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <!-- No uses-feature restrictions: the app must remain installable on the
          full API 26+ device range. -->
 

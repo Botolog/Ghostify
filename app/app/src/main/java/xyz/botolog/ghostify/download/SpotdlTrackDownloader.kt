@@ -103,7 +103,7 @@ class ChaquopySpotdlCall(
     override suspend fun invoke(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult {
         Timber.i("ChaquopySpotdlCall.invoke: START for song=${song.id}")
         currentCoroutineContext().ensureActive()
-        val config = buildDownloadConfig()
+        val config = buildDownloadConfig(song.playlistId)
         val url = song.sourceUrl
         val listener = buildProgressListener(onProgress)
         val result = withContext(Dispatchers.IO) {
@@ -116,13 +116,14 @@ class ChaquopySpotdlCall(
         return result
     }
 
-    private suspend fun buildDownloadConfig(): TrackDownloadConfig {
+    private suspend fun buildDownloadConfig(playlistId: String): TrackDownloadConfig {
         val bitrate = settings.getBitrate()
             .toIntOrNull()
             ?.takeIf { TrackDownloadConfig.isValidBitrate(it) }
             ?: TrackDownloadConfig.DEFAULT_BITRATE
+        val baseDir = java.io.File(musicStore.rootDir.absolutePath, playlistId)
         return TrackDownloadConfig(
-            outputDir = musicStore.rootDir.absolutePath,
+            outputDir = baseDir.absolutePath,
             bitrate = bitrate,
             outputTemplate = TrackDownloadConfig.DEFAULT_TEMPLATE,
             ffmpeg = FfmpegLocator.executablePath ?: FFMPEG_DEFAULT,

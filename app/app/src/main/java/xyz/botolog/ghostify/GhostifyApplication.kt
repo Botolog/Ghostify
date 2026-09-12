@@ -140,7 +140,9 @@ class GhostifyContainer(private val context: Application) {
 
     /** The single shared [DownloadManager]; also used by [DownloadWorker]. */
     val downloadManager: DownloadManager by lazy {
-        xyz.botolog.ghostify.download.DownloadProvider.get(context).manager()
+        xyz.botolog.ghostify.download.DownloadProvider.get(context).also {
+            it.setMusicStore(musicStore)
+        }.manager()
     }
 
     // --- sync ---------------------------------------------------------------
@@ -179,6 +181,7 @@ class GhostifyContainer(private val context: Application) {
 
     private fun buildViewModels(): xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels =
         xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels(
+            context = context,
             repo = playlistRepository,
             songRepo = songRepository,
             settings = settingsRepository,

@@ -41,7 +41,7 @@ class SettingsRepository(private val settingDao: SettingDao) {
         const val DEFAULT_BITRATE = "320"
 
         /** Default number of concurrent downloads. */
-        const val DEFAULT_CONCURRENCY = 2
+        const val DEFAULT_CONCURRENCY = 8
 
         /** Default auto-download flag. */
         const val DEFAULT_AUTO_DOWNLOAD = false
