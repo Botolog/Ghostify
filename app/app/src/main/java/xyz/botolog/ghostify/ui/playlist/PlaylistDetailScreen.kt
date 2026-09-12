@@ -1,8 +1,7 @@
 package xyz.botolog.ghostify.ui.playlist
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -371,7 +370,7 @@ private fun TrackList(
             .testTag(PlaylistDetailTestTags.TRACK_LIST),
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
-        items(tracks, key = { it.id }) { track ->
+        items(tracks, key = { it.id }, contentType = { "track" }) { track ->
             TrackRow(
                 track = track,
                 onPlay = { contract.playFromSong(track.id) },
@@ -386,7 +385,6 @@ private fun TrackList(
  * A single track row showing title, artists, duration, and status. Tap action depends on
  * the download status: play if downloaded, download if pending, retry if failed.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TrackRow(
     track: TrackUi,
@@ -404,16 +402,13 @@ private fun TrackRow(
             .fillMaxWidth()
             .background(rowBackground)
             .testTag(PlaylistDetailTestTags.track(track.id))
-            .combinedClickable(
-                onClick = {
-                    when {
-                        isDownloaded -> onPlay()
-                        isFailed -> onRetry()
-                        else -> onDownload()
-                    }
-                },
-                onLongClick = onRetry,
-            )
+            .clickable {
+                when {
+                    isDownloaded -> onPlay()
+                    isFailed -> onRetry()
+                    else -> onDownload()
+                }
+            }
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

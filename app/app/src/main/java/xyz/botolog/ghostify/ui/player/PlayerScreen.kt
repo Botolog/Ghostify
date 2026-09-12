@@ -383,7 +383,7 @@ private fun QueueSheet(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(queue) { index, item ->
+            itemsIndexed(queue, key = { index, _ -> index }, contentType = { _, _ -> "queue_item" }) { index, item ->
                 QueueItemRow(
                     item = item,
                     index = index,

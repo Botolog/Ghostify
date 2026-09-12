@@ -293,7 +293,7 @@ private fun PlaylistList(
             .testTag(LibraryTestTags.LIST),
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
-        items(state.playlists, key = { it.id }) { playlist ->
+        items(state.playlists, key = { it.id }, contentType = { "playlist" }) { playlist ->
             SwipeablePlaylistRow(
                 playlist = playlist,
                 state = state,
