@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -190,7 +191,9 @@ private fun PlaylistContent(
 
         TrackList(
             tracks = state.tracks,
-            contract = contract,
+            onPlaySong = contract::playFromSong,
+            onDownloadSong = contract::downloadSong,
+            onRetrySong = contract::retryTrack,
         )
     }
 }
@@ -362,9 +365,14 @@ private fun DownloadAllButton(
 @Composable
 private fun TrackList(
     tracks: List<TrackUi>,
-    contract: PlaylistDetailContract,
+    onPlaySong: (String) -> Unit,
+    onDownloadSong: (String) -> Unit,
+    onRetrySong: (String) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .testTag(PlaylistDetailTestTags.TRACK_LIST),
@@ -373,9 +381,9 @@ private fun TrackList(
         items(tracks, key = { it.id }, contentType = { "track" }) { track ->
             TrackRow(
                 track = track,
-                onPlay = { contract.playFromSong(track.id) },
-                onDownload = { contract.downloadSong(track.id) },
-                onRetry = { contract.retryTrack(track.id) },
+                onPlay = { onPlaySong(track.id) },
+                onDownload = { onDownloadSong(track.id) },
+                onRetry = { onRetrySong(track.id) },
             )
         }
     }

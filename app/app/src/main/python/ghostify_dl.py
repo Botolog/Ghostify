@@ -453,6 +453,7 @@ def _fetch_youtube_impl(url: str) -> Dict[str, Any]:
         "no_warnings": True,
         "skip_download": True,
         "extract_flat": True,
+        "extractor_args": {"youtube": {"player_client": ["android", "web", "ios"]}},
     }
     with YoutubeDL(yt_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -953,7 +954,7 @@ SIDECAR_EXT = ".spotdl"
 SIDECAR_SCHEMA = 1
 
 DEFAULT_TEMP_SWEEP_AGE = 3600.0  # seconds
-DEFAULT_DURATION_TOLERANCE = 15.0  # seconds
+DEFAULT_DURATION_TOLERANCE = 90.0  # seconds
 
 
 def extract_spotify_id(url: Any) -> Optional[str]:
@@ -1113,6 +1114,9 @@ def _kind_from_error_text(message: str) -> str:
         or "region-blocked" in lowered
         or "no supported javascript runtime" in lowered
         or "require deno" in lowered
+        or "require node" in lowered
+        or "javascript runtime" in lowered
+        or "audio_unavailable" in lowered
     ):
         return ErrorKind.AUDIO_UNAVAILABLE
     return ErrorKind.UNKNOWN
@@ -1250,6 +1254,7 @@ class TrackDownloader:
                         "quiet": True,
                         "no_warnings": True,
                         "skip_download": True,
+                        "extractor_args": {"youtube": {"player_client": ["android", "web", "ios"]}},
                     }
                 ),
             )
@@ -1329,6 +1334,7 @@ class TrackDownloader:
             "no_warnings": True,
             "skip_download": True,
             "extract_flat": True,
+            "extractor_args": {"youtube": {"player_client": ["android", "web", "ios"]}},
         }
         if yt_dlp_args:
             from spotdl.utils.formatter import args_to_ytdlp_options
@@ -1517,6 +1523,43 @@ class TrackDownloader:
             percent = 0
         _fire(hook, percent, message or "")
 
+    def _fallback_search_yt_id(self, song: Any) -> Optional[str]:
+        """Search YouTube with a broader query when the pre-resolved yt_id fails."""
+        try:
+            from spotdl.providers.audio.ytmusic import YouTubeMusic
+
+            provider = YouTubeMusic()
+            title = getattr(song, "name", "") or ""
+            artists = getattr(song, "artists", []) or []
+            artist_str = artists[0] if artists else ""
+            
+            queries = [
+                f"{title} {artist_str}",
+                f"{title} {artist_str} official",
+                f"{title} {artist_str} music video",
+            ]
+            
+            for query in queries:
+                if not query.strip():
+                    continue
+                try:
+                    results = provider.get_results(
+                        query, filter="songs", ignore_spelling=True, limit=5
+                    )
+                    for result in results or ():
+                        video_id = _extract_video_id(getattr(result, "url", None))
+                        if video_id:
+                            logger.debug("Fallback search found video_id=%s for query=%s", video_id, query)
+                            return video_id
+                except Exception as exc:
+                    logger.debug("Fallback search failed for query=%s: %s", query, exc)
+                    continue
+            
+            return None
+        except Exception as exc:
+            logger.debug("Fallback search initialization failed: %s", exc)
+            return None
+
     def download(
         self,
         url: str,
@@ -1603,9 +1646,30 @@ class TrackDownloader:
             flush=True,
         )
 
-        return self._download_song(
-            song, url, on_start, on_complete, self._active_progress, result
-        )
+        try:
+            return self._download_song(
+                song, url, on_start, on_complete, self._active_progress, result
+            )
+        except TrackDownloadError as exc:
+            if exc.kind != ErrorKind.AUDIO_UNAVAILABLE:
+                raise
+            if not yt_id:
+                raise
+            logger.info(
+                "Download failed with AUDIO_UNAVAILABLE for yt_id=%s, attempting fallback search",
+                yt_id,
+            )
+            fallback_yt_id = self._fallback_search_yt_id(song)
+            if fallback_yt_id and fallback_yt_id != yt_id:
+                song.download_url = f"https://www.youtube.com/watch?v={fallback_yt_id}"
+                print(
+                    f"[GHOSTIFY_DEBUG] download fallback: yt_id={fallback_yt_id} download_url={song.download_url}",
+                    flush=True,
+                )
+                return self._download_song(
+                    song, url, on_start, on_complete, self._active_progress, result
+                )
+            raise
 
     def _song_from_meta(self, meta: Any, url: str) -> Optional[Any]:
         """Build a Song from bridge-passed fetch-time metadata, or None.
@@ -1817,9 +1881,37 @@ class TrackDownloader:
                     playlist_result,
                 )
             except TrackDownloadError as exc:
-                entry = playlist_result(
-                    "FAILED", song=song, error=str(exc), kind=exc.kind
-                )
+                if exc.kind == ErrorKind.AUDIO_UNAVAILABLE:
+                    logger.info(
+                        "Playlist download failed with AUDIO_UNAVAILABLE for song %s, attempting fallback search",
+                        song.song_id,
+                    )
+                    fallback_yt_id = self._fallback_search_yt_id(song)
+                    if fallback_yt_id:
+                        original_url = song.download_url
+                        song.download_url = f"https://www.youtube.com/watch?v={fallback_yt_id}"
+                        try:
+                            entry = self._download_song(
+                                song,
+                                song.url,
+                                on_start,
+                                on_complete,
+                                self._active_progress,
+                                playlist_result,
+                            )
+                        except TrackDownloadError as fallback_exc:
+                            song.download_url = original_url
+                            entry = playlist_result(
+                                "FAILED", song=song, error=str(fallback_exc), kind=fallback_exc.kind
+                            )
+                    else:
+                        entry = playlist_result(
+                            "FAILED", song=song, error=str(exc), kind=exc.kind
+                        )
+                else:
+                    entry = playlist_result(
+                        "FAILED", song=song, error=str(exc), kind=exc.kind
+                    )
             results.append(entry)
 
         _fire(

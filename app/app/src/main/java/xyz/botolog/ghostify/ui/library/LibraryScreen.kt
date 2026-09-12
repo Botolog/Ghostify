@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
@@ -287,7 +288,10 @@ private fun PlaylistList(
     onOpenPlaylist: (String) -> Unit,
     now: () -> Long,
 ) {
+    val listState = rememberLazyListState()
+
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .testTag(LibraryTestTags.LIST),
@@ -296,8 +300,9 @@ private fun PlaylistList(
         items(state.playlists, key = { it.id }, contentType = { "playlist" }) { playlist ->
             SwipeablePlaylistRow(
                 playlist = playlist,
-                state = state,
-                contract = contract,
+                playlists = state.playlists,
+                onDelete = contract::deletePlaylist,
+                onReorder = contract::reorderPlaylist,
                 onOpenPlaylist = onOpenPlaylist,
                 now = now,
             )
@@ -312,15 +317,16 @@ private fun PlaylistList(
 @Composable
 private fun SwipeablePlaylistRow(
     playlist: PlaylistUi,
-    state: LibraryUiState,
-    contract: LibraryContract,
+    playlists: List<PlaylistUi>,
+    onDelete: (String) -> Unit,
+    onReorder: (String, Int) -> Unit,
     onOpenPlaylist: (String) -> Unit,
     now: () -> Long,
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
-                contract.deletePlaylist(playlist.id)
+                onDelete(playlist.id)
                 true
             } else false
         }
@@ -348,23 +354,23 @@ private fun SwipeablePlaylistRow(
             playlist = playlist,
             onClick = { onOpenPlaylist(playlist.id) },
             onMoveUp = {
-                val idx = state.playlists.indexOfFirst { it.id == playlist.id }
+                val idx = playlists.indexOfFirst { it.id == playlist.id }
                 if (idx > 0) {
-                    val above = state.playlists[idx - 1]
-                    contract.reorderPlaylist(playlist.id, idx - 1)
-                    contract.reorderPlaylist(above.id, idx)
+                    val above = playlists[idx - 1]
+                    onReorder(playlist.id, idx - 1)
+                    onReorder(above.id, idx)
                 }
             },
             onMoveDown = {
-                val idx = state.playlists.indexOfFirst { it.id == playlist.id }
-                if (idx < state.playlists.lastIndex) {
-                    val below = state.playlists[idx + 1]
-                    contract.reorderPlaylist(playlist.id, idx + 1)
-                    contract.reorderPlaylist(below.id, idx)
+                val idx = playlists.indexOfFirst { it.id == playlist.id }
+                if (idx < playlists.lastIndex) {
+                    val below = playlists[idx + 1]
+                    onReorder(playlist.id, idx + 1)
+                    onReorder(below.id, idx)
                 }
             },
-            isFirst = state.playlists.firstOrNull()?.id == playlist.id,
-            isLast = state.playlists.lastOrNull()?.id == playlist.id,
+            isFirst = playlists.firstOrNull()?.id == playlist.id,
+            isLast = playlists.lastOrNull()?.id == playlist.id,
             now = now,
         )
     }
