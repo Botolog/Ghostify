@@ -1,5 +1,6 @@
 package xyz.botolog.ghostify.ui.contract
 
+import androidx.compose.runtime.Immutable
 import xyz.botolog.ghostify.ui.model.TrackUi
 import kotlinx.coroutines.flow.StateFlow
 
@@ -74,6 +75,7 @@ interface PlaylistDetailContract {
      * @property isSyncing `true` while a re-sync operation is in progress.
      * @property error surface-level load error; the empty state shows a retry button.
      */
+    @Immutable
     data class PlaylistDetailUiState(
         val playlistId: String = "",
         val name: String = "",

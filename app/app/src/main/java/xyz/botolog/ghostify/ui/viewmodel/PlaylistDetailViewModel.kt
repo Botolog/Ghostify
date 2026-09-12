@@ -1,6 +1,6 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
-import xyz.botolog.ghostify.data.model.SongStatus
+import xyz.botolog.ghostify.data.model.SongStatus as DataSongStatus
 import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.data.repo.SongRepository
 import xyz.botolog.ghostify.download.DownloadManager
@@ -10,11 +10,15 @@ import xyz.botolog.ghostify.sync.SyncException
 import xyz.botolog.ghostify.sync.SyncUseCase
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract.PlaylistDetailUiState
+import xyz.botolog.ghostify.ui.model.SongStatus as UiSongStatus
+import xyz.botolog.ghostify.ui.model.TrackUi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import timber.log.Timber
 
@@ -53,17 +57,26 @@ class PlaylistDetailViewModel(
     /** Holds the most recent load or sync error message. */
     private val error = MutableStateFlow<String?>(null)
 
+    /** Cached tracks list — only rebuilt when the underlying songs change. */
+    private var cachedTracks: List<TrackUi> = emptyList()
+
     init {
         Timber.i("PlaylistDetailViewModel: init")
         launch {
+            repo.observeSongs(playlistId)
+                .distinctUntilChangedBy { songs -> songs.map { it.id to it.status } }
+                .collect { songs ->
+                    cachedTracks = songs.sortedBy { it.position }.map { it.toTrackUi() }
+                }
+        }
+        launch {
             combine(
                 repo.observePlaylist(playlistId),
-                repo.observeSongs(playlistId),
                 downloads.observeProgress(playlistId),
                 syncing,
                 error,
-            ) { playlist, songs, progress, isSyncing, loadError ->
-                mapToUi(playlist, songs, progress, isSyncing, loadError)
+            ) { playlist, progress, isSyncing, loadError ->
+                mapToUi(playlist, progress, isSyncing, loadError)
             }
                 .catch { e ->
                     Timber.e(e, "PlaylistDetailViewModel: playlist stream FAILED")
@@ -119,7 +132,7 @@ class PlaylistDetailViewModel(
         launch {
             val song = songRepo.getSong(trackId) ?: return@launch
             if (song.playlistId != playlistId) return@launch
-            songRepo.setStatus(listOf(trackId), SongStatus.PENDING)
+            songRepo.setStatus(listOf(trackId), DataSongStatus.PENDING)
             downloads.downloadAll(playlistId)
         }
     }
@@ -135,7 +148,7 @@ class PlaylistDetailViewModel(
     override fun downloadSong(trackId: String) {
         Timber.i("PlaylistDetailViewModel.downloadSong: START $trackId")
         launch {
-            songRepo.setStatus(listOf(trackId), SongStatus.PENDING)
+            songRepo.setStatus(listOf(trackId), DataSongStatus.PENDING)
             downloads.downloadAll(playlistId)
         }
     }
@@ -158,7 +171,7 @@ class PlaylistDetailViewModel(
      * Returns all downloaded songs in this playlist, sorted by position.
      */
     private suspend fun getDownloadedSongs() = songRepo.getSongs(playlistId)
-        .filter { it.status == SongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
+        .filter { it.status == DataSongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
         .sortedBy { it.position }
         .map { it.toPlayerSong() }
 
@@ -174,7 +187,6 @@ class PlaylistDetailViewModel(
      */
     private fun mapToUi(
         playlist: xyz.botolog.ghostify.data.db.entity.PlaylistEntity?,
-        songs: List<xyz.botolog.ghostify.data.db.entity.SongEntity>,
         progress: xyz.botolog.ghostify.download.DownloadProgress?,
         isSyncing: Boolean,
         loadError: String?,
@@ -186,14 +198,13 @@ class PlaylistDetailViewModel(
                 error = loadError ?: PLAYLIST_NOT_FOUND_ERROR,
             )
         }
-        val sorted = songs.sortedBy { it.position }
-        val downloaded = sorted.count { it.status == SongStatus.DOWNLOADED }
+        val downloaded = cachedTracks.count { it.status == UiSongStatus.DOWNLOADED }
         val isRunning = progress?.state == DownloadRunState.RUNNING
         return PlaylistDetailUiState(
             playlistId = playlistId,
             name = playlist.name,
             coverUrl = playlist.coverUrl,
-            tracks = sorted.map { it.toTrackUi() },
+            tracks = cachedTracks,
             downloadedCount = downloaded,
             trackCount = playlist.trackCount,
             loading = false,

@@ -1,5 +1,7 @@
 package xyz.botolog.ghostify.ui.model
 
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.Stable
 import xyz.botolog.ghostify.data.model.PlaylistOrigin
 
 /**
@@ -31,6 +33,7 @@ enum class SongStatus { PENDING, QUEUED, DOWNLOADING, DOWNLOADED, FAILED }
  * @property progressPercent explicit overall download progress `0..100`, or `null` when idle.
  * @property lastSyncedAt epoch millis of the last successful sync, or `null` if never synced.
  */
+@Stable
 data class PlaylistUi(
     val id: String,
     val name: String,
@@ -56,6 +59,7 @@ data class PlaylistUi(
  * @property status download / playback status.
  * @property position zero-based sort position within the playlist.
  */
+@Stable
 data class TrackUi(
     val id: String,
     val spotifyId: String,
