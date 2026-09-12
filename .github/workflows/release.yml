@@ -47,12 +47,14 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x app/gradlew
 
-      - name: Build release APK
+      - name: Build APKs
         working-directory: app
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleDebug assembleRelease
 
-      - name: Rename APK
-        run: cp $(find app/app/build/outputs/apk/release -name '*.apk' | head -1) ghostify-${{ inputs.tag }}.apk
+      - name: Rename APKs
+        run: |
+          cp $(find app/app/build/outputs/apk/debug -name '*.apk' | head -1) ghostify-${{ inputs.tag }}-debug.apk
+          cp $(find app/app/build/outputs/apk/release -name '*.apk' | head -1) ghostify-${{ inputs.tag }}-release.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -60,6 +62,8 @@ jobs:
           tag_name: ${{ inputs.tag }}
           name: Ghostify ${{ inputs.tag }}
           body: ${{ inputs.notes }}
-          files: ghostify-${{ inputs.tag }}.apk
+          files: |
+            ghostify-${{ inputs.tag }}-debug.apk
+            ghostify-${{ inputs.tag }}-release.apk
           draft: false
           prerelease: false
