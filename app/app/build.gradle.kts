@@ -1,9 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.chaquo.python")
+}
+
+val localProps = Properties()
+rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use {
+    localProps.load(it)
 }
 
 android {
@@ -14,12 +21,21 @@ android {
         applicationId = "xyz.botolog.ghostify"
         minSdk = 26
         targetSdk = 35
-        versionCode = 45
-        versionName = "0.2.0"
+        versionCode = 46
+        versionName = "0.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file(localProps.getProperty("RELEASE_STORE_FILE", "release.keystore"))
+            storePassword = localProps.getProperty("RELEASE_STORE_PASSWORD", "")
+            keyAlias = localProps.getProperty("RELEASE_KEY_ALIAS", "ghostify")
+            keyPassword = localProps.getProperty("RELEASE_KEY_PASSWORD", "")
         }
     }
 
@@ -28,6 +44,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -52,13 +69,12 @@ android {
             // Extract native libs (libpython.so, libffmpeg.so) so the ffmpeg
             // binary can be exec()'d by Python subprocesses (FfmpegLocator).
             useLegacyPackaging = true
-            keepDebugSymbols += "libffmpeg.so"
-            doNotStrip += listOf(
+            keepDebugSymbols += listOf(
+                "libffmpeg.so",
                 "libandroidx.graphics.path.so",
                 "libchaquopy_java.so",
                 "libcrypto_chaquopy.so",
                 "libcrypto_python.so",
-                "libffmpeg.so",
                 "libpython3.11.so",
                 "libsqlite3_chaquopy.so",
                 "libsqlite3_python.so",
