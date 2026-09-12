@@ -554,9 +554,26 @@ def _fetch_impl(
     # Best-effort album/cover enrichment (T-012): spotdl 4.5.x anonymous track
     # payloads omit album + cover entirely, so fill them from the paginated
     # GraphQL source. A failure yields {} and tracks simply keep empty strings.
-    enrichment = _fetch_album_enrichment(playlist_id)
+    # Run enrichment and YouTube resolution in parallel since they are independent.
+    enrichment_result: Dict[str, Any] = {}
+    enrichment_error: Optional[BaseException] = None
+
+    def _enrich() -> None:
+        nonlocal enrichment_result, enrichment_error
+        try:
+            enrichment_result = _fetch_album_enrichment(playlist_id)
+        except BaseException as exc:
+            enrichment_error = exc
+
+    enrichment_thread = threading.Thread(target=_enrich, name="ghostify-enrich", daemon=True)
+    enrichment_thread.start()
 
     yt_ids = _resolve_yt_ids(songs, resolve_yt, per_track_yt_timeout)
+    enrichment_thread.join()
+
+    if enrichment_error is not None:
+        logger.debug("Album enrichment failed for %s: %s", playlist_id, enrichment_error)
+    enrichment = enrichment_result
 
     tracks = [
         _song_to_dict(song, position, yt_ids[position], enrichment)

@@ -88,10 +88,24 @@ class PlayerQueueBuilderTest {
     }
 
     @Test
-    fun allZeroLengthFilesReturnsNothingToPlay() {
+    fun zeroLengthFilesPassExistenceOnlyValidation() {
+        // Queue-time validation is existence-only: downloads already guarantee MP3 integrity
+        // before their status flips, so empty files are NOT excluded (only missing paths are).
         val empty = newFile("empty.mp3", byteArrayOf())
-        val result = builder.build(listOf(song("e", empty)))
-        assertTrue(result is QueueBuildResult.NothingToPlay)
+        val result = builder.build(listOf(song("e", empty))) as QueueBuildResult.Ready
+        assertEquals(1, result.items.size)
+        assertEquals("e", result.items[0].songId)
+    }
+
+    @Test
+    fun zeroLengthFilesAreIncludedAlongsideValidFiles() {
+        val empty = newFile("empty.mp3", byteArrayOf())
+        val valid = newFile("ok.mp3")
+        val result = builder.build(
+            listOf(song("empty", empty), song("ok", valid)),
+        ) as QueueBuildResult.Ready
+
+        assertEquals(listOf("empty", "ok"), result.items.map { it.songId })
     }
 
     // ── Ready queue ──────────────────────────────────────────────────────

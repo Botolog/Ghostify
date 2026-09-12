@@ -11,6 +11,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import xyz.botolog.ghostify.background.PlaybackService
+import xyz.botolog.ghostify.player.core.ArtworkBackfillBatcher
 import xyz.botolog.ghostify.player.core.ErrorAction
 import xyz.botolog.ghostify.player.core.PlaybackConstants
 import xyz.botolog.ghostify.player.core.PlayerError
@@ -29,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,6 +53,10 @@ import timber.log.Timber
  *   explicitly asks to [playPlaylist] again, so a mid-play DB refresh can never disturb the
  *   current song.
  *
+ * Playback starts as soon as the queue is built: embedded artwork is only extracted
+ * synchronously for the item playback starts on; every other item is backfilled in the
+ * background ([ArtworkBackfillBatcher] batches the resulting UI updates).
+ *
  * All player access happens on the main thread (the player's own thread); queue building and
  * artwork extraction run on [Dispatchers.IO].
  *
@@ -71,6 +77,7 @@ class PlayerController private constructor(
     private var nothingToPlay = false
     private var lastError: PlayerError? = null
     private var tickerJob: Job? = null
+    private var artworkBackfillJob: Job? = null
 
     /** Snapshot of the current playback state, updated on every relevant player event. */
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -95,6 +102,8 @@ class PlayerController private constructor(
      */
     fun playPlaylist(songs: List<Song>, startSongId: String? = null) {
         Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId")
+        // A new playlist supersedes any in-flight artwork backfill from the previous queue.
+        cancelArtworkBackfill("superseded by new playPlaylist")
         scope.launch(Dispatchers.IO) {
             when (val result = queueBuilder.build(songs, startSongId)) {
                 is QueueBuildResult.NothingToPlay -> handleNothingToPlay()
@@ -108,6 +117,8 @@ class PlayerController private constructor(
         Timber.w("playPlaylist: nothing to play")
         nothingToPlay = true
         lastError = null
+        // The artwork map is cleared here, so a stale backfill must not keep writing into it.
+        cancelArtworkBackfill("nothing to play")
         artworkByMediaId.clear()
         exoPlayer.clearMediaItems()
         _state.update {
@@ -122,7 +133,7 @@ class PlayerController private constructor(
 
     /** Builds MediaItems, configures the player and starts the foreground service. */
     private suspend fun handleQueueReady(result: QueueBuildResult.Ready) {
-        val mediaItems = buildMediaItems(result.items)
+        val mediaItems = buildMediaItems(result.items, result.startIndex)
         Timber.i("playPlaylist: ${result.items.size} playable items, starting at ${result.startIndex}")
         withContext(Dispatchers.Main.immediate) {
             nothingToPlay = false
@@ -136,6 +147,8 @@ class PlayerController private constructor(
             publishSnapshot()
             startPlaybackService()
         }
+        // Playback is already running; fill in the remaining artwork off the critical path.
+        launchArtworkBackfill(result.items, result.startIndex)
     }
 
     /** Holds a batch of built [MediaItem]s together with their extracted artwork bytes. */
@@ -145,19 +158,70 @@ class PlayerController private constructor(
     )
 
     /**
-     * Converts each [QueueItem] into a Media3 [MediaItem] and extracts artwork in bulk.
+     * Converts each [QueueItem] into a Media3 [MediaItem], extracting artwork only for the
+     * item playback starts on so `setMediaItems`/`play` are never delayed by tag parsing.
      *
-     * @return a pair of the MediaItem list and a map of songId -> artwork bytes.
+     * @param items queue items in playlist order.
+     * @param startIndex index playback starts at; its artwork is embedded synchronously.
+     * @return the MediaItem list plus a map (start item only) of songId -> artwork bytes.
      */
-    private fun buildMediaItems(items: List<QueueItem>): BuiltMediaItems {
+    private fun buildMediaItems(items: List<QueueItem>, startIndex: Int): BuiltMediaItems {
         val mediaItems = ArrayList<MediaItem>(items.size)
-        val artwork = HashMap<String, ByteArray>(items.size)
-        for (item in items) {
-            val art = runCatching { artworkExtractor.extractArtwork(item.filePath) }.getOrNull()
+        val artwork = HashMap<String, ByteArray>(1)
+        for ((index, item) in items.withIndex()) {
+            val art = if (index == startIndex) {
+                runCatching { artworkExtractor.extractArtwork(item.filePath) }.getOrNull()
+            } else {
+                null
+            }
             if (art != null) artwork[item.songId] = art
             mediaItems.add(MediaItemMapper.toMediaItem(item, art))
         }
         return BuiltMediaItems(mediaItems, artwork)
+    }
+
+    /**
+     * Extracts embedded artwork for every queued item except [startIndex] in the background.
+     *
+     * Runs one item at a time on [Dispatchers.IO]; each result lands in [artworkByMediaId]
+     * (main thread, where all map reads happen) followed by a batched [publishSnapshot] via
+     * [ArtworkBackfillBatcher], so `CurrentItem.artworkBytes` fills in as tracks become
+     * current without churning the UI. Exactly one backfill runs per controller: a new call
+     * cancels the previous job.
+     *
+     * @param items queue items in playlist order.
+     * @param startIndex index whose artwork was already extracted during queue building.
+     */
+    private fun launchArtworkBackfill(items: List<QueueItem>, startIndex: Int) {
+        cancelArtworkBackfill("queue swapped")
+        val pending = items.filterIndexed { index, _ -> index != startIndex }
+        if (pending.isEmpty()) return
+        Timber.i("launchArtworkBackfill: START pending=${pending.size}, startIndex=$startIndex")
+        artworkBackfillJob = scope.launch(Dispatchers.IO) {
+            val batcher = ArtworkBackfillBatcher()
+            for (item in pending) {
+                ensureActive()
+                val art = runCatching { artworkExtractor.extractArtwork(item.filePath) }.getOrNull()
+                    ?: continue
+                val currentMediaId = withContext(Dispatchers.Main.immediate) {
+                    artworkByMediaId[item.songId] = art
+                    exoPlayer.currentMediaItem?.mediaId
+                }
+                if (batcher.shouldPublish(item.songId, currentMediaId)) {
+                    withContext(Dispatchers.Main.immediate) { publishSnapshot() }
+                }
+            }
+            Timber.i("launchArtworkBackfill: DONE (${pending.size} items)")
+        }
+    }
+
+    /** Cancels any running artwork backfill (e.g. when a new queue supersedes it). */
+    private fun cancelArtworkBackfill(reason: String) {
+        artworkBackfillJob?.let { job ->
+            Timber.d("cancelArtworkBackfill: cancelling ($reason)")
+            job.cancel()
+        }
+        artworkBackfillJob = null
     }
 
     // --- Transport controls ----------------------------------------------------------
@@ -262,6 +326,7 @@ class PlayerController private constructor(
     fun release() {
         Timber.i("PlayerController.release: START")
         tickerJob?.cancel()
+        cancelArtworkBackfill("controller released")
         exoPlayer.removeListener(this)
         scope.cancel()
     }

@@ -18,6 +18,18 @@ fun interface FileValidator {
      */
     fun isPlayable(filePath: String): Boolean
 
+    /**
+     * Cheap existence-only check used at queue-build time.
+     *
+     * Downloads already guarantee integrity (the download pipeline validates each MP3 before
+     * its status flips), so queue building only verifies presence; emptiness is NOT checked.
+     * Defaults to delegating to [isPlayable]; override for a cheaper implementation.
+     *
+     * @param filePath Absolute path to the file to check.
+     * @return `true` if the file exists and is a regular file, regardless of size.
+     */
+    fun exists(filePath: String): Boolean = isPlayable(filePath)
+
     companion object {
         /** Default validator: files must exist, be regular files, and be non-empty. */
         val Default: FileValidator = DefaultFileValidator
@@ -25,9 +37,15 @@ fun interface FileValidator {
 }
 
 private object DefaultFileValidator : FileValidator {
+
     override fun isPlayable(filePath: String): Boolean {
         val file = File(filePath)
         return file.exists() && file.isFile && file.length() > 0L
+    }
+
+    override fun exists(filePath: String): Boolean {
+        val file = File(filePath)
+        return file.exists() && file.isFile
     }
 }
 
@@ -36,14 +54,16 @@ private object DefaultFileValidator : FileValidator {
  *
  * Contract:
  * - One [QueueItem] per song whose row is DOWNLOADED with a file path that passes
- *   [FileValidator] — missing/corrupt-on-disk files are filtered out here.
+ *   [FileValidator.exists] — paths missing on disk are filtered out here. Integrity is not
+ *   re-checked at queue time (the download pipeline validates each MP3 before its status
+ *   flips), so empty files are allowed through.
  * - Input order is preserved, which must be the playlist order (the caller passes songs
  *   already sorted by playlist position).
  * - [QueueBuildResult.NothingToPlay] when no song is playable.
  * - The queue is a pure snapshot: it never observes the database. Rebuilding is an explicit
  *   opt-in by the caller (this is what keeps an already-playing queue stable).
  *
- * @property fileValidator Validator used to check whether files exist on disk and are playable.
+ * @property fileValidator Validator used to check whether files exist on disk.
  */
 class PlayerQueueBuilder(
     private val fileValidator: FileValidator = FileValidator.Default,
@@ -85,14 +105,14 @@ class PlayerQueueBuilder(
             .mapIndexed { index, item -> item.copy(indexInQueue = index) }
 
     /**
-     * Creates a [QueueItem] for a song if its file is valid for playback.
+     * Creates a [QueueItem] for a song if its file exists on disk.
      *
      * @param song The song to create a queue item for.
-     * @return A [QueueItem] if the file is valid, or `null` if it should be skipped.
+     * @return A [QueueItem] if the file exists, or `null` if it should be skipped.
      */
     private fun createQueueItemIfPlayable(song: Song): QueueItem? {
         val path = song.filePath?.trim().orEmpty()
-        if (path.isEmpty() || !fileValidator.isPlayable(path)) {
+        if (path.isEmpty() || !fileValidator.exists(path)) {
             return null
         }
         return QueueItem(

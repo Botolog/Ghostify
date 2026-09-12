@@ -148,8 +148,9 @@ class PlaylistRepository(
         Timber.i("PlaylistRepository.savePlaylistWithSongs: START")
         transactions.withinTransaction {
             removeExistingPlaylist(playlist)
-            playlistDao.insert(playlist.copy(trackCount = songs.size))
-            songDao.insertAll(songs)
+            val deduped = songs.distinctBy { it.spotifyId }
+            playlistDao.insert(playlist.copy(trackCount = deduped.size))
+            songDao.insertAll(deduped)
         }
     }
 
