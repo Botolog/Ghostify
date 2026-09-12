@@ -52,7 +52,7 @@ jobs:
         run: ./gradlew assembleRelease
 
       - name: Rename APK
-        run: cp app/app/build/outputs/apk/release/app-release.apk ghostify-${{ inputs.tag }}.apk
+        run: cp $(find app/app/build/outputs/apk/release -name '*.apk' | head -1) ghostify-${{ inputs.tag }}.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
