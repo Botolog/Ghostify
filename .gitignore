@@ -27,6 +27,6 @@ __pycache__/
 # Local environment files
 .env
 .env.*
-.swp
+*.swp
 # OS files
 .DS_Store

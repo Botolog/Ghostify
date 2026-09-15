@@ -47,6 +47,34 @@ class Synced(LyricsProvider):
 
         raise NotImplementedError
 
+    @staticmethod
+    def _normalize_lrc(text: str) -> str:
+        """Normalize LRC lyrics to a consistent format.
+
+        - Strips metadata lines (作词, 作曲, etc.)
+        - Normalizes timestamps to [MM:SS.xx] (2 decimal places)
+        - Removes empty lines
+        """
+        import re
+        lines = text.strip().splitlines()
+        out = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Strip metadata lines (Chinese credits, etc.)
+            if re.match(r"^\[\d{2}:\d{2}\.\d+\]\s*(作词|作曲|作词\s*:|作曲\s*:|Lyrics by|Music by|编曲|混音|母带|制作|录音)", line, re.IGNORECASE):
+                continue
+            # Normalize timestamp: [MM:SS.xxx] -> [MM:SS.xx]
+            m = re.match(r"^\[(\d{2}:\d{2})\.(\d+)\](.*)", line)
+            if m:
+                mmss = m.group(1)
+                ms = m.group(2).ljust(2, "0")[:2]
+                content = m.group(3)
+                line = f"[{mmss}.{ms}]{content}"
+            out.append(line)
+        return "\n".join(out)
+
     def get_lyrics(self, name: str, artists: List[str], **kwargs) -> Optional[str]:
         """
         Try to get lyrics using syncedlyrics
@@ -66,7 +94,9 @@ class Synced(LyricsProvider):
                 synced_only=not kwargs.get("allow_plain_format", True),
                 providers=["Lrclib", "NetEase", "Megalobiz", "Genius"],
             )
-            return lyrics
+            if not lyrics:
+                return None
+            return self._normalize_lrc(lyrics)
         except requests.exceptions.SSLError:
             # Max retries reached
             return None
