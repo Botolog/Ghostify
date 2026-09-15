@@ -220,4 +220,13 @@ interface SongDao {
      */
     @Query("UPDATE songs SET file_path = :filePath WHERE id = :songId")
     suspend fun updateFilePath(songId: String, filePath: String)
+
+    /**
+     * Updates only the lyrics column for a song.
+     *
+     * @param songId The song row id.
+     * @param lyrics The fetched lyrics text, or null to clear.
+     */
+    @Query("UPDATE songs SET lyrics = :lyrics WHERE id = :songId")
+    suspend fun updateLyrics(songId: String, lyrics: String?)
 }

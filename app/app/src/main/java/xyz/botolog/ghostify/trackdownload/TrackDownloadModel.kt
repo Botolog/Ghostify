@@ -148,7 +148,8 @@ sealed class TrackDownloadResult {
         val artists: String?,
         val album: String?,
         val bitrate: String?,
-        val durationMs: Long?
+        val durationMs: Long?,
+        val lyrics: String? = null,
     ) : TrackDownloadResult()
 
     /** The track was already present (sidecar match) and skipped — no network. */
@@ -158,7 +159,8 @@ sealed class TrackDownloadResult {
         val title: String?,
         val artists: String?,
         val album: String?,
-        val bitrate: String?
+        val bitrate: String?,
+        val lyrics: String? = null,
     ) : TrackDownloadResult()
 
     /** The download failed; see [error] for a typed, user-safe explanation. */
@@ -221,6 +223,7 @@ sealed class TrackDownloadResult {
             album = metadata.album,
             bitrate = metadata.bitrate,
             durationMs = metadata.durationMs,
+            lyrics = map["lyrics"] as? String,
         )
 
         private fun parseSkipped(
@@ -234,6 +237,7 @@ sealed class TrackDownloadResult {
             artists = metadata.artists,
             album = metadata.album,
             bitrate = metadata.bitrate,
+            lyrics = map["lyrics"] as? String,
         )
 
         private fun parseFailure(url: String, map: Map<*, *>): Failure = Failure(

@@ -76,6 +76,7 @@ class RoomDownloadRepository(
         status: DownloadStatus,
         filePath: String?,
         error: String?,
+        lyrics: String?,
     ) {
         Timber.i("RoomDownloadRepository.setStatus: START")
         val current = songDao.getById(songId)
@@ -83,6 +84,9 @@ class RoomDownloadRepository(
             SongStateMachine.requireTransition(current.status.toDownloadStatus(), status)
         }
         songDao.setStatus(songId, status.toSongStatus(), filePath, error)
+        if (lyrics != null) {
+            songDao.updateLyrics(songId, lyrics)
+        }
         Timber.d("RoomDownloadRepository: song $songId state changed to $status")
     }
 

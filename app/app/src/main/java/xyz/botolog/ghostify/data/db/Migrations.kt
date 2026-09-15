@@ -21,6 +21,7 @@ import timber.log.Timber
  * v5 — adds `playlists.origin` (Spotify / YouTube) and changes the unique
  *      index on `spotify_id` to `(spotify_id, origin)` so the same id can
  *      appear once per origin.
+ * v6 — adds `songs.lyrics` (song lyrics fetched from a lyrics provider).
  *
  * The migration is a single Room transaction, so it is atomic: if any step fails
  * SQLite rolls the whole upgrade back and the database is left at the previous
@@ -95,11 +96,25 @@ object Migrations {
         }
     }
 
+    /** The v5 → v6 DDL. Adds lyrics column — nullable, no backfill required. */
+    val MIGRATION_5_6_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE songs ADD COLUMN lyrics TEXT",
+    )
+
+    /** v5 → v6 migration. */
+    val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_5_6.migrate")
+            MIGRATION_5_6_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
     /** All migrations in order, passed to [Room.databaseBuilder]. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
         MIGRATION_3_4,
         MIGRATION_4_5,
+        MIGRATION_5_6,
     )
 }

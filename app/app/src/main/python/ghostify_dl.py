@@ -1213,7 +1213,7 @@ class TrackDownloader:
             "filter_results": True,
             "simple_tui": True,  # no Rich TUI — headless Android
             "print_errors": False,
-            "log_level": "WARNING",
+            "log_level": "DEBUG",
             "generate_lrc": False,
             "sponsor_block": False,
             "create_skip_file": False,
@@ -1467,6 +1467,9 @@ class TrackDownloader:
             "downloaded_at": int(time.time()),
             "file": mp3.name,
         }
+        lyrics = getattr(song, "lyrics", None)
+        if lyrics:
+            info["lyrics"] = lyrics
         sidecar = mp3.with_name(mp3.name + SIDECAR_EXT)
         tmp = sidecar.with_name("." + sidecar.name + ".tmp")
         tmp.write_text(json.dumps(info, ensure_ascii=True, indent=2), encoding="utf-8")
@@ -1755,11 +1758,13 @@ class TrackDownloader:
                     info = json.loads(sidecar.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     info = {}
+                lyrics = getattr(song, "lyrics", None) or info.get("lyrics")
                 _fire(on_start, _track_dict(song))
-                _fire(
-                    on_complete, result_fn("SKIPPED", str(mp3), song=song, track=info)
-                )
-                return result_fn("SKIPPED", str(mp3), song=song, track=info)
+                payload = result_fn("SKIPPED", str(mp3), song=song, track=info)
+                if lyrics:
+                    payload["lyrics"] = lyrics
+                _fire(on_complete, payload)
+                return payload
 
         expected = self._output_path_for_song(song)
         existed_before = expected.exists()
@@ -1802,8 +1807,14 @@ class TrackDownloader:
         self._write_sidecar(song, path)
 
         # 7) Download complete.
-        _fire(on_complete, result_fn("DOWNLOADED", str(path), song=song))
-        return result_fn("DOWNLOADED", str(path), song=song)
+        lyrics = getattr(_song, "lyrics", None)
+        if not lyrics:
+            lyrics = self._read_lyrics_from_mp3(path)
+        payload = result_fn("DOWNLOADED", str(path), song=_song)
+        if lyrics:
+            payload["lyrics"] = lyrics
+        _fire(on_complete, payload)
+        return payload
 
     # -- playlist -------------------------------------------------------------- #
 
@@ -1938,6 +1949,21 @@ class TrackDownloader:
         except OSError:
             pass
 
+    def _read_lyrics_from_mp3(self, path: Path) -> Optional[str]:
+        """Read lyrics from MP3 ID3 USLT tags as fallback when spotdl doesn't populate them."""
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(str(path))
+            uslt = audio.getall("USLT")
+            if uslt:
+                text = uslt[0].text
+                if isinstance(text, list):
+                    text = "\n".join(text)
+                return text if text and text.strip() else None
+        except Exception:  # noqa: BLE001 - best-effort
+            pass
+        return None
+
     def _validate(self, path: Path, song: Optional[Any]) -> List[str]:
         """Return validation warnings, raising VALIDATION_FAILED on fatal issues."""
         from mutagen.mp3 import MP3
@@ -2049,6 +2075,16 @@ def make_downloader(
     **kwargs: Any,
 ) -> TrackDownloader:
     """Build a :class:`TrackDownloader` (positional args for the Kotlin bridge)."""
+    # Chaquopy passes Java lists as opaque proxy objects that Python can't
+    # iterate, so we convert on receipt.  Default to musixmatch+azlyrics
+    # when the Kotlin side doesn't pass lyrics providers (null / empty).
+    # Genius is excluded because its public token is frequently rate-limited (HTTP 429).
+    if audio_providers is not None:
+        audio_providers = list(audio_providers)
+    if lyrics_providers is not None:
+        lyrics_providers = list(lyrics_providers)
+    else:
+        lyrics_providers = ["synced"]
     return TrackDownloader(
         output_dir=output_dir,
         bitrate=bitrate,

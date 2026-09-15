@@ -211,4 +211,15 @@ class SongRepository(
         Timber.i("SongRepository.updateFilePath: songId=$songId, filePath=$filePath")
         songDao.updateFilePath(songId, filePath)
     }
+
+    /**
+     * Updates only the lyrics for a song.
+     *
+     * @param songId The song row id.
+     * @param lyrics The fetched lyrics text, or null to clear.
+     */
+    suspend fun updateLyrics(songId: String, lyrics: String?) {
+        Timber.i("SongRepository.updateLyrics: songId=$songId, hasLyrics=${lyrics != null}")
+        songDao.updateLyrics(songId, lyrics)
+    }
 }

@@ -106,6 +106,7 @@ interface DownloadRepository {
         status: DownloadStatus,
         filePath: String? = null,
         error: String? = null,
+        lyrics: String? = null,
     )
 
     /**

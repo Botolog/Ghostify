@@ -17,7 +17,9 @@ data class TrackDownloadConfig(
     /** spotdl output template, e.g. `"{artists} - {title}"`. */
     val outputTemplate: String = DEFAULT_TEMPLATE,
     /** ffmpeg binary name on PATH or an absolute path (see PROJECT.md §7). */
-    val ffmpeg: String = "ffmpeg"
+    val ffmpeg: String = "ffmpeg",
+    /** Lyrics providers to search for song lyrics. Empty list = no lyrics. */
+    val lyricsProviders: List<String> = emptyList(),
 ) {
     companion object {
         /** Default bitrate in kbps. */

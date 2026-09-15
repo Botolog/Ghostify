@@ -22,11 +22,11 @@ import timber.log.Timber
  * writes. The singleton is created via [get] and should be accessed through
  * dependency injection or this companion factory.
  *
- * Schema version: **5** — see [Migrations] for upgrade history.
+ * Schema version: **6** — see [Migrations] for upgrade history.
  */
 @Database(
     entities = [PlaylistEntity::class, SongEntity::class, SettingEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

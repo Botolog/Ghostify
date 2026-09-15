@@ -298,42 +298,42 @@ class TrackDownloadModelsTest {
     @Test
     fun trackInfoCreationWithAllArgs() {
         val info = TrackInfo(
-            url = "https://example.com/track",
-            spotifyId = "abc123",
-            title = "Song",
-            artists = "Artist",
-            album = "Album",
-            durationMs = 200000L,
-            coverUrl = "https://example.com/cover.jpg"
+            url = "https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB",
+            spotifyId = "4h9wh7iOZ0GGn8QVp4RAOB",
+            title = "I Ain't Worried",
+            artists = "OneRepublic",
+            album = "I Ain't Worried (Music From The Motion Picture \"Top Gun: Maverick\")",
+            durationMs = 148000L,
+            coverUrl = "https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB"
         )
-        assertEquals("https://example.com/track", info.url)
-        assertEquals("abc123", info.spotifyId)
-        assertEquals("Song", info.title)
-        assertEquals("Artist", info.artists)
-        assertEquals("Album", info.album)
-        assertEquals(200000L, info.durationMs)
-        assertEquals("https://example.com/cover.jpg", info.coverUrl)
+        assertEquals("https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB", info.url)
+        assertEquals("4h9wh7iOZ0GGn8QVp4RAOB", info.spotifyId)
+        assertEquals("I Ain't Worried", info.title)
+        assertEquals("OneRepublic", info.artists)
+        assertEquals("I Ain't Worried (Music From The Motion Picture \"Top Gun: Maverick\")", info.album)
+        assertEquals(148000L, info.durationMs)
+        assertEquals("https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB", info.coverUrl)
     }
 
     @Test
     fun trackInfoFromMapParsesAllFields() {
         val map = mapOf(
-            "url" to "https://example.com",
-            "spotify_id" to "id1",
-            "title" to "T",
-            "artists" to "A",
-            "album" to "Al",
-            "duration_ms" to 300000,
-            "cover_url" to "https://example.com/cover"
+            "url" to "https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b",
+            "spotify_id" to "1mea3bSkSGXuIRvnydlB5b",
+            "title" to "Viva La Vida",
+            "artists" to "Coldplay",
+            "album" to "Viva La Vida or Death and All His Friends",
+            "duration_ms" to 242000,
+            "cover_url" to "https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b"
         )
         val info = TrackInfo.fromMap(map)
-        assertEquals("https://example.com", info.url)
-        assertEquals("id1", info.spotifyId)
-        assertEquals("T", info.title)
-        assertEquals("A", info.artists)
-        assertEquals("Al", info.album)
-        assertEquals(300000L, info.durationMs)
-        assertEquals("https://example.com/cover", info.coverUrl)
+        assertEquals("https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b", info.url)
+        assertEquals("1mea3bSkSGXuIRvnydlB5b", info.spotifyId)
+        assertEquals("Viva La Vida", info.title)
+        assertEquals("Coldplay", info.artists)
+        assertEquals("Viva La Vida or Death and All His Friends", info.album)
+        assertEquals(242000L, info.durationMs)
+        assertEquals("https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b", info.coverUrl)
     }
 
     @Test
@@ -365,59 +365,59 @@ class TrackDownloadModelsTest {
     fun fromMapParsesDownloadedStatus() {
         val map = mapOf(
             "status" to "DOWNLOADED",
-            "url" to "https://example.com/track",
-            "output_path" to "/downloads/song.mp3",
+            "url" to "https://open.spotify.com/track/2lNdc3jjPV4aWEfKH0gvH2",
+            "output_path" to "/downloads/G-Eazy, Halsey - Him & I.mp3",
             "file_size" to 5000000,
-            "title" to "Song",
-            "artists" to "Artist",
-            "album" to "Album",
+            "title" to "Him & I",
+            "artists" to "G-Eazy, Halsey",
+            "album" to "The Beautiful & Damned (Deluxe Edition)",
             "bitrate" to "192",
-            "duration_ms" to 180000
+            "duration_ms" to 268000
         )
         val result = TrackDownloadResult.fromMap(map)
         assertTrue(result is TrackDownloadResult.Downloaded)
         val downloaded = result as TrackDownloadResult.Downloaded
-        assertEquals("https://example.com/track", downloaded.url)
-        assertEquals("/downloads/song.mp3", downloaded.outputPath)
+        assertEquals("https://open.spotify.com/track/2lNdc3jjPV4aWEfKH0gvH2", downloaded.url)
+        assertEquals("/downloads/G-Eazy, Halsey - Him & I.mp3", downloaded.outputPath)
         assertEquals(5000000L, downloaded.fileSize)
-        assertEquals("Song", downloaded.title)
-        assertEquals("Artist", downloaded.artists)
-        assertEquals("Album", downloaded.album)
+        assertEquals("Him & I", downloaded.title)
+        assertEquals("G-Eazy, Halsey", downloaded.artists)
+        assertEquals("The Beautiful & Damned (Deluxe Edition)", downloaded.album)
         assertEquals("192", downloaded.bitrate)
-        assertEquals(180000L, downloaded.durationMs)
+        assertEquals(268000L, downloaded.durationMs)
     }
 
     @Test
     fun fromMapParsesSkippedStatus() {
         val map = mapOf(
             "status" to "SKIPPED",
-            "url" to "https://example.com/track",
-            "output_path" to "/downloads/song.mp3",
-            "title" to "Song",
-            "artists" to "Artist",
-            "album" to "Album",
+            "url" to "https://open.spotify.com/track/0FDzzruyVECATHXKHFs9eJ",
+            "output_path" to "/downloads/Coldplay - A Sky Full of Stars.mp3",
+            "title" to "A Sky Full of Stars",
+            "artists" to "Coldplay",
+            "album" to "Ghost Stories",
             "bitrate" to "192"
         )
         val result = TrackDownloadResult.fromMap(map)
         assertTrue(result is TrackDownloadResult.Skipped)
         val skipped = result as TrackDownloadResult.Skipped
-        assertEquals("https://example.com/track", skipped.url)
-        assertEquals("/downloads/song.mp3", skipped.outputPath)
-        assertEquals("Song", skipped.title)
+        assertEquals("https://open.spotify.com/track/0FDzzruyVECATHXKHFs9eJ", skipped.url)
+        assertEquals("/downloads/Coldplay - A Sky Full of Stars.mp3", skipped.outputPath)
+        assertEquals("A Sky Full of Stars", skipped.title)
     }
 
     @Test
     fun fromMapParsesFailedStatus() {
         val map = mapOf(
             "status" to "FAILED",
-            "url" to "https://example.com/track",
+            "url" to "https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB",
             "error_type" to "SEARCH_FAILED",
             "error" to "SEARCH_FAILED: no results found"
         )
         val result = TrackDownloadResult.fromMap(map)
         assertTrue(result is TrackDownloadResult.Failure)
         val failure = result as TrackDownloadResult.Failure
-        assertEquals("https://example.com/track", failure.url)
+        assertEquals("https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB", failure.url)
         assertEquals(DownloadErrorKind.SEARCH_FAILED, failure.error.kind)
         assertEquals("no results found", failure.error.message)
         assertEquals("SEARCH_FAILED", failure.error.wireType)
@@ -425,7 +425,7 @@ class TrackDownloadModelsTest {
 
     @Test
     fun fromMapHandlesNullStatus() {
-        val map = mapOf("url" to "https://example.com")
+        val map = mapOf("url" to "https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b")
         val result = TrackDownloadResult.fromMap(map)
         assertTrue(result is TrackDownloadResult.Failure)
         val failure = result as TrackDownloadResult.Failure
@@ -434,7 +434,7 @@ class TrackDownloadModelsTest {
 
     @Test
     fun fromMapHandlesUnrecognisedStatus() {
-        val map = mapOf("status" to "PARTIAL", "url" to "https://example.com")
+        val map = mapOf("status" to "PARTIAL", "url" to "https://open.spotify.com/track/2lNdc3jjPV4aWEfKH0gvH2")
         val result = TrackDownloadResult.fromMap(map)
         assertTrue(result is TrackDownloadResult.Failure)
         val failure = result as TrackDownloadResult.Failure
@@ -453,7 +453,7 @@ class TrackDownloadModelsTest {
     fun fromMapDownloadedWithMissingMetadata() {
         val map = mapOf(
             "status" to "DOWNLOADED",
-            "url" to "https://example.com"
+            "url" to "https://open.spotify.com/track/0FDzzruyVECATHXKHFs9eJ"
         )
         val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Downloaded
         assertEquals("", result.outputPath)
@@ -469,7 +469,7 @@ class TrackDownloadModelsTest {
     fun fromMapSkippedWithMissingMetadata() {
         val map = mapOf(
             "status" to "SKIPPED",
-            "url" to "https://example.com"
+            "url" to "https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB"
         )
         val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Skipped
         assertEquals("", result.outputPath)
@@ -483,7 +483,7 @@ class TrackDownloadModelsTest {
     fun fromMapFailedWithMissingErrorFields() {
         val map = mapOf(
             "status" to "FAILED",
-            "url" to "https://example.com"
+            "url" to "https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b"
         )
         val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Failure
         assertEquals(DownloadErrorKind.UNKNOWN, result.error.kind)
@@ -494,26 +494,113 @@ class TrackDownloadModelsTest {
     @Test
     fun downloadedResultHasUrl() {
         val result = TrackDownloadResult.Downloaded(
-            url = "url1", outputPath = "p", fileSize = null,
+            url = "https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB", outputPath = "p", fileSize = null,
             title = null, artists = null, album = null,
             bitrate = null, durationMs = null
         )
-        assertEquals("url1", result.url)
+        assertEquals("https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB", result.url)
     }
 
     @Test
     fun skippedResultHasUrl() {
         val result = TrackDownloadResult.Skipped(
-            url = "url2", outputPath = "p",
+            url = "https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b", outputPath = "p",
             title = null, artists = null, album = null, bitrate = null
         )
-        assertEquals("url2", result.url)
+        assertEquals("https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b", result.url)
     }
 
     @Test
     fun failureResultHasUrl() {
         val error = DownloadError(DownloadErrorKind.IO, "e")
-        val result = TrackDownloadResult.Failure(url = "url3", error = error)
-        assertEquals("url3", result.url)
+        val result = TrackDownloadResult.Failure(url = "https://open.spotify.com/track/2lNdc3jjPV4aWEfKH0gvH2", error = error)
+        assertEquals("https://open.spotify.com/track/2lNdc3jjPV4aWEfKH0gvH2", result.url)
+    }
+
+    // ── Lyrics parsing ───────────────────────────────────────────────────
+
+    @Test
+    fun `downloaded with lyrics parses fromMap`() {
+        val map = mapOf(
+            "status" to "DOWNLOADED",
+            "url" to "https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB",
+            "output_path" to "/path/to/OneRepublic - I Ain't Worried.mp3",
+            "title" to "I Ain't Worried",
+            "artists" to "OneRepublic",
+            "lyrics" to "La la la\nChorus line",
+        )
+        val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Downloaded
+        assertNotNull(result.lyrics)
+        assertEquals("La la la\nChorus line", result.lyrics)
+    }
+
+    @Test
+    fun `downloaded without lyrics is null fromMap`() {
+        val map = mapOf(
+            "status" to "DOWNLOADED",
+            "url" to "https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b",
+            "output_path" to "/path/to/Coldplay - Viva La Vida.mp3",
+            "title" to "Viva La Vida",
+            "artists" to "Coldplay",
+        )
+        val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Downloaded
+        assertNull(result.lyrics)
+    }
+
+    @Test
+    fun `skipped with lyrics parses fromMap`() {
+        val map = mapOf(
+            "status" to "SKIPPED",
+            "url" to "https://open.spotify.com/track/2lNdc3jjPV4aWEfKH0gvH2",
+            "output_path" to "/path/to/G-Eazy, Halsey - Him & I.mp3",
+            "title" to "Him & I",
+            "artists" to "G-Eazy, Halsey",
+            "lyrics" to "Skipped lyrics",
+        )
+        val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Skipped
+        assertNotNull(result.lyrics)
+        assertEquals("Skipped lyrics", result.lyrics)
+    }
+
+    @Test
+    fun `skipped without lyrics is null fromMap`() {
+        val map = mapOf(
+            "status" to "SKIPPED",
+            "url" to "https://open.spotify.com/track/0FDzzruyVECATHXKHFs9eJ",
+            "output_path" to "/path/to/Coldplay - A Sky Full of Stars.mp3",
+            "title" to "A Sky Full of Stars",
+            "artists" to "Coldplay",
+        )
+        val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Skipped
+        assertNull(result.lyrics)
+    }
+
+    @Test
+    fun `downloaded with explicit null lyrics is null fromMap`() {
+        val map = mapOf(
+            "status" to "DOWNLOADED",
+            "url" to "https://open.spotify.com/track/4h9wh7iOZ0GGn8QVp4RAOB",
+            "output_path" to "/path/to/OneRepublic - I Ain't Worried.mp3",
+            "title" to "I Ain't Worried",
+            "artists" to "OneRepublic",
+            "lyrics" to null,
+        )
+        val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Downloaded
+        assertNull(result.lyrics)
+    }
+
+    @Test
+    fun `downloaded with empty string lyrics preserves empty string`() {
+        val map = mapOf(
+            "status" to "DOWNLOADED",
+            "url" to "https://open.spotify.com/track/1mea3bSkSGXuIRvnydlB5b",
+            "output_path" to "/path/to/Coldplay - Viva La Vida.mp3",
+            "title" to "Viva La Vida",
+            "artists" to "Coldplay",
+            "lyrics" to "",
+        )
+        val result = TrackDownloadResult.fromMap(map) as TrackDownloadResult.Downloaded
+        assertNotNull(result.lyrics)
+        assertEquals("", result.lyrics)
     }
 }

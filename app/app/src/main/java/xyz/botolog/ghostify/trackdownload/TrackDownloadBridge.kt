@@ -50,7 +50,9 @@ class TrackDownloadBridge(
         val module = Python.getInstance().getModule(moduleName)
         return module.callAttr(
             "make_downloader",
-            config.outputDir, config.bitrate, config.outputTemplate, config.ffmpeg
+            config.outputDir, config.bitrate, config.outputTemplate, config.ffmpeg,
+            null,  // audio_providers
+            null,  // lyrics_providers — handled on Python side
         )
     }
 

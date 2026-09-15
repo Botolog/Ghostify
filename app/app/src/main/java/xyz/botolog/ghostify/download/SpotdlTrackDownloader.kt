@@ -127,6 +127,7 @@ class ChaquopySpotdlCall(
             bitrate = bitrate,
             outputTemplate = TrackDownloadConfig.DEFAULT_TEMPLATE,
             ffmpeg = FfmpegLocator.executablePath ?: FFMPEG_DEFAULT,
+            lyricsProviders = java.util.ArrayList(listOf("genius")),
         )
     }
 
@@ -150,10 +151,10 @@ class ChaquopySpotdlCall(
         result: xyz.botolog.ghostify.trackdownload.TrackDownloadResult,
     ): TrackDownloadResult = when (result) {
         is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Downloaded ->
-            TrackDownloadResult(songId = song.id, filePath = result.outputPath)
+            TrackDownloadResult(songId = song.id, filePath = result.outputPath, lyrics = result.lyrics)
 
         is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Skipped ->
-            TrackDownloadResult(songId = song.id, filePath = result.outputPath)
+            TrackDownloadResult(songId = song.id, filePath = result.outputPath, lyrics = result.lyrics)
 
         is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Failure ->
             TrackDownloadResult(songId = song.id, error = mapError(result.error))

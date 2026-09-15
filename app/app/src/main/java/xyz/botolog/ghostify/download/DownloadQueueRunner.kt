@@ -237,7 +237,7 @@ class DownloadQueueRunner(
                 Timber.d("DownloadQueueRunner: song $songId state changed to CANCELED")
             }
             result.isSuccess -> {
-                repo.setStatus(songId, DownloadStatus.DOWNLOADED, filePath = result.filePath)
+                repo.setStatus(songId, DownloadStatus.DOWNLOADED, filePath = result.filePath, lyrics = result.lyrics)
                 Timber.d("DownloadQueueRunner: song $songId state changed to DOWNLOADED")
             }
             else -> {

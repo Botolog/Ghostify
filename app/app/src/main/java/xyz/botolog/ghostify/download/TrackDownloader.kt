@@ -42,11 +42,13 @@ sealed interface DownloadError {
  *
  * @property songId the song that was downloaded.
  * @property filePath the local file path if successful, `null` otherwise.
+ * @property lyrics song lyrics fetched by the lyrics provider, `null` if unavailable.
  * @property error the error if the download failed, `null` on success.
  */
 data class TrackDownloadResult(
     val songId: String,
     val filePath: String? = null,
+    val lyrics: String? = null,
     val error: DownloadError? = null,
 ) {
     val isSuccess: Boolean get() = error == null && filePath != null

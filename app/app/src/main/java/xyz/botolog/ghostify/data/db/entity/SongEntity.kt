@@ -32,6 +32,7 @@ import xyz.botolog.ghostify.data.model.SongStatus
  * @property coverUrl URL of the album/track artwork.
  * @property ytId YouTube video id, resolved during download.
  * @property filePath Local file path after successful download, `null` otherwise.
+ * @property lyrics Song lyrics fetched from a lyrics provider, `null` if unavailable.
  * @property error Last failure reason; non-null only while [status] is [SongStatus.FAILED].
  * @property status Current download lifecycle state.
  * @property position Playlist ordering (0-based).
@@ -78,6 +79,8 @@ data class SongEntity(
 
     @ColumnInfo(name = "file_path")
     val filePath: String? = null,
+
+    val lyrics: String? = null,
 
     val error: String? = null,
 
