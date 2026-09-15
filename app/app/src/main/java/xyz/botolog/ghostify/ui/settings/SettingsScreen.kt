@@ -160,6 +160,54 @@ fun SettingsScreen(
         }
     }
 
+    // Migration dialog — shown after storage path changes if songs exist at old path
+    state.pendingMigrationPath?.let { oldPath ->
+        AlertDialog(
+            onDismissRequest = contract::dismissMigration,
+            title = { Text("Migrate songs?") },
+            text = {
+                if (state.isMigrating) {
+                    Text("Moving songs to the new folder...")
+                } else {
+                    Text(
+                        "You have downloaded songs at the old location.\n\n" +
+                        "Move them to the new folder? New songs will always go to the new location regardless."
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = contract::migrateSongs,
+                    enabled = !state.isMigrating,
+                ) {
+                    Text("Move songs")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = contract::dismissMigration,
+                    enabled = !state.isMigrating,
+                ) {
+                    Text("Leave them")
+                }
+            },
+        )
+    }
+
+    // Migration result snackbar
+    state.migrationResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = contract::dismissMigration,
+            title = { Text("Migration complete") },
+            text = { Text(result) },
+            confirmButton = {
+                TextButton(onClick = contract::dismissMigration) {
+                    Text("OK")
+                }
+            },
+        )
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {

@@ -211,4 +211,13 @@ interface SongDao {
      */
     @Query("UPDATE songs SET position = :position WHERE id = :id")
     suspend fun setPosition(id: String, position: Int)
+
+    /**
+     * Updates only the file_path column for a song (used by storage migration).
+     *
+     * @param songId The song row id.
+     * @param filePath The new file path.
+     */
+    @Query("UPDATE songs SET file_path = :filePath WHERE id = :songId")
+    suspend fun updateFilePath(songId: String, filePath: String)
 }

@@ -200,4 +200,15 @@ class SongRepository(
         Timber.i("SongRepository.countForPlaylistByStatus: returning $result")
         return result
     }
+
+    /**
+     * Updates only the file_path for a song (used by storage migration).
+     *
+     * @param songId The song row id.
+     * @param filePath The new file path.
+     */
+    suspend fun updateFilePath(songId: String, filePath: String) {
+        Timber.i("SongRepository.updateFilePath: songId=$songId, filePath=$filePath")
+        songDao.updateFilePath(songId, filePath)
+    }
 }

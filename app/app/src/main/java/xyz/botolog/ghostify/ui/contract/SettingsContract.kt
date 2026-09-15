@@ -64,6 +64,16 @@ interface SettingsContract {
     fun clearCache()
 
     /**
+     * Dismisses the migration dialog and clears the result.
+     */
+    fun dismissMigration()
+
+    /**
+     * Migrates all downloaded songs from the old storage path to the new one.
+     */
+    fun migrateSongs()
+
+    /**
      * Immutable UI state for the Settings screen.
      *
      * @property bitrate current download bitrate preference.
@@ -72,6 +82,10 @@ interface SettingsContract {
      * @property autoDownloadOnAdd `true` when auto-download is enabled.
      * @property cacheStats current cache statistics (orphan file count and size).
      * @property isClearingCache `true` while the clear-cache operation is running.
+     * @property pendingMigrationPath if non-null, a storage change just happened and
+     *   songs exist at the old path — the UI should show a migration dialog.
+     * @property isMigrating `true` while a migration is in progress.
+     * @property migrationResult summary after migration finishes (e.g. "12 moved, 2 failed").
      */
     data class SettingsUiState(
         val bitrate: Bitrate = Bitrate.MEDIUM,
@@ -80,5 +94,8 @@ interface SettingsContract {
         val autoDownloadOnAdd: Boolean = false,
         val cacheStats: CacheStats = CacheStats(0, 0),
         val isClearingCache: Boolean = false,
+        val pendingMigrationPath: String? = null,
+        val isMigrating: Boolean = false,
+        val migrationResult: String? = null,
     )
 }

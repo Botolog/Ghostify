@@ -69,22 +69,124 @@ class SettingsViewModel(
 
     override fun setStoragePath(path: String) {
         Timber.i("SettingsViewModel.setStoragePath: path=$path")
+        val oldPath = musicStore.rootDir.absolutePath
         launch {
             settings.setStorageDir(path)
             val dir = java.io.File(path)
             musicStore.updateRoot(dir)
             Timber.i("SettingsViewModel: MusicStore root updated to ${dir.absolutePath}")
+            checkForMigration(oldPath)
         }
     }
 
     override fun resetStoragePath() {
         Timber.i("SettingsViewModel.resetStoragePath: START")
+        val oldPath = musicStore.rootDir.absolutePath
         val defaultName = SettingsRepository.DEFAULT_STORAGE_DIR
         launch {
             settings.setStorageDir(defaultName)
             val dir = xyz.botolog.ghostify.file.resolveStorageDir(context, defaultName)
             musicStore.updateRoot(dir)
             Timber.i("SettingsViewModel: MusicStore root reset to ${dir.absolutePath}")
+            checkForMigration(oldPath)
+        }
+    }
+
+    override fun dismissMigration() {
+        _state.update { it.copy(pendingMigrationPath = null, migrationResult = null) }
+    }
+
+    override fun migrateSongs() {
+        val oldPath = _state.value.pendingMigrationPath ?: return
+        val newPath = musicStore.rootDir.absolutePath
+        Timber.i("SettingsViewModel.migrateSongs: $oldPath -> $newPath")
+        launch {
+            _state.update { it.copy(isMigrating = true) }
+            try {
+                val result = performMigration(oldPath, newPath)
+                _state.update {
+                    it.copy(
+                        isMigrating = false,
+                        pendingMigrationPath = null,
+                        migrationResult = result,
+                    )
+                }
+                Timber.i("SettingsViewModel.migrateSongs: $result")
+            } catch (e: Exception) {
+                Timber.e(e, "SettingsViewModel.migrateSongs: FAILED")
+                _state.update {
+                    it.copy(
+                        isMigrating = false,
+                        pendingMigrationPath = null,
+                        migrationResult = "Migration failed: ${e.message}",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Checks if there are downloaded songs at the old path and sets up migration dialog.
+     */
+    private suspend fun checkForMigration(oldPath: String) {
+        val oldDir = java.io.File(oldPath)
+        if (!oldDir.exists()) return
+        val songs = collectAllSongPaths()
+        val hasSongsAtOldPath = songs.any { it.startsWith(oldPath) }
+        if (hasSongsAtOldPath) {
+            _state.update { it.copy(pendingMigrationPath = oldPath) }
+        }
+    }
+
+    /**
+     * Moves all song files from [oldPath] to [newPath], preserving the
+     * `playlistId/filename.mp3` structure. Updates the database file_path
+     * for each moved song.
+     *
+     * @return a summary string like "12 moved, 2 failed".
+     */
+    private suspend fun performMigration(oldPath: String, newPath: String): String {
+        var moved = 0
+        var failed = 0
+        val playlists = playlistRepo.observePlaylists().first()
+        for (playlist in playlists) {
+            val songs = songRepo.getSongs(playlist.id)
+            for (song in songs) {
+                val oldFilePath = song.filePath
+                if (oldFilePath.isNullOrBlank()) continue
+                if (!oldFilePath.startsWith(oldPath)) continue
+
+                val oldFile = java.io.File(oldFilePath)
+                if (!oldFile.exists()) continue
+
+                // Build new path: newPath/playlistId/filename
+                val fileName = oldFile.name
+                val targetDir = java.io.File(newPath, playlist.id)
+                val newFile = java.io.File(targetDir, fileName)
+
+                try {
+                    targetDir.mkdirs()
+                    val success = oldFile.renameTo(newFile)
+                    if (success) {
+                        songRepo.updateFilePath(song.id, newFile.absolutePath)
+                        moved++
+                    } else {
+                        // renameTo can fail across mount points; fall back to copy+delete
+                        oldFile.copyTo(newFile, overwrite = true)
+                        oldFile.delete()
+                        songRepo.updateFilePath(song.id, newFile.absolutePath)
+                        moved++
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Migration: failed to move $oldFilePath")
+                    failed++
+                }
+            }
+        }
+        return if (failed == 0) {
+            "$moved song${if (moved != 1) "s" else ""} moved"
+        } else {
+            "$moved moved, $failed failed"
         }
     }
 
