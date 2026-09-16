@@ -101,6 +101,11 @@ class PlayerViewModel(
         player.previous()
     }
 
+    override fun previousTrack() {
+        Timber.i("PlayerViewModel.previousTrack: START")
+        player.skipToPreviousTrack()
+    }
+
     override fun seekTo(positionMs: Long) {
         Timber.i("PlayerViewModel.seekTo: START")
         player.seekTo(positionMs)
@@ -144,6 +149,41 @@ class PlayerViewModel(
                 downloads.retryLyricsForSong(songId)
             } catch (e: Exception) {
                 Timber.e(e, "PlayerViewModel.retryLyrics: FAILED for songId=$songId")
+            }
+        }
+    }
+
+    override fun saveLyrics(lyrics: String) {
+        Timber.i("PlayerViewModel.saveLyrics: START")
+        val songId = currentSongId.value ?: run {
+            Timber.w("PlayerViewModel.saveLyrics: no nowPlaying")
+            return
+        }
+        launch {
+            try {
+                downloads.updateLyricsForSong(songId, lyrics)
+                Timber.i("PlayerViewModel.saveLyrics: done")
+            } catch (e: Exception) {
+                Timber.e(e, "PlayerViewModel.saveLyrics: FAILED")
+            }
+        }
+    }
+
+    override fun refetchLyrics(provider: String, onResult: (String?) -> Unit) {
+        Timber.i("PlayerViewModel.refetchLyrics: START provider=$provider")
+        val songId = currentSongId.value ?: run {
+            Timber.w("PlayerViewModel.refetchLyrics: no nowPlaying")
+            onResult(null)
+            return
+        }
+        launch {
+            try {
+                val lyrics = downloads.fetchLyricsForSong(songId, provider)
+                Timber.i("PlayerViewModel.refetchLyrics: got ${lyrics?.length ?: 0} chars")
+                onResult(lyrics)
+            } catch (e: Exception) {
+                Timber.e(e, "PlayerViewModel.refetchLyrics: FAILED")
+                onResult(null)
             }
         }
     }

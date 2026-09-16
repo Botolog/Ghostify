@@ -256,6 +256,17 @@ class PlayerController private constructor(
         exoPlayer.seekToPrevious()
     }
 
+    /** Always skips to the previous track, never restarts the current one. */
+    fun skipToPreviousTrack() {
+        Timber.i("PlayerController.skipToPreviousTrack: START")
+        val index = exoPlayer.currentMediaItemIndex
+        if (index > 0) {
+            exoPlayer.seekTo(index - 1, 0)
+        } else {
+            exoPlayer.seekTo(0)
+        }
+    }
+
     /**
      * Jumps to a specific queue position (by playlist-order index).
      *

@@ -25,6 +25,9 @@ interface PlayerContract {
     /** Skip to the previous track in the queue. */
     fun previous()
 
+    /** Skip to the previous track unconditionally (never restarts the current track). */
+    fun previousTrack()
+
     /**
      * Seek to an absolute position within the current track.
      *
@@ -62,6 +65,12 @@ interface PlayerContract {
 
     /** Retry fetching lyrics for the currently playing track. */
     fun retryLyrics()
+
+    /** Save edited lyrics for the currently playing track. */
+    fun saveLyrics(lyrics: String)
+
+    /** Re-fetch lyrics from the given provider. Calls [onResult] with the result (or null). */
+    fun refetchLyrics(provider: String, onResult: (String?) -> Unit)
 
     /**
      * Immutable UI state for the Player screen.

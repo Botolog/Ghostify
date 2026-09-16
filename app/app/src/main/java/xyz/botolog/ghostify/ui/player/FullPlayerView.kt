@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,22 +79,7 @@ private val TRANSPORT_ICON_SIZE = 32.dp
 /** Minimum horizontal drag distance (px) to count as a swipe. */
 private const val SWIPE_THRESHOLD = 50f
 
-// ── LRC timestamp parsing ─────────────────────────────────────────────
-
-private data class LrcLine(val timeMs: Long, val text: String)
-
-private fun parseLrc(lrc: String): List<LrcLine> {
-    val regex = Regex("""^\[(\d{2}):(\d{2})\.(\d{2})\](.*)""")
-    return lrc.lines().mapNotNull { line ->
-        val m = regex.matchEntire(line.trim()) ?: return@mapNotNull null
-        val min = m.groupValues[1].toLongOrNull() ?: return@mapNotNull null
-        val sec = m.groupValues[2].toLongOrNull() ?: return@mapNotNull null
-        val cs = m.groupValues[3].toLongOrNull() ?: return@mapNotNull null
-        val text = m.groupValues[4].trim()
-        if (text.isEmpty()) return@mapNotNull null
-        LrcLine(timeMs = min * 60_000 + sec * 1_000 + cs * 10, text = text)
-    }
-}
+// ── LRC helpers ───────────────────────────────────────────────────────
 
 private fun currentLineIndex(lines: List<LrcLine>, positionMs: Long): Int {
     if (lines.isEmpty()) return -1
@@ -126,18 +112,28 @@ fun FullPlayerOverlay(
         if (state.empty || state.nowPlaying == null) return@AnimatedVisibility
 
         var lyricsExpanded by remember { mutableStateOf(false) }
-        BackHandler(enabled = lyricsExpanded) { lyricsExpanded = false }
+        var lyricsEditing by remember { mutableStateOf(false) }
+        BackHandler(enabled = lyricsEditing) { lyricsEditing = false }
+        BackHandler(enabled = lyricsExpanded && !lyricsEditing) { lyricsExpanded = false }
 
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.surface,
         ) {
-            if (lyricsExpanded) {
+            if (lyricsEditing) {
+                LyricsEditView(
+                    lyrics = state.lyrics,
+                    onBack = { lyricsEditing = false },
+                    onSave = { contract.saveLyrics(it) },
+                    onRefetch = { provider, onResult -> contract.refetchLyrics(provider, onResult) },
+                )
+            } else if (lyricsExpanded) {
                 LyricsFullScreen(
                     lyrics = state.lyrics,
                     positionMs = state.positionMs,
                     onBack = { lyricsExpanded = false },
                     onRetryLyrics = contract::retryLyrics,
+                    onEdit = { lyricsEditing = true },
                     onSeekTo = contract::seekTo,
                 )
             } else {
@@ -187,7 +183,7 @@ private fun FullPlayerContent(
         SwipeableCoverArt(
             coverUrl = state.nowPlaying?.coverUrl,
             onSwipeLeft = contract::next,
-            onSwipeRight = contract::previous,
+            onSwipeRight = contract::previousTrack,
             onSwipeDown = onBack,
         )
 
@@ -491,6 +487,7 @@ private fun LyricsFullScreen(
     positionMs: Long,
     onBack: () -> Unit,
     onRetryLyrics: () -> Unit,
+    onEdit: () -> Unit,
     onSeekTo: (Long) -> Unit,
 ) {
     val parsed = remember(lyrics) { lyrics?.let { parseLrc(it) } ?: emptyList() }
@@ -531,6 +528,14 @@ private fun LyricsFullScreen(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(start = 4.dp),
             )
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = onEdit, modifier = Modifier.padding(end = 8.dp)) {
+                Icon(
+                    imageVector = Icons.Rounded.Edit,
+                    contentDescription = "Edit lyrics",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
         }
 
         if (lyrics == null || parsed.isEmpty()) {

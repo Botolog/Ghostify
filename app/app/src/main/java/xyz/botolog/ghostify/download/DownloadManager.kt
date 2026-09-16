@@ -213,14 +213,20 @@ class DownloadManager(
      *
      * @param songId the song to retry lyrics for.
      */
-    suspend fun retryLyricsForSong(songId: String) {
-        Timber.i("DownloadManager.retryLyricsForSong: START songId=$songId")
+    suspend fun updateLyricsForSong(songId: String, lyrics: String) {
+        Timber.i("DownloadManager.updateLyricsForSong: START songId=$songId")
+        repo.updateLyrics(songId, lyrics)
+        Timber.i("DownloadManager.updateLyricsForSong: done songId=$songId")
+    }
+
+    suspend fun retryLyricsForSong(songId: String, provider: String = "synced") {
+        Timber.i("DownloadManager.retryLyricsForSong: START songId=$songId, provider=$provider")
         val song = repo.getSong(songId) ?: run {
             Timber.w("DownloadManager.retryLyricsForSong: song not found $songId")
             return
         }
         val lyrics = withContext(Dispatchers.IO) {
-            TrackDownloadBridge().fetchLyricsBlocking(song.title, song.artists)
+            TrackDownloadBridge().fetchLyricsBlocking(song.title, song.artists, provider)
         }
         if (lyrics != null) {
             repo.updateLyrics(songId, lyrics)
@@ -228,5 +234,23 @@ class DownloadManager(
         } else {
             Timber.i("DownloadManager.retryLyricsForSong: no lyrics found for $songId")
         }
+    }
+
+    suspend fun fetchLyricsForSong(songId: String, provider: String = "synced"): String? {
+        Timber.i("DownloadManager.fetchLyricsForSong: START songId=$songId, provider=$provider")
+        val song = repo.getSong(songId) ?: run {
+            Timber.w("DownloadManager.fetchLyricsForSong: song not found $songId")
+            return null
+        }
+        val lyrics = withContext(Dispatchers.IO) {
+            TrackDownloadBridge().fetchLyricsBlocking(song.title, song.artists, provider)
+        }
+        if (lyrics != null) {
+            repo.updateLyrics(songId, lyrics)
+            Timber.i("DownloadManager.fetchLyricsForSong: saved ${lyrics.length} chars")
+        } else {
+            Timber.i("DownloadManager.fetchLyricsForSong: no lyrics found")
+        }
+        return lyrics
     }
 }

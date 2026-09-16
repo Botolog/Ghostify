@@ -2154,21 +2154,28 @@ def cleanup_temp(
     return downloader.cleanup_temp(age_seconds)
 
 
-def fetch_lyrics(name: str, artists: str) -> Optional[str]:
-    """Fetch synced lyrics for a track without downloading it.
+def fetch_lyrics(name: str, artists: str, provider: str = "synced") -> Optional[str]:
+    """Fetch lyrics for a track without downloading it.
 
     Returns the LRC text or None if no lyrics were found.
     """
     import syncedlyrics.providers.base as _base
 
-    # Bump the connect timeout from 2s to 8s so slow mobile connections don't
-    # fail instantly on lrclib / netease / etc.
     _orig_default = _base.TimeoutSession.request.__defaults__
     try:
         _base.TimeoutSession.request.__defaults__ = (8, 10)
-        from spotdl.providers.lyrics.synced import Synced
-
-        provider = Synced()
-        return provider.get_lyrics(name, [artists])
+        if provider == "genius":
+            from spotdl.providers.lyrics.genius import Genius
+            lyrics_provider = Genius()
+        elif provider == "musixmatch":
+            from spotdl.providers.lyrics.musixmatch import MusixMatch
+            lyrics_provider = MusixMatch()
+        elif provider == "azlyrics":
+            from spotdl.providers.lyrics.azlyrics import AzLyrics
+            lyrics_provider = AzLyrics()
+        else:
+            from spotdl.providers.lyrics.synced import Synced
+            lyrics_provider = Synced()
+        return lyrics_provider.get_lyrics(name, [artists])
     finally:
         _base.TimeoutSession.request.__defaults__ = _orig_default
