@@ -139,6 +139,10 @@ class RoomDownloadRepository(
         return result
     }
 
+    override suspend fun updateLyrics(songId: String, lyrics: String?) {
+        songDao.updateLyrics(songId, lyrics)
+    }
+
     private fun SongEntity.toRecord(): SongRecord = SongRecord(
         id = id,
         playlistId = playlistId,

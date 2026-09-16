@@ -223,7 +223,7 @@ class DownloadManager(
             TrackDownloadBridge().fetchLyricsBlocking(song.title, song.artists)
         }
         if (lyrics != null) {
-            repo.setStatus(songId, song.status, lyrics = lyrics)
+            repo.updateLyrics(songId, lyrics)
             Timber.i("DownloadManager.retryLyricsForSong: saved ${lyrics.length} chars for $songId")
         } else {
             Timber.i("DownloadManager.retryLyricsForSong: no lyrics found for $songId")

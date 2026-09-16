@@ -138,6 +138,7 @@ fun FullPlayerOverlay(
                     positionMs = state.positionMs,
                     onBack = { lyricsExpanded = false },
                     onRetryLyrics = contract::retryLyrics,
+                    onSeekTo = contract::seekTo,
                 )
             } else {
                 FullPlayerContent(
@@ -490,6 +491,7 @@ private fun LyricsFullScreen(
     positionMs: Long,
     onBack: () -> Unit,
     onRetryLyrics: () -> Unit,
+    onSeekTo: (Long) -> Unit,
 ) {
     val parsed = remember(lyrics) { lyrics?.let { parseLrc(it) } ?: emptyList() }
     val currentIndex = remember(parsed, positionMs) { currentLineIndex(parsed, positionMs) }
@@ -580,7 +582,8 @@ private fun LyricsFullScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 6.dp),
+                            .padding(vertical = 6.dp)
+                            .clickable { onSeekTo((line.timeMs).coerceAtLeast(0L)) },
                     )
                 }
             }

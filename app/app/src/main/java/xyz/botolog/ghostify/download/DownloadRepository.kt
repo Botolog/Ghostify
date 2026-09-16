@@ -136,4 +136,12 @@ interface DownloadRepository {
      * Returns all known playlist IDs.
      */
     suspend fun allPlaylistIds(): List<String>
+
+    /**
+     * Updates only the lyrics for a song without touching its status.
+     *
+     * @param songId the song to update.
+     * @param lyrics the lyrics text, or null to clear.
+     */
+    suspend fun updateLyrics(songId: String, lyrics: String?)
 }

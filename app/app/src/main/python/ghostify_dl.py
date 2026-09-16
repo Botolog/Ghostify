@@ -2159,8 +2159,16 @@ def fetch_lyrics(name: str, artists: str) -> Optional[str]:
 
     Returns the LRC text or None if no lyrics were found.
     """
-    _lazy_import_spotdl()
-    from spotdl.providers.lyrics.synced import Synced
+    import syncedlyrics.providers.base as _base
 
-    provider = Synced()
-    return provider.get_lyrics(name, [artists])
+    # Bump the connect timeout from 2s to 8s so slow mobile connections don't
+    # fail instantly on lrclib / netease / etc.
+    _orig_default = _base.TimeoutSession.request.__defaults__
+    try:
+        _base.TimeoutSession.request.__defaults__ = (8, 10)
+        from spotdl.providers.lyrics.synced import Synced
+
+        provider = Synced()
+        return provider.get_lyrics(name, [artists])
+    finally:
+        _base.TimeoutSession.request.__defaults__ = _orig_default
