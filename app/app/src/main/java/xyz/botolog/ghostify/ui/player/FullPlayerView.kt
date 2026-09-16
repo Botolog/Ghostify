@@ -10,7 +10,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,12 +21,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
@@ -43,12 +47,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -68,19 +74,14 @@ private val HORIZONTAL_PADDING = 24.dp
 private val PLAY_BUTTON_SIZE = 64.dp
 private val PLAY_ICON_SIZE = 40.dp
 private val TRANSPORT_ICON_SIZE = 32.dp
-private val LYRICS_MINI_HEIGHT = 100.dp
-private val LYRICS_LINE_HEIGHT = 22.sp
+
+/** Minimum horizontal drag distance (px) to count as a swipe. */
+private const val SWIPE_THRESHOLD = 50f
 
 // ── LRC timestamp parsing ─────────────────────────────────────────────
 
-/**
- * A single parsed LRC line with its timestamp in milliseconds.
- */
 private data class LrcLine(val timeMs: Long, val text: String)
 
-/**
- * Parses LRC-format lyrics into timestamped lines.
- */
 private fun parseLrc(lrc: String): List<LrcLine> {
     val regex = Regex("""^\[(\d{2}):(\d{2})\.(\d{2})\](.*)""")
     return lrc.lines().mapNotNull { line ->
@@ -94,10 +95,6 @@ private fun parseLrc(lrc: String): List<LrcLine> {
     }
 }
 
-/**
- * Returns the index of the line currently playing at [positionMs].
- * -1 if no lyrics or before the first line.
- */
 private fun currentLineIndex(lines: List<LrcLine>, positionMs: Long): Int {
     if (lines.isEmpty()) return -1
     var idx = -1
@@ -107,16 +104,8 @@ private fun currentLineIndex(lines: List<LrcLine>, positionMs: Long): Int {
     return idx
 }
 
-// ── Full Player View ──────────────────────────────────────────────────
+// ── Full Player Overlay ───────────────────────────────────────────────
 
-/**
- * Full-screen player overlay that slides up from the bottom.
- *
- * @param contract player contract for state and actions.
- * @param visible whether the overlay is shown.
- * @param onBack callback when the user dismisses (back or swipe down).
- * @param modifier optional modifier.
- */
 @Composable
 fun FullPlayerOverlay(
     contract: PlayerContract,
@@ -132,14 +121,11 @@ fun FullPlayerOverlay(
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         modifier = modifier,
     ) {
-        // Intercept system back press to close the overlay.
         BackHandler { onBack() }
 
         if (state.empty || state.nowPlaying == null) return@AnimatedVisibility
 
         var lyricsExpanded by remember { mutableStateOf(false) }
-
-        // If lyrics are expanded, back closes lyrics; otherwise closes the overlay.
         BackHandler(enabled = lyricsExpanded) { lyricsExpanded = false }
 
         Surface(
@@ -177,7 +163,8 @@ private fun FullPlayerContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            .navigationBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Collapse button
@@ -195,16 +182,12 @@ private fun FullPlayerContent(
             }
         }
 
-        // Cover art
-        AsyncImage(
-            model = state.nowPlaying?.coverUrl,
-            contentDescription = "Album art",
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(ARTWORK_HEIGHT)
-                .padding(horizontal = HORIZONTAL_PADDING)
-                .clip(MaterialTheme.shapes.medium),
-            contentScale = ContentScale.Crop,
+        // Cover art with swipe gestures
+        SwipeableCoverArt(
+            coverUrl = state.nowPlaying?.coverUrl,
+            onSwipeLeft = contract::next,
+            onSwipeRight = contract::previous,
+            onSwipeDown = onBack,
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -236,7 +219,7 @@ private fun FullPlayerContent(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Seek bar
+        // Seek bar (only seeks on release)
         FullPlayerSeekBar(state = state, contract = contract)
 
         // Time labels
@@ -257,7 +240,7 @@ private fun FullPlayerContent(
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         // Transport controls
         Row(
@@ -293,8 +276,6 @@ private fun FullPlayerContent(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
         // Lyrics mini-view (fills remaining space)
         LyricsMiniView(
             lyrics = state.lyrics,
@@ -309,19 +290,106 @@ private fun FullPlayerContent(
     }
 }
 
-// ── Seek Bar ──────────────────────────────────────────────────────────
+// ── Swipeable Cover Art ───────────────────────────────────────────────
+
+@Composable
+private fun SwipeableCoverArt(
+    coverUrl: Any?,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
+    onSwipeDown: () -> Unit,
+) {
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
+    AsyncImage(
+        model = coverUrl,
+        contentDescription = "Album art",
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(ARTWORK_HEIGHT)
+            .padding(horizontal = HORIZONTAL_PADDING)
+            .clip(MaterialTheme.shapes.medium)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = {
+                        val absX = kotlin.math.abs(dragOffsetX)
+                        val absY = kotlin.math.abs(dragOffsetY)
+                        if (absX > SWIPE_THRESHOLD || absY > SWIPE_THRESHOLD) {
+                            if (absX > absY) {
+                                // Horizontal swipe dominates
+                                if (dragOffsetX > 0) onSwipeRight() else onSwipeLeft()
+                            } else {
+                                // Vertical swipe dominates
+                                onSwipeDown()
+                            }
+                        }
+                        dragOffsetX = 0f
+                        dragOffsetY = 0f
+                    },
+                    onDragCancel = {
+                        dragOffsetX = 0f
+                        dragOffsetY = 0f
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        dragOffsetX += amount.x
+                        dragOffsetY += amount.y
+                    },
+                )
+            },
+        contentScale = ContentScale.Crop,
+    )
+}
+
+// ── Seek Bar (seeks on release only) ──────────────────────────────────
 
 @Composable
 private fun FullPlayerSeekBar(state: PlayerUiState, contract: PlayerContract) {
     val maxMs = if (state.durationMs > 0) state.durationMs else 1L
     val interactionSource = remember { MutableInteractionSource() }
+
+    // Track whether the user is dragging.
+    var isDragging by remember { mutableStateOf(false) }
+    // The position to display while dragging (overrides state.positionMs).
+    var dragPosition by remember { mutableFloatStateOf(0f) }
+
+    // Observe interaction source to detect drag start/end.
+    LaunchedEffect(interactionSource) {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> {
+                    isDragging = true
+                    dragPosition = state.positionMs.coerceIn(0L, maxMs).toFloat()
+                }
+                is PressInteraction.Release, is PressInteraction.Cancel -> {
+                    isDragging = false
+                }
+            }
+        }
+    }
+
+    val displayPosition = if (isDragging) {
+        dragPosition
+    } else {
+        state.positionMs.coerceIn(0L, maxMs).toFloat()
+    }
+
     Slider(
-        value = state.positionMs.coerceIn(0L, maxMs).toFloat(),
-        onValueChange = { contract.seekTo(it.toLong()) },
+        value = displayPosition,
+        onValueChange = { value ->
+            isDragging = true
+            dragPosition = value
+        },
+        onValueChangeFinished = {
+            contract.seekTo(dragPosition.toLong())
+            isDragging = false
+        },
         valueRange = 0f..maxMs.toFloat(),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = HORIZONTAL_PADDING),
+        interactionSource = interactionSource,
         track = { sliderState ->
             SliderDefaults.Track(
                 sliderState = sliderState,
@@ -344,11 +412,6 @@ private fun FullPlayerSeekBar(state: PlayerUiState, contract: PlayerContract) {
 
 // ── Lyrics Mini View ──────────────────────────────────────────────────
 
-/**
- * Compact lyrics view showing 3 lines centered on the current playback position.
- * Tapping expands to full-screen lyrics.
- * If no lyrics are available, shows a "No lyrics" message with tap-to-retry.
- */
 @Composable
 private fun LyricsMiniView(
     lyrics: String?,
@@ -362,47 +425,46 @@ private fun LyricsMiniView(
 
     Column(
         modifier = modifier
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-            ) {
-                if (lyrics != null) onTap() else onRetryLyrics()
-            },
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .clickable {
+                if (lyrics != null && parsed.isNotEmpty()) onTap() else onRetryLyrics()
+            }
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .navigationBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         if (lyrics == null || parsed.isEmpty()) {
-            // No lyrics available
             Text(
                 text = if (lyrics == null) "No lyrics available" else "No lyrics",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Tap to retry",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
             )
         } else {
-            // Show 3 lines: previous, current, next
-            val prevIdx = (currentIndex - 1).coerceAtLeast(0)
-            val nextIdx = (currentIndex + 1).coerceAtMost(parsed.lastIndex)
-            val visibleIndices = when {
-                currentIndex < 0 -> listOf(0, 1, 2).filter { it <= parsed.lastIndex }
-                currentIndex == 0 -> listOf(0, 1).filter { it <= parsed.lastIndex }
-                currentIndex >= parsed.lastIndex -> listOf(parsed.lastIndex - 1, parsed.lastIndex).filter { it >= 0 }
-                else -> listOf(prevIdx, currentIndex, nextIdx)
+            // Show 5 lines: 2 above, current, 2 below
+            val center = currentIndex.coerceAtLeast(0)
+            val visibleIndices = buildList {
+                for (offset in -2..2) {
+                    val idx = center + offset
+                    if (idx in parsed.indices) add(idx)
+                }
             }
 
             for (idx in visibleIndices) {
                 val isCurrent = idx == currentIndex
                 Text(
                     text = parsed[idx].text,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = if (isCurrent) 16.sp else 14.sp,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = if (isCurrent) 18.sp else 15.sp,
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                     ),
                     color = if (isCurrent) {
@@ -422,10 +484,6 @@ private fun LyricsMiniView(
 
 // ── Lyrics Full Screen ────────────────────────────────────────────────
 
-/**
- * Full-screen lyrics view with auto-scrolling to the current line.
- * Current line is displayed in bold.
- */
 @Composable
 private fun LyricsFullScreen(
     lyrics: String?,
@@ -437,7 +495,6 @@ private fun LyricsFullScreen(
     val currentIndex = remember(parsed, positionMs) { currentLineIndex(parsed, positionMs) }
     val listState = rememberLazyListState()
 
-    // Auto-scroll to the current line
     LaunchedEffect(currentIndex) {
         if (currentIndex >= 0 && currentIndex < parsed.size) {
             listState.animateScrollToItem(
@@ -450,10 +507,8 @@ private fun LyricsFullScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-            ) { /* consume taps */ },
+            .statusBarsPadding()
+            .navigationBarsPadding(),
     ) {
         // Header with back button
         Row(
@@ -463,10 +518,10 @@ private fun LyricsFullScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Text(
-                    text = "\u25BC",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "Close lyrics",
+                    modifier = Modifier.size(28.dp),
                 )
             }
             Text(
@@ -477,14 +532,10 @@ private fun LyricsFullScreen(
         }
 
         if (lyrics == null || parsed.isEmpty()) {
-            // No lyrics
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) { onRetryLyrics() },
+                    .clickable { onRetryLyrics() },
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

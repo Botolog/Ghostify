@@ -3,6 +3,7 @@
 package xyz.botolog.ghostify.ui.player
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,9 +30,13 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -249,15 +254,48 @@ private fun MiniSeekBar(state: PlayerUiState, contract: PlayerContract) {
     if (state.durationMs > 0) {
         val maxMs = state.durationMs
         val interactionSource = remember { MutableInteractionSource() }
+
+        var isDragging by remember { mutableStateOf(false) }
+        var dragPosition by remember { mutableFloatStateOf(0f) }
+
+        LaunchedEffect(interactionSource) {
+            interactionSource.interactions.collect { interaction ->
+                when (interaction) {
+                    is PressInteraction.Press -> {
+                        isDragging = true
+                        dragPosition = state.positionMs.coerceIn(0L, maxMs).toFloat()
+                    }
+                    is PressInteraction.Release,
+                    is PressInteraction.Cancel -> {
+                        isDragging = false
+                    }
+                }
+            }
+        }
+
+        val displayPosition = if (isDragging) {
+            dragPosition
+        } else {
+            state.positionMs.coerceIn(0L, maxMs).toFloat()
+        }
+
         Slider(
-            value = state.positionMs.coerceIn(0L, maxMs).toFloat(),
-            onValueChange = { contract.seekTo(it.toLong()) },
+            value = displayPosition,
+            onValueChange = { value ->
+                isDragging = true
+                dragPosition = value
+            },
+            onValueChangeFinished = {
+                contract.seekTo(dragPosition.toLong())
+                isDragging = false
+            },
             valueRange = 0f..maxMs.toFloat(),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(SEEK_BAR_HEIGHT)
                 .padding(horizontal = SEEK_BAR_HORIZONTAL_PADDING)
                 .testTag(MiniPlayerTestTags.SEEK),
+            interactionSource = interactionSource,
             track = { sliderState ->
                 SliderDefaults.Track(
                     sliderState = sliderState,
