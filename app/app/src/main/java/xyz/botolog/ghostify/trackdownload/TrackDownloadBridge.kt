@@ -173,6 +173,30 @@ class TrackDownloadBridge(
         }
     }
 
+    /**
+     * Fetches synced lyrics for a track without downloading it.
+     *
+     * @param name track title.
+     * @param artists comma-separated artist names.
+     * @return the LRC lyrics text, or `null` if no lyrics were found.
+     */
+    fun fetchLyricsBlocking(name: String, artists: String): String? {
+        Timber.i("TrackDownloadBridge.fetchLyricsBlocking: START name=$name, artists=$artists")
+        return try {
+            val module = Python.getInstance().getModule(moduleName)
+            val py = module.callAttr("fetch_lyrics", name, artists)
+            val result = PyConverters.string(py)
+            Timber.i("TrackDownloadBridge.fetchLyricsBlocking: returning ${result?.length ?: 0} chars")
+            result
+        } catch (e: PyException) {
+            Timber.e(e, "TrackDownloadBridge: fetchLyricsBlocking FAILED")
+            null
+        } catch (e: RuntimeException) {
+            Timber.e(e, "TrackDownloadBridge: fetchLyricsBlocking FAILED")
+            null
+        }
+    }
+
     // ------------------------------------------------------------------
     // Internal parsing / mapping.
     // ------------------------------------------------------------------

@@ -60,6 +60,9 @@ interface PlayerContract {
     /** Close the queue drawer. */
     fun closeQueue()
 
+    /** Retry fetching lyrics for the currently playing track. */
+    fun retryLyrics()
+
     /**
      * Immutable UI state for the Player screen.
      *
@@ -85,5 +88,6 @@ interface PlayerContract {
         val volume: Float = 0.8f,
         val queue: List<QueueItem> = emptyList(),
         val queueOpen: Boolean = false,
+        val lyrics: String? = null,
     )
 }

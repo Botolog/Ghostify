@@ -17,7 +17,7 @@ import timber.log.Timber
  * @property transactions Provides transactional write boundaries.
  */
 class SongRepository(
-    private val songDao: SongDao,
+    val songDao: SongDao,
     private val transactions: TransactionRunner,
 ) {
 

@@ -1,5 +1,7 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
+import xyz.botolog.ghostify.data.db.dao.SongDao
+import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.player.PlayerController
 import xyz.botolog.ghostify.player.core.CurrentItem
 import xyz.botolog.ghostify.player.core.PlayerUiState as CorePlayerUiState
@@ -7,11 +9,14 @@ import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
 import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.model.QueueItem
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import timber.log.Timber
 
@@ -19,13 +24,18 @@ import timber.log.Timber
  * Backs the Player screen: a pure presentation layer over [PlayerController].
  *
  * It maps the raw player state stream onto the render-ready [PlayerUiState]
- * (now-playing / position / shuffle / repeat / queue) and forwards user
+ * (now-playing / position / shuffle / repeat / queue / lyrics) and forwards user
  * commands. It never owns playback state itself.
  *
  * @property player the underlying media playback controller.
+ * @property songDao DAO for observing lyrics from the database.
+ * @property downloads download manager for retry-lyrics support.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class PlayerViewModel(
     private val player: PlayerController,
+    private val songDao: SongDao,
+    private val downloads: DownloadManager,
 ) : ContractViewModel(), PlayerContract {
 
     private val _state = MutableStateFlow(PlayerUiState())
@@ -33,6 +43,12 @@ class PlayerViewModel(
 
     /** Mutable flag that tracks whether the queue drawer is open. */
     private val queueOpen = MutableStateFlow(false)
+
+    /** Current lyrics for the active track, observed reactively from the DB. */
+    private val currentLyrics = MutableStateFlow<String?>(null)
+
+    /** Current song id — drives the lyrics observation switch. */
+    private val currentSongId = MutableStateFlow<String?>(null)
 
     /** Cached media id of the current track to avoid re-extracting artwork on every tick. */
     private var cachedMediaId: String? = null
@@ -42,9 +58,28 @@ class PlayerViewModel(
 
     init {
         Timber.i("PlayerViewModel: init")
+
+        // Observe lyrics reactively — switch to a new Flow whenever the current track changes.
         launch {
-            combine(player.state, queueOpen) { core, open ->
-                mapToUi(core, open)
+            currentSongId
+                .flatMapLatest { id ->
+                    if (id != null) songDao.observeLyricsById(id) else emptyFlow()
+                }
+                .catch { e -> Timber.e(e, "PlayerViewModel: lyrics stream FAILED") }
+                .collect { lyrics ->
+                    currentLyrics.value = lyrics
+                }
+        }
+
+        // Observe player state, queue flag, AND lyrics — combine all three into one emission
+        // so lyrics never get overwritten by a stale player-state update.
+        launch {
+            combine(player.state, queueOpen, currentLyrics) { core, open, lyrics ->
+                val ui = mapToUi(core, open)
+                // Sync the current song id for lyrics observation.
+                val mediaId = ui.nowPlaying?.let { findMediaId(ui) }
+                currentSongId.value = mediaId
+                ui.copy(lyrics = lyrics)
             }
                 .catch { e -> Timber.e(e, "PlayerViewModel: stream collection FAILED") }
                 .collect { _state.value = it }
@@ -101,6 +136,18 @@ class PlayerViewModel(
         queueOpen.value = false
     }
 
+    override fun retryLyrics() {
+        Timber.i("PlayerViewModel.retryLyrics: START")
+        val songId = currentSongId.value ?: return
+        launch {
+            try {
+                downloads.retryLyricsForSong(songId)
+            } catch (e: Exception) {
+                Timber.e(e, "PlayerViewModel.retryLyrics: FAILED for songId=$songId")
+            }
+        }
+    }
+
     /**
      * Maps the raw core player state and queue-open flag to a render-ready [PlayerUiState].
      *
@@ -122,6 +169,16 @@ class PlayerViewModel(
             queue = mapQueueItems(core),
             queueOpen = open,
         )
+    }
+
+    /**
+     * Extracts the media id from the current state for lyrics observation.
+     */
+    private fun findMediaId(ui: PlayerUiState): String? {
+        // The queue items carry the songId which matches the DB primary key.
+        val idx = player.state.value.currentQueueIndex
+        if (idx < 0 || idx >= player.state.value.queue.size) return null
+        return player.state.value.queue[idx].songId
     }
 
     /**

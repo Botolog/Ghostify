@@ -2152,3 +2152,15 @@ def cleanup_temp(
             "downloader must be a TrackDownloader (create it with make_downloader)"
         )
     return downloader.cleanup_temp(age_seconds)
+
+
+def fetch_lyrics(name: str, artists: str) -> Optional[str]:
+    """Fetch synced lyrics for a track without downloading it.
+
+    Returns the LRC text or None if no lyrics were found.
+    """
+    _lazy_import_spotdl()
+    from spotdl.providers.lyrics.synced import Synced
+
+    provider = Synced()
+    return provider.get_lyrics(name, [artists])

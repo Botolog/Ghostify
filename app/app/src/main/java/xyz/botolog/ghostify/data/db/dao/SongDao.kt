@@ -66,6 +66,15 @@ interface SongDao {
     suspend fun getSongsByStatus(playlistId: String, statuses: List<SongStatus>): List<SongEntity>
 
     /**
+     * Observes the lyrics column for a single song by its primary key.
+     *
+     * @param id The song row id.
+     * @return A [Flow] emitting the lyrics text, or `null` if unavailable.
+     */
+    @Query("SELECT lyrics FROM songs WHERE id = :id")
+    fun observeLyricsById(id: String): Flow<String?>
+
+    /**
      * Observes a single song by its primary key.
      *
      * @param id The song row id.

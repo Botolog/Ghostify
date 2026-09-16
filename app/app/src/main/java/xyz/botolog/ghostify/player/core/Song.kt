@@ -54,6 +54,7 @@ enum class SongStatus(val value: String) {
  * @property filePath Local filesystem path to the downloaded file, or `null` if not downloaded.
  * @property status Current lifecycle status of the song.
  * @property coverUrl URL for the album artwork, or `null` if unavailable.
+ * @property lyrics LRC-synced lyrics text, or `null` if unavailable.
  */
 data class Song(
     val id: String,
@@ -64,6 +65,7 @@ data class Song(
     val filePath: String?,
     val status: SongStatus,
     val coverUrl: String? = null,
+    val lyrics: String? = null,
 ) {
     /**
      * Whether this song is ready for playback.

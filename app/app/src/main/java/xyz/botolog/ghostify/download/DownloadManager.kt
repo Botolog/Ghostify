@@ -1,12 +1,16 @@
 package xyz.botolog.ghostify.download
 
+import xyz.botolog.ghostify.trackdownload.TrackDownloadBridge
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -202,5 +206,27 @@ class DownloadManager(
         executions.remove(playlistId)
         tokens.remove(playlistId)
         runState.update { it - playlistId }
+    }
+
+    /**
+     * Re-fetches lyrics for a single song and persists them to the database.
+     *
+     * @param songId the song to retry lyrics for.
+     */
+    suspend fun retryLyricsForSong(songId: String) {
+        Timber.i("DownloadManager.retryLyricsForSong: START songId=$songId")
+        val song = repo.getSong(songId) ?: run {
+            Timber.w("DownloadManager.retryLyricsForSong: song not found $songId")
+            return
+        }
+        val lyrics = withContext(Dispatchers.IO) {
+            TrackDownloadBridge().fetchLyricsBlocking(song.title, song.artists)
+        }
+        if (lyrics != null) {
+            repo.setStatus(songId, song.status, lyrics = lyrics)
+            Timber.i("DownloadManager.retryLyricsForSong: saved ${lyrics.length} chars for $songId")
+        } else {
+            Timber.i("DownloadManager.retryLyricsForSong: no lyrics found for $songId")
+        }
     }
 }

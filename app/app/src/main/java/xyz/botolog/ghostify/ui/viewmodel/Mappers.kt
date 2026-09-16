@@ -71,6 +71,7 @@ internal fun SongEntity.toPlayerSong(): PlayerSong = PlayerSong(
     filePath = filePath,
     status = PlayerSongStatus.fromValue(status.name),
     coverUrl = coverUrl,
+    lyrics = lyrics,
 )
 
 /**

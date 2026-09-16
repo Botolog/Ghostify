@@ -1,13 +1,20 @@
 package xyz.botolog.ghostify.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -22,6 +29,7 @@ import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.library.LibraryScreen
+import xyz.botolog.ghostify.ui.player.FullPlayerOverlay
 import xyz.botolog.ghostify.ui.player.MiniPlayer
 import xyz.botolog.ghostify.ui.player.PlayerScreen
 import xyz.botolog.ghostify.ui.playlist.PlaylistDetailScreen
@@ -71,6 +79,8 @@ fun GhostifyApp(
         val currentRoute = backStackEntry?.destination?.route
         val playerState by deps.player.state.collectAsState()
 
+        var fullPlayerOpen by remember { mutableStateOf(false) }
+
         Column(modifier = modifier.fillMaxSize()) {
             NavHost(
                 navController = navController,
@@ -112,16 +122,29 @@ fun GhostifyApp(
                 }
             }
 
-            // Spotify-style now-playing bar. Persistent across every screen except the full
-            // player; hidden while nothing is loaded. Bottom padding keeps it above the
-            // system navigation bar.
-            if (currentRoute != Routes.PLAYER && !playerState.empty) {
+            // Spotify-style now-playing bar. Persistent across every screen; hidden while
+            // nothing is loaded. Tapping opens the full player overlay. Bottom padding keeps
+            // it above the system navigation bar.
+            if (!playerState.empty) {
                 MiniPlayer(
                     contract = deps.player,
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() },
+                        ) { fullPlayerOpen = true }
+                        .windowInsetsPadding(WindowInsets.navigationBars),
                 )
             }
         }
+
+        // Full player overlay — slides up over the current screen.
+        FullPlayerOverlay(
+            contract = deps.player,
+            visible = fullPlayerOpen,
+            onBack = { fullPlayerOpen = false },
+        )
     }
 }
 
