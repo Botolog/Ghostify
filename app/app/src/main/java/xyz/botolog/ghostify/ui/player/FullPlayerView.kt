@@ -18,10 +18,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -180,14 +182,20 @@ private fun FullPlayerContent(
         }
 
         // Cover art with swipe gestures
-        SwipeableCoverArt(
-            coverUrl = state.nowPlaying?.coverUrl,
-            onSwipeLeft = contract::next,
-            onSwipeRight = contract::previousTrack,
-            onSwipeDown = onBack,
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = HORIZONTAL_PADDING),
+        ) {
+            SwipeableCoverArt(
+                coverUrl = state.nowPlaying?.coverUrl,
+                onSwipeLeft = contract::next,
+                onSwipeRight = contract::previousTrack,
+                onSwipeDown = onBack,
+            )
+        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Title
         Text(
@@ -214,8 +222,6 @@ private fun FullPlayerContent(
                 .padding(horizontal = HORIZONTAL_PADDING),
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
-
         // Seek bar (only seeks on release)
         FullPlayerSeekBar(state = state, contract = contract)
 
@@ -237,12 +243,12 @@ private fun FullPlayerContent(
             )
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
         // Transport controls
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = (-24).dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = contract::previous) {
@@ -304,9 +310,8 @@ private fun SwipeableCoverArt(
         contentDescription = "Album art",
         modifier = Modifier
             .fillMaxWidth()
-            .height(ARTWORK_HEIGHT)
-            .padding(horizontal = HORIZONTAL_PADDING)
-            .clip(MaterialTheme.shapes.medium)
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(20.dp))
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragEnd = {
@@ -447,33 +452,48 @@ private fun LyricsMiniView(
                 textAlign = TextAlign.Center,
             )
         } else {
-            // Show 5 lines: 2 above, current, 2 below
-            val center = currentIndex.coerceAtLeast(0)
-            val visibleIndices = buildList {
-                for (offset in -2..2) {
-                    val idx = center + offset
-                    if (idx in parsed.indices) add(idx)
+            val listState = rememberLazyListState()
+
+            LaunchedEffect(currentIndex) {
+                if (currentIndex >= 0 && currentIndex < parsed.size) {
+                    listState.animateScrollToItem(
+                        index = currentIndex,
+                        scrollOffset = -100,
+                    )
                 }
             }
 
-            for (idx in visibleIndices) {
-                val isCurrent = idx == currentIndex
-                Text(
-                    text = parsed[idx].text,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = if (isCurrent) 18.sp else 15.sp,
-                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                    ),
-                    color = if (isCurrent) {
-                        MaterialTheme.colorScheme.onSurface
-                    } else {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    },
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                userScrollEnabled = false,
+            ) {
+                itemsIndexed(
+                    items = parsed,
+                    key = { index, line -> "${line.timeMs}_$index" },
+                    contentType = { _, _ -> "mini_lyrics_line" },
+                ) { index, line ->
+                    val isCurrent = index == currentIndex
+                    Text(
+                        text = line.text,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = if (isCurrent) 20.sp else 15.sp,
+                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                        ),
+                        color = if (isCurrent) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        },
+                        textAlign = TextAlign.Center,
+                        maxLines = if (isCurrent) Int.MAX_VALUE else 1,
+                        overflow = if (isCurrent) TextOverflow.Clip else TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp),
+                    )
+                }
             }
         }
     }
@@ -576,7 +596,7 @@ private fun LyricsFullScreen(
                     Text(
                         text = line.text,
                         style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = if (isCurrent) 20.sp else 16.sp,
+                            fontSize = if (isCurrent) 24.sp else 18.sp,
                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                         ),
                         color = if (isCurrent) {
@@ -588,7 +608,10 @@ private fun LyricsFullScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 6.dp)
-                            .clickable { onSeekTo((line.timeMs).coerceAtLeast(0L)) },
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { onSeekTo((line.timeMs).coerceAtLeast(0L)) },
                     )
                 }
             }
