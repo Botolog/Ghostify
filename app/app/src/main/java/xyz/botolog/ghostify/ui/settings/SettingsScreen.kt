@@ -30,8 +30,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -60,6 +62,7 @@ import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.viewmodel.SettingsViewModel
+import xyz.botolog.ghostify.update.DownloadState
 
 /**
  * Test tag constants for the settings screen. Used by Compose UI tests to locate elements.
@@ -75,6 +78,7 @@ object SettingsTestTags {
     const val AUTO_DOWNLOAD = "setting_auto_download"
     const val CACHE_COUNT = "setting_cache_count"
     const val CLEAR_CACHE = "setting_clear_cache"
+    const val CHECK_UPDATE = "setting_check_update"
 
     /**
      * Returns the test tag for a specific bitrate option.
@@ -267,6 +271,10 @@ private fun SettingsContent(
 
         SectionHeader("Debug")
         DebugSetting()
+        Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
+
+        SectionHeader("About")
+        UpdateSetting(state = state, contract = contract)
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -531,6 +539,117 @@ private fun shareLogs(
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(intent, "Share logs"))
+}
+
+/**
+ * "Check for Update" button with download progress and update dialog.
+ */
+@Composable
+private fun UpdateSetting(state: SettingsUiState, contract: SettingsContract) {
+    // Update available dialog
+    if (state.showUpdateDialog && state.updateInfo != null) {
+        AlertDialog(
+            onDismissRequest = contract::dismissUpdate,
+            title = { Text("Update available") },
+            text = {
+                Column {
+                    Text(
+                        text = "v${state.updateInfo.versionName}",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Spacer(modifier = Modifier.height(INNER_SPACING))
+                    if (state.updateInfo.releaseNotes.isNotBlank()) {
+                        Text(
+                            text = state.updateInfo.releaseNotes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = contract::confirmUpdate) {
+                    Text("Download & Install")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = contract::dismissUpdate) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            when {
+                state.downloadState is DownloadState.Downloading -> {
+                    Text("Downloading update...", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { state.downloadState.progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("setting_update_progress"),
+                    )
+                }
+                state.downloadState is DownloadState.Downloaded -> {
+                    Text("Download complete", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Tap Install to update.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                state.updateError != null -> {
+                    Text(
+                        text = state.updateError!!,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (state.updateError!!.startsWith("You're")) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                }
+                else -> {
+                    Text("Check for new versions", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.width(INNER_SPACING))
+        when {
+            state.downloadState is DownloadState.Downloading -> {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            }
+            state.downloadState is DownloadState.Downloaded -> {
+                OutlinedButton(
+                    onClick = contract::installUpdate,
+                    modifier = Modifier.testTag("setting_install_update"),
+                ) {
+                    Text("Install")
+                }
+            }
+            else -> {
+                OutlinedButton(
+                    onClick = contract::checkForUpdate,
+                    enabled = !state.isCheckingUpdate,
+                    modifier = Modifier.testTag(SettingsTestTags.CHECK_UPDATE),
+                ) {
+                    if (state.isCheckingUpdate) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    } else {
+                        Icon(Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(ICON_SIZE))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Check for Update")
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**

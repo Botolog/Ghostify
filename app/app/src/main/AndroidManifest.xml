@@ -29,6 +29,8 @@
          only when the user explicitly chooses a custom storage folder (SAF picker). -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- Auto-update: install downloaded APK updates. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- No uses-feature restrictions: the app must remain installable on the
          full API 26+ device range. -->
 

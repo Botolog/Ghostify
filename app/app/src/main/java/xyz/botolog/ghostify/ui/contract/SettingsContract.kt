@@ -2,6 +2,8 @@ package xyz.botolog.ghostify.ui.contract
 
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
+import xyz.botolog.ghostify.update.DownloadState
+import xyz.botolog.ghostify.update.UpdateInfo
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -74,6 +76,26 @@ interface SettingsContract {
     fun migrateSongs()
 
     /**
+     * Checks for a new release on GitHub.
+     */
+    fun checkForUpdate()
+
+    /**
+     * Starts downloading the update APK after user confirmation.
+     */
+    fun confirmUpdate()
+
+    /**
+     * Dismisses the update dialog and clears the update info.
+     */
+    fun dismissUpdate()
+
+    /**
+     * Triggers installation of the downloaded update APK.
+     */
+    fun installUpdate()
+
+    /**
      * Immutable UI state for the Settings screen.
      *
      * @property bitrate current download bitrate preference.
@@ -97,5 +119,10 @@ interface SettingsContract {
         val pendingMigrationPath: String? = null,
         val isMigrating: Boolean = false,
         val migrationResult: String? = null,
+        val isCheckingUpdate: Boolean = false,
+        val updateInfo: UpdateInfo? = null,
+        val showUpdateDialog: Boolean = false,
+        val downloadState: DownloadState = DownloadState.Idle,
+        val updateError: String? = null,
     )
 }

@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import timber.log.Timber
+import xyz.botolog.ghostify.update.DownloadState
+import xyz.botolog.ghostify.update.UpdateChecker
 
 /**
  * Backs the Settings screen. It is the single place that talks to the settings
@@ -222,6 +224,84 @@ class SettingsViewModel(
         launch {
             performClearCache()
             refreshCacheStats()
+        }
+    }
+
+    override fun checkForUpdate() {
+        Timber.i("SettingsViewModel.checkForUpdate: START")
+        launch {
+            _state.update { it.copy(isCheckingUpdate = true, updateError = null) }
+            try {
+                val info = UpdateChecker.checkForUpdate(context)
+                if (info != null) {
+                    _state.update {
+                        it.copy(
+                            isCheckingUpdate = false,
+                            updateInfo = info,
+                            showUpdateDialog = true,
+                        )
+                    }
+                    Timber.i("SettingsViewModel.checkForUpdate: update available v${info.versionName}")
+                } else {
+                    _state.update {
+                        it.copy(isCheckingUpdate = false, updateError = "You're up to date!")
+                    }
+                    Timber.i("SettingsViewModel.checkForUpdate: already up to date")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "SettingsViewModel.checkForUpdate: FAILED")
+                _state.update {
+                    it.copy(
+                        isCheckingUpdate = false,
+                        updateError = "Update check failed: ${e.message}",
+                    )
+                }
+            }
+        }
+    }
+
+    override fun confirmUpdate() {
+        Timber.i("SettingsViewModel.confirmUpdate: START")
+        val info = _state.value.updateInfo ?: return
+        launch {
+            _state.update { it.copy(showUpdateDialog = false, downloadState = DownloadState.Downloading(0f)) }
+            try {
+                val file = UpdateChecker.downloadApk(context, info.apkDownloadUrl) { progress ->
+                    _state.update { it.copy(downloadState = DownloadState.Downloading(progress)) }
+                }
+                _state.update { it.copy(downloadState = DownloadState.Downloaded(file)) }
+                Timber.i("SettingsViewModel.confirmUpdate: download complete")
+            } catch (e: Exception) {
+                Timber.e(e, "SettingsViewModel.confirmUpdate: download FAILED")
+                _state.update {
+                    it.copy(downloadState = DownloadState.Error("Download failed: ${e.message}"))
+                }
+            }
+        }
+    }
+
+    override fun dismissUpdate() {
+        _state.update {
+            it.copy(
+                showUpdateDialog = false,
+                updateInfo = null,
+                downloadState = DownloadState.Idle,
+                updateError = null,
+            )
+        }
+    }
+
+    override fun installUpdate() {
+        Timber.i("SettingsViewModel.installUpdate: START")
+        val state = _state.value.downloadState
+        if (state !is DownloadState.Downloaded) return
+        try {
+            UpdateChecker.installApk(context, state.file)
+        } catch (e: Exception) {
+            Timber.e(e, "SettingsViewModel.installUpdate: FAILED")
+            _state.update {
+                it.copy(updateError = "Install failed: ${e.message}")
+            }
         }
     }
 
