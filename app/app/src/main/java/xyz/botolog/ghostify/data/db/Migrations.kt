@@ -22,6 +22,9 @@ import timber.log.Timber
  *      index on `spotify_id` to `(spotify_id, origin)` so the same id can
  *      appear once per origin.
  * v6 — adds `songs.lyrics` (song lyrics fetched from a lyrics provider).
+ * v7 — adds lyrics metadata (`lyrics_source`, `lyrics_edited`), YouTube
+ *      metadata (`yt_url`, `yt_name`, `yt_channel`), and download metadata
+ *      (`bitrate`, `file_size`, `downloaded_at`).
  *
  * The migration is a single Room transaction, so it is atomic: if any step fails
  * SQLite rolls the whole upgrade back and the database is left at the previous
@@ -109,6 +112,26 @@ object Migrations {
         }
     }
 
+    /** The v6 → v7 DDL. Adds lyrics metadata, YouTube metadata, and download metadata. */
+    val MIGRATION_6_7_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE songs ADD COLUMN lyrics_source TEXT",
+        "ALTER TABLE songs ADD COLUMN lyrics_edited INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE songs ADD COLUMN yt_url TEXT",
+        "ALTER TABLE songs ADD COLUMN yt_name TEXT",
+        "ALTER TABLE songs ADD COLUMN yt_channel TEXT",
+        "ALTER TABLE songs ADD COLUMN bitrate INTEGER",
+        "ALTER TABLE songs ADD COLUMN file_size INTEGER",
+        "ALTER TABLE songs ADD COLUMN downloaded_at INTEGER",
+    )
+
+    /** v6 → v7 migration. */
+    val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_6_7.migrate")
+            MIGRATION_6_7_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
     /** All migrations in order, passed to [Room.databaseBuilder]. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
@@ -116,5 +139,6 @@ object Migrations {
         MIGRATION_3_4,
         MIGRATION_4_5,
         MIGRATION_5_6,
+        MIGRATION_6_7,
     )
 }

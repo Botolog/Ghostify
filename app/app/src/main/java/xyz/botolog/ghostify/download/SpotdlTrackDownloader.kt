@@ -151,10 +151,27 @@ class ChaquopySpotdlCall(
         result: xyz.botolog.ghostify.trackdownload.TrackDownloadResult,
     ): TrackDownloadResult = when (result) {
         is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Downloaded ->
-            TrackDownloadResult(songId = song.id, filePath = result.outputPath, lyrics = result.lyrics)
+            TrackDownloadResult(
+                songId = song.id,
+                filePath = result.outputPath,
+                lyrics = result.lyrics,
+                ytUrl = result.ytUrl,
+                ytName = result.ytName,
+                ytChannel = result.ytChannel,
+                bitrate = result.bitrate,
+                fileSize = result.fileSize,
+            )
 
         is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Skipped ->
-            TrackDownloadResult(songId = song.id, filePath = result.outputPath, lyrics = result.lyrics)
+            TrackDownloadResult(
+                songId = song.id,
+                filePath = result.outputPath,
+                lyrics = result.lyrics,
+                ytUrl = result.ytUrl,
+                ytName = result.ytName,
+                ytChannel = result.ytChannel,
+                bitrate = result.bitrate,
+            )
 
         is xyz.botolog.ghostify.trackdownload.TrackDownloadResult.Failure ->
             TrackDownloadResult(songId = song.id, error = mapError(result.error))

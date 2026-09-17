@@ -67,7 +67,7 @@ interface PlayerContract {
     fun retryLyrics()
 
     /** Save edited lyrics for the currently playing track. */
-    fun saveLyrics(lyrics: String)
+    fun saveLyrics(lyrics: String, edited: Boolean = false)
 
     /** Re-fetch lyrics from the given provider. Calls [onResult] with the result (or null). */
     fun refetchLyrics(provider: String, onResult: (String?) -> Unit)
@@ -98,5 +98,7 @@ interface PlayerContract {
         val queue: List<QueueItem> = emptyList(),
         val queueOpen: Boolean = false,
         val lyrics: String? = null,
+        val lyricsSource: String? = null,
+        val lyricsEdited: Boolean = false,
     )
 }

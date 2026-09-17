@@ -238,4 +238,19 @@ interface SongDao {
      */
     @Query("UPDATE songs SET lyrics = :lyrics WHERE id = :songId")
     suspend fun updateLyrics(songId: String, lyrics: String?)
+
+    @Query("UPDATE songs SET lyrics_source = :source WHERE id = :songId")
+    suspend fun updateLyricsSource(songId: String, source: String?)
+
+    @Query("UPDATE songs SET lyrics_edited = :edited WHERE id = :songId")
+    suspend fun updateLyricsEdited(songId: String, edited: Boolean)
+
+    @Query("UPDATE songs SET yt_url = :ytUrl, yt_name = :ytName, yt_channel = :ytChannel WHERE id = :songId")
+    suspend fun updateYoutubeMeta(songId: String, ytUrl: String?, ytName: String?, ytChannel: String?)
+
+    @Query("UPDATE songs SET bitrate = :bitrate, file_size = :fileSize, downloaded_at = :downloadedAt WHERE id = :songId")
+    suspend fun updateDownloadMeta(songId: String, bitrate: Int?, fileSize: Long?, downloadedAt: Long?)
+
+    @Query("UPDATE songs SET lyrics = :lyrics, lyrics_edited = :edited WHERE id = :songId")
+    suspend fun updateLyricsAndEdited(songId: String, lyrics: String?, edited: Boolean)
 }

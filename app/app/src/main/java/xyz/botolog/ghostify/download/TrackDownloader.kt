@@ -50,6 +50,11 @@ data class TrackDownloadResult(
     val filePath: String? = null,
     val lyrics: String? = null,
     val error: DownloadError? = null,
+    val ytUrl: String? = null,
+    val ytName: String? = null,
+    val ytChannel: String? = null,
+    val bitrate: String? = null,
+    val fileSize: Long? = null,
 ) {
     val isSuccess: Boolean get() = error == null && filePath != null
 }

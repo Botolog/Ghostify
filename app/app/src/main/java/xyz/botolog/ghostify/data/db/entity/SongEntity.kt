@@ -33,6 +33,14 @@ import xyz.botolog.ghostify.data.model.SongStatus
  * @property ytId YouTube video id, resolved during download.
  * @property filePath Local file path after successful download, `null` otherwise.
  * @property lyrics Song lyrics fetched from a lyrics provider, `null` if unavailable.
+ * @property lyricsSource Provider/source that supplied the lyrics.
+ * @property lyricsEdited `true` if the user manually edited the lyrics.
+ * @property ytUrl YouTube video URL, if resolved.
+ * @property ytName YouTube video title, if resolved.
+ * @property ytChannel YouTube channel name, if resolved.
+ * @property bitrate Audio bitrate in kbps, if known.
+ * @property fileSize File size in bytes, if downloaded.
+ * @property downloadedAt Epoch millis when the file was downloaded, `null` otherwise.
  * @property error Last failure reason; non-null only while [status] is [SongStatus.FAILED].
  * @property status Current download lifecycle state.
  * @property position Playlist ordering (0-based).
@@ -81,6 +89,29 @@ data class SongEntity(
     val filePath: String? = null,
 
     val lyrics: String? = null,
+
+    @ColumnInfo(name = "lyrics_source")
+    val lyricsSource: String? = null,
+
+    @ColumnInfo(name = "lyrics_edited")
+    val lyricsEdited: Boolean = false,
+
+    @ColumnInfo(name = "yt_url")
+    val ytUrl: String? = null,
+
+    @ColumnInfo(name = "yt_name")
+    val ytName: String? = null,
+
+    @ColumnInfo(name = "yt_channel")
+    val ytChannel: String? = null,
+
+    val bitrate: Int? = null,
+
+    @ColumnInfo(name = "file_size")
+    val fileSize: Long? = null,
+
+    @ColumnInfo(name = "downloaded_at")
+    val downloadedAt: Long? = null,
 
     val error: String? = null,
 

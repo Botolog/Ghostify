@@ -66,6 +66,14 @@ class DownloadQueueRunnerTest {
         override suspend fun updateLyrics(songId: String, lyrics: String?) {
             // no-op – not exercised by these tests
         }
+
+        override suspend fun updateYoutubeMeta(songId: String, ytUrl: String?, ytName: String?, ytChannel: String?) {
+            // no-op – not exercised by these tests
+        }
+
+        override suspend fun updateDownloadMeta(songId: String, bitrate: Int?, fileSize: Long?, downloadedAt: Long?) {
+            // no-op – not exercised by these tests
+        }
     }
 
     private class FakeTrackDownloader(

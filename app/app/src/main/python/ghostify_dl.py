@@ -1608,6 +1608,14 @@ class TrackDownloader:
                 payload["file_size"] = None
             payload["error_type"] = kind
             payload["error"] = error
+            payload["yt_url"] = f"https://www.youtube.com/watch?v={yt_id}" if yt_id else None
+            if song is not None:
+                payload["yt_name"] = getattr(song, "name", None)
+                _artists = getattr(song, "artists", None) or []
+                payload["yt_channel"] = _artists[0] if _artists else None
+            else:
+                payload["yt_name"] = None
+                payload["yt_channel"] = None
             return payload
 
         # 1) Sidecar fast path — zero network.
@@ -1876,6 +1884,16 @@ class TrackDownloader:
                 payload["file_size"] = None
             payload["error_type"] = kind
             payload["error"] = error
+            if song is not None and song.url:
+                _vid = _extract_video_id(song.url)
+                payload["yt_url"] = f"https://www.youtube.com/watch?v={_vid}" if _vid else None
+                payload["yt_name"] = getattr(song, "name", None)
+                _artists = getattr(song, "artists", None) or []
+                payload["yt_channel"] = _artists[0] if _artists else None
+            else:
+                payload["yt_url"] = None
+                payload["yt_name"] = None
+                payload["yt_channel"] = None
             return payload
 
         _fire(on_start, {"status": "PLAYLIST", "url": url, "track_count": len(songs)})

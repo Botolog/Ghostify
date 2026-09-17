@@ -22,16 +22,20 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -39,6 +43,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +51,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -68,6 +74,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
+import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.util.DurationFormat
 import kotlin.math.abs
 
@@ -115,8 +122,16 @@ fun FullPlayerOverlay(
 
         var lyricsExpanded by remember { mutableStateOf(false) }
         var lyricsEditing by remember { mutableStateOf(false) }
+        var showSongInfo by remember { mutableStateOf(false) }
         BackHandler(enabled = lyricsEditing) { lyricsEditing = false }
         BackHandler(enabled = lyricsExpanded && !lyricsEditing) { lyricsExpanded = false }
+
+        if (showSongInfo) {
+            SongInfoDialog(
+                nowPlaying = state.nowPlaying,
+                onDismiss = { showSongInfo = false },
+            )
+        }
 
         Surface(
             modifier = Modifier.fillMaxSize(),
@@ -126,7 +141,7 @@ fun FullPlayerOverlay(
                 LyricsEditView(
                     lyrics = state.lyrics,
                     onBack = { lyricsEditing = false },
-                    onSave = { contract.saveLyrics(it) },
+                    onSave = { lyrics, edited -> contract.saveLyrics(lyrics, edited) },
                     onRefetch = { provider, onResult -> contract.refetchLyrics(provider, onResult) },
                 )
             } else if (lyricsExpanded) {
@@ -144,6 +159,7 @@ fun FullPlayerOverlay(
                     contract = contract,
                     onBack = onBack,
                     onLyricsTap = { lyricsExpanded = true },
+                    onInfoTap = { showSongInfo = true },
                 )
             }
         }
@@ -158,6 +174,7 @@ private fun FullPlayerContent(
     contract: PlayerContract,
     onBack: () -> Unit,
     onLyricsTap: () -> Unit,
+    onInfoTap: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -171,12 +188,22 @@ private fun FullPlayerContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.Filled.KeyboardArrowDown,
                     contentDescription = "Collapse player",
                     modifier = Modifier.size(32.dp),
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = onInfoTap) {
+                Icon(
+                    imageVector = Icons.Filled.Info,
+                    contentDescription = "Song info",
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
             }
         }
@@ -617,4 +644,91 @@ private fun LyricsFullScreen(
             }
         }
     }
+}
+
+// ── Song Info Formatting Helpers ─────────────────────────────────────
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return "%.1f KB".format(kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return "%.1f MB".format(mb)
+    val gb = mb / 1024.0
+    return "%.1f GB".format(gb)
+}
+
+private fun formatTimestamp2(epochMs: Long): String {
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+    return sdf.format(java.util.Date(epochMs))
+}
+
+// ── Song Info Dialog ────────────────────────────────────────────────
+
+@Composable
+private fun SongInfoDialog(
+    nowPlaying: NowPlaying?,
+    onDismiss: () -> Unit,
+) {
+    if (nowPlaying == null) return
+
+    val fields = remember(nowPlaying) {
+        listOf(
+            "Title" to nowPlaying.title.ifEmpty { "N/A" },
+            "Artists" to nowPlaying.artist.ifEmpty { "N/A" },
+            "Album" to nowPlaying.album.ifEmpty { "N/A" },
+            "Spotify ID" to nowPlaying.spotifyId.ifEmpty { "N/A" },
+            "YouTube ID" to (nowPlaying.ytId ?: "N/A"),
+            "YouTube URL" to (nowPlaying.ytUrl ?: "N/A"),
+            "YouTube Name" to (nowPlaying.ytName ?: "N/A"),
+            "YouTube Channel" to (nowPlaying.ytChannel ?: "N/A"),
+            "File Path" to (nowPlaying.filePath ?: "N/A"),
+            "Status" to nowPlaying.status.ifEmpty { "N/A" },
+            "Error" to (nowPlaying.error ?: "N/A"),
+            "Duration (ms)" to nowPlaying.durationMs.toString(),
+            "Position" to nowPlaying.position.toString(),
+            "Bitrate" to (nowPlaying.bitrate?.let { "${it} kbps" } ?: "N/A"),
+            "File Size" to (nowPlaying.fileSize?.let { formatFileSize(it) } ?: "N/A"),
+            "Downloaded At" to (nowPlaying.downloadedAt?.let { formatTimestamp2(it) } ?: "N/A"),
+            "Lyrics Source" to (nowPlaying.lyricsSource ?: "N/A"),
+            "Lyrics Edited" to if (nowPlaying.lyricsEdited) "Yes" else "No",
+            "Lyrics" to (nowPlaying.lyrics?.let {
+                if (it.length > 200) it.take(200) + "..." else it
+            } ?: "N/A"),
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Song Info",
+                style = MaterialTheme.typography.titleLarge,
+            )
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 400.dp),
+            ) {
+                items(fields) { (label, value) ->
+                    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = value,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 }

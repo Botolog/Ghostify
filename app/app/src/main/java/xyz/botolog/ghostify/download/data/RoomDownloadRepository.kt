@@ -143,6 +143,22 @@ class RoomDownloadRepository(
         songDao.updateLyrics(songId, lyrics)
     }
 
+    override suspend fun updateYoutubeMeta(songId: String, ytUrl: String?, ytName: String?, ytChannel: String?) {
+        songDao.updateYoutubeMeta(songId, ytUrl, ytName, ytChannel)
+    }
+
+    override suspend fun updateDownloadMeta(songId: String, bitrate: Int?, fileSize: Long?, downloadedAt: Long?) {
+        songDao.updateDownloadMeta(songId, bitrate, fileSize, downloadedAt)
+    }
+
+    override suspend fun updateLyricsSource(songId: String, source: String?) {
+        songDao.updateLyricsSource(songId, source)
+    }
+
+    override suspend fun updateLyricsEdited(songId: String, edited: Boolean) {
+        songDao.updateLyricsEdited(songId, edited)
+    }
+
     private fun SongEntity.toRecord(): SongRecord = SongRecord(
         id = id,
         playlistId = playlistId,

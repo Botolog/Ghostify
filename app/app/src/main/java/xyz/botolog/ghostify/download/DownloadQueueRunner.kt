@@ -238,6 +238,9 @@ class DownloadQueueRunner(
             }
             result.isSuccess -> {
                 repo.setStatus(songId, DownloadStatus.DOWNLOADED, filePath = result.filePath, lyrics = result.lyrics)
+                repo.updateYoutubeMeta(songId, result.ytUrl, result.ytName, result.ytChannel)
+                val bitrateInt = result.bitrate?.trimEnd('k')?.toIntOrNull()
+                repo.updateDownloadMeta(songId, bitrateInt, result.fileSize, System.currentTimeMillis())
                 Timber.d("DownloadQueueRunner: song $songId state changed to DOWNLOADED")
             }
             else -> {

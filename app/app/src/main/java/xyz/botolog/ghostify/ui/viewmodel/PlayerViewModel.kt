@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import timber.log.Timber
 
@@ -47,6 +48,9 @@ class PlayerViewModel(
     /** Current lyrics for the active track, observed reactively from the DB. */
     private val currentLyrics = MutableStateFlow<String?>(null)
 
+    /** Current song entity for the active track, observed reactively from the DB. */
+    private val currentSongEntity = MutableStateFlow<xyz.botolog.ghostify.data.db.entity.SongEntity?>(null)
+
     /** Current song id — drives the lyrics observation switch. */
     private val currentSongId = MutableStateFlow<String?>(null)
 
@@ -71,15 +75,29 @@ class PlayerViewModel(
                 }
         }
 
-        // Observe player state, queue flag, AND lyrics — combine all three into one emission
-        // so lyrics never get overwritten by a stale player-state update.
+        // Observe full song entity reactively — switch to a new Flow whenever the current track changes.
         launch {
-            combine(player.state, queueOpen, currentLyrics) { core, open, lyrics ->
-                val ui = mapToUi(core, open)
-                // Sync the current song id for lyrics observation.
+            currentSongId
+                .flatMapLatest { id ->
+                    if (id != null) songDao.observeById(id) else emptyFlow()
+                }
+                .catch { e -> Timber.e(e, "PlayerViewModel: songEntity stream FAILED") }
+                .collect { entity ->
+                    currentSongEntity.value = entity
+                }
+        }
+
+        // Observe player state, queue flag, lyrics, AND song entity — combine all four into one emission.
+        launch {
+            combine(player.state, queueOpen, currentLyrics, currentSongEntity) { core, open, lyrics, entity ->
+                val ui = mapToUi(core, open, entity)
                 val mediaId = ui.nowPlaying?.let { findMediaId(ui) }
                 currentSongId.value = mediaId
-                ui.copy(lyrics = lyrics)
+                ui.copy(
+                    lyrics = lyrics,
+                    lyricsSource = entity?.lyricsSource,
+                    lyricsEdited = entity?.lyricsEdited == true,
+                )
             }
                 .catch { e -> Timber.e(e, "PlayerViewModel: stream collection FAILED") }
                 .collect { _state.value = it }
@@ -153,7 +171,7 @@ class PlayerViewModel(
         }
     }
 
-    override fun saveLyrics(lyrics: String) {
+    override fun saveLyrics(lyrics: String, edited: Boolean) {
         Timber.i("PlayerViewModel.saveLyrics: START")
         val songId = currentSongId.value ?: run {
             Timber.w("PlayerViewModel.saveLyrics: no nowPlaying")
@@ -162,6 +180,9 @@ class PlayerViewModel(
         launch {
             try {
                 downloads.updateLyricsForSong(songId, lyrics)
+                if (edited) {
+                    downloads.markLyricsEdited(songId)
+                }
                 Timber.i("PlayerViewModel.saveLyrics: done")
             } catch (e: Exception) {
                 Timber.e(e, "PlayerViewModel.saveLyrics: FAILED")
@@ -194,12 +215,16 @@ class PlayerViewModel(
      * @param core the current state from the player core.
      * @param open whether the queue drawer is visible.
      */
-    private fun mapToUi(core: CorePlayerUiState, open: Boolean): PlayerUiState {
+    private fun mapToUi(
+        core: CorePlayerUiState,
+        open: Boolean,
+        songEntity: xyz.botolog.ghostify.data.db.entity.SongEntity?,
+    ): PlayerUiState {
         val isEmpty = core.nothingToPlay || core.queue.isEmpty()
         val current = core.currentItem
         return PlayerUiState(
             empty = isEmpty,
-            nowPlaying = if (isEmpty || current == null) null else toNowPlaying(current),
+            nowPlaying = if (isEmpty || current == null) null else toNowPlaying(current, songEntity),
             isPlaying = core.isPlaying,
             positionMs = core.positionMs,
             durationMs = core.durationMs,
@@ -241,11 +266,31 @@ class PlayerViewModel(
      *
      * @param current the current item from the player core.
      */
-    private fun toNowPlaying(current: CurrentItem): NowPlaying = NowPlaying(
+    private fun toNowPlaying(
+        current: CurrentItem,
+        entity: xyz.botolog.ghostify.data.db.entity.SongEntity?,
+    ): NowPlaying = NowPlaying(
         title = current.title.orEmpty(),
         artist = current.artist.orEmpty(),
         album = current.album.orEmpty(),
         coverUrl = coverFor(current),
+        id = entity?.id.orEmpty(),
+        spotifyId = entity?.spotifyId.orEmpty(),
+        ytId = entity?.ytId,
+        filePath = entity?.filePath,
+        status = entity?.status?.name.orEmpty(),
+        error = entity?.error,
+        lyrics = entity?.lyrics,
+        durationMs = entity?.durationMs?.toLong() ?: 0L,
+        position = entity?.position ?: 0,
+        lyricsSource = entity?.lyricsSource,
+        lyricsEdited = entity?.lyricsEdited ?: false,
+        ytUrl = entity?.ytUrl,
+        ytName = entity?.ytName,
+        ytChannel = entity?.ytChannel,
+        bitrate = entity?.bitrate,
+        fileSize = entity?.fileSize,
+        downloadedAt = entity?.downloadedAt,
     )
 
     /**

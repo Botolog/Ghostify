@@ -114,6 +114,23 @@ data class NowPlaying(
     val artist: String,
     val album: String,
     val coverUrl: Any?,
+    val id: String = "",
+    val spotifyId: String = "",
+    val ytId: String? = null,
+    val filePath: String? = null,
+    val status: String = "",
+    val error: String? = null,
+    val lyrics: String? = null,
+    val durationMs: Long = 0L,
+    val position: Int = 0,
+    val lyricsSource: String? = null,
+    val lyricsEdited: Boolean = false,
+    val ytUrl: String? = null,
+    val ytName: String? = null,
+    val ytChannel: String? = null,
+    val bitrate: Int? = null,
+    val fileSize: Long? = null,
+    val downloadedAt: Long? = null,
 )
 
 /**

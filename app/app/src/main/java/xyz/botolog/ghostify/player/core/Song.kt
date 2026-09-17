@@ -66,6 +66,15 @@ data class Song(
     val status: SongStatus,
     val coverUrl: String? = null,
     val lyrics: String? = null,
+    val lyricsSource: String? = null,
+    val lyricsEdited: Boolean = false,
+    val ytId: String? = null,
+    val ytUrl: String? = null,
+    val ytName: String? = null,
+    val ytChannel: String? = null,
+    val bitrate: Int? = null,
+    val fileSize: Long? = null,
+    val downloadedAt: Long? = null,
 ) {
     /**
      * Whether this song is ready for playback.

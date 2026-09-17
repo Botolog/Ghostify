@@ -144,4 +144,28 @@ interface DownloadRepository {
      * @param lyrics the lyrics text, or null to clear.
      */
     suspend fun updateLyrics(songId: String, lyrics: String?)
+
+    /**
+     * Updates YouTube metadata for a song without touching its status.
+     *
+     * @param songId the song to update.
+     * @param ytUrl the YouTube video URL, or null to clear.
+     * @param ytName the YouTube video title, or null to clear.
+     * @param ytChannel the YouTube channel name, or null to clear.
+     */
+    suspend fun updateYoutubeMeta(songId: String, ytUrl: String?, ytName: String?, ytChannel: String?)
+
+    /**
+     * Updates download metadata for a song without touching its status.
+     *
+     * @param songId the song to update.
+     * @param bitrate the audio bitrate in kbps, or null to clear.
+     * @param fileSize the file size in bytes, or null to clear.
+     * @param downloadedAt epoch millis when downloaded, or null to clear.
+     */
+    suspend fun updateDownloadMeta(songId: String, bitrate: Int?, fileSize: Long?, downloadedAt: Long?)
+
+    suspend fun updateLyricsSource(songId: String, source: String?)
+
+    suspend fun updateLyricsEdited(songId: String, edited: Boolean)
 }

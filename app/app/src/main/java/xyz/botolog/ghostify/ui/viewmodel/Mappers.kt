@@ -72,6 +72,15 @@ internal fun SongEntity.toPlayerSong(): PlayerSong = PlayerSong(
     status = PlayerSongStatus.fromValue(status.name),
     coverUrl = coverUrl,
     lyrics = lyrics,
+    lyricsSource = lyricsSource,
+    lyricsEdited = lyricsEdited,
+    ytId = ytId,
+    ytUrl = ytUrl,
+    ytName = ytName,
+    ytChannel = ytChannel,
+    bitrate = bitrate,
+    fileSize = fileSize,
+    downloadedAt = downloadedAt,
 )
 
 /**

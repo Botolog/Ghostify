@@ -99,7 +99,7 @@ private fun parseTimestamp(text: String): Long? {
 fun LyricsEditView(
     lyrics: String?,
     onBack: () -> Unit,
-    onSave: (String) -> Unit,
+    onSave: (String, Boolean) -> Unit,
     onRefetch: (String, (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -149,7 +149,7 @@ fun LyricsEditView(
     }
 
     fun save() {
-        onSave(toLrcString(lines))
+        onSave(toLrcString(lines), true)
         Toast.makeText(context, "Lyrics saved", Toast.LENGTH_SHORT).show()
         onBack()
     }

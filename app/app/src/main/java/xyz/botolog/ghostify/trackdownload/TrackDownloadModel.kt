@@ -150,6 +150,9 @@ sealed class TrackDownloadResult {
         val bitrate: String?,
         val durationMs: Long?,
         val lyrics: String? = null,
+        val ytUrl: String? = null,
+        val ytName: String? = null,
+        val ytChannel: String? = null,
     ) : TrackDownloadResult()
 
     /** The track was already present (sidecar match) and skipped — no network. */
@@ -161,6 +164,9 @@ sealed class TrackDownloadResult {
         val album: String?,
         val bitrate: String?,
         val lyrics: String? = null,
+        val ytUrl: String? = null,
+        val ytName: String? = null,
+        val ytChannel: String? = null,
     ) : TrackDownloadResult()
 
     /** The download failed; see [error] for a typed, user-safe explanation. */
@@ -199,6 +205,9 @@ sealed class TrackDownloadResult {
             val bitrate: String?,
             val durationMs: Long?,
             val fileSize: Long?,
+            val ytUrl: String?,
+            val ytName: String?,
+            val ytChannel: String?,
         )
 
         private fun parseMetadata(map: Map<*, *>): TrackMetadata = TrackMetadata(
@@ -208,6 +217,9 @@ sealed class TrackDownloadResult {
             bitrate = map["bitrate"] as? String,
             durationMs = (map["duration_ms"] as? Number)?.toLong(),
             fileSize = (map["file_size"] as? Number)?.toLong(),
+            ytUrl = map["yt_url"] as? String,
+            ytName = map["yt_name"] as? String,
+            ytChannel = map["yt_channel"] as? String,
         )
 
         private fun parseDownloaded(
@@ -224,6 +236,9 @@ sealed class TrackDownloadResult {
             bitrate = metadata.bitrate,
             durationMs = metadata.durationMs,
             lyrics = map["lyrics"] as? String,
+            ytUrl = metadata.ytUrl,
+            ytName = metadata.ytName,
+            ytChannel = metadata.ytChannel,
         )
 
         private fun parseSkipped(
@@ -238,6 +253,9 @@ sealed class TrackDownloadResult {
             album = metadata.album,
             bitrate = metadata.bitrate,
             lyrics = map["lyrics"] as? String,
+            ytUrl = metadata.ytUrl,
+            ytName = metadata.ytName,
+            ytChannel = metadata.ytChannel,
         )
 
         private fun parseFailure(url: String, map: Map<*, *>): Failure = Failure(

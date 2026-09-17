@@ -219,6 +219,10 @@ class DownloadManager(
         Timber.i("DownloadManager.updateLyricsForSong: done songId=$songId")
     }
 
+    suspend fun markLyricsEdited(songId: String) {
+        repo.updateLyricsEdited(songId, true)
+    }
+
     suspend fun retryLyricsForSong(songId: String, provider: String = "synced") {
         Timber.i("DownloadManager.retryLyricsForSong: START songId=$songId, provider=$provider")
         val song = repo.getSong(songId) ?: run {
@@ -230,6 +234,7 @@ class DownloadManager(
         }
         if (lyrics != null) {
             repo.updateLyrics(songId, lyrics)
+            repo.updateLyricsSource(songId, provider)
             Timber.i("DownloadManager.retryLyricsForSong: saved ${lyrics.length} chars for $songId")
         } else {
             Timber.i("DownloadManager.retryLyricsForSong: no lyrics found for $songId")
@@ -247,6 +252,7 @@ class DownloadManager(
         }
         if (lyrics != null) {
             repo.updateLyrics(songId, lyrics)
+            repo.updateLyricsSource(songId, provider)
             Timber.i("DownloadManager.fetchLyricsForSong: saved ${lyrics.length} chars")
         } else {
             Timber.i("DownloadManager.fetchLyricsForSong: no lyrics found")
