@@ -183,7 +183,7 @@ class PlaylistMetadataBridge(
 
         val DEFAULT_OPTIONS: Map<String, Any> = mapOf(
             "timeout" to DEFAULT_TIMEOUT,
-            "resolve_yt" to true,
+            "resolve_yt" to false,
             "per_track_yt_timeout" to DEFAULT_YT_TIMEOUT,
         )
 
