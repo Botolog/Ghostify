@@ -62,6 +62,10 @@ class DownloadQueueRunnerTest {
 
         override suspend fun allPlaylistIds(): List<String> =
             songs.values.map { it.playlistId }.distinct()
+
+        override suspend fun updateLyrics(songId: String, lyrics: String?) {
+            // no-op – not exercised by these tests
+        }
     }
 
     private class FakeTrackDownloader(
