@@ -2,6 +2,11 @@ package xyz.botolog.ghostify
 
 import android.app.Application
 import android.util.Log
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
+import coil.request.ImageRequest
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import xyz.botolog.ghostify.crash.CrashMarker
@@ -51,10 +56,28 @@ import timber.log.Timber
  * Dependency injection is manual (PROJECT.md §7.1): this class owns the
  * process-wide singletons and exposes them through [container].
  */
-class GhostifyApplication : Application() {
+class GhostifyApplication : Application(), ImageLoaderFactory {
 
     /** Process-wide composition root, built lazily on first access. */
     val container: GhostifyContainer by lazy { GhostifyContainer(this) }
+
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.02)
+                    .build()
+            }
+            .crossfade(true)
+            .respectCacheHeaders(false)
+            .build()
+    }
 
     lateinit var fileLoggingTree: FileLoggingTree
         private set

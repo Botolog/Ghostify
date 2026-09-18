@@ -24,6 +24,7 @@ import timber.log.Timber
 import java.io.File
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 
 /**
@@ -66,9 +67,10 @@ class PlaylistDetailViewModel(
 
     /** Cached tracks list — only rebuilt when the underlying songs change. */
     private var cachedTracks: List<TrackUi> = emptyList()
-    private var lastSongsKey: List<Pair<String, DataSongStatus>> = emptyList()
+    private var lastSongsHash: Int = 0
     private var cachedTotalDurationMs: Long = 0L
     private var cachedTotalFileSizeBytes: Long = 0L
+    private val fileSizeCache = mutableMapOf<String, Long>()
 
     init {
         Timber.i("PlaylistDetailViewModel: init")
@@ -80,26 +82,29 @@ class PlaylistDetailViewModel(
                 syncing,
                 error,
             ) { playlist, songs, progress, isSyncing, loadError ->
-                val songsKey = songs.map { it.id to it.status }
-                if (songsKey != lastSongsKey) {
-                    lastSongsKey = songsKey
+                val songsHash = songs.hashCode()
+                if (songsHash != lastSongsHash) {
+                    lastSongsHash = songsHash
                     cachedTracks = songs.sortedBy { it.position }.map { it.toTrackUi() }
                     cachedTotalDurationMs = songs.sumOf { it.durationMs.toLong() }
                     cachedTotalFileSizeBytes = withContext(Dispatchers.IO) {
                         songs.sumOf { song ->
-                            song.fileSize ?: song.filePath?.let { path ->
-                                try {
-                                    val file = File(path)
-                                    if (file.exists()) file.length() else 0L
-                                } catch (_: Exception) {
-                                    0L
-                                }
-                            } ?: 0L
+                            song.fileSize ?: fileSizeCache.getOrPut(song.id) {
+                                song.filePath?.let { path ->
+                                    try {
+                                        val file = File(path)
+                                        if (file.exists()) file.length() else 0L
+                                    } catch (_: Exception) {
+                                        0L
+                                    }
+                                } ?: 0L
+                            }
                         }
                     }
                 }
                 mapToUi(playlist, progress, isSyncing, loadError)
             }
+                .distinctUntilChanged()
                 .catch { e ->
                     Timber.e(e, "PlaylistDetailViewModel: playlist stream FAILED")
                     _state.update {

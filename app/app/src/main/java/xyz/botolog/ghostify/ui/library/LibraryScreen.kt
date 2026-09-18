@@ -387,6 +387,9 @@ private fun PlaylistRow(
  */
 @Composable
 private fun PlaylistInfoColumn(playlist: PlaylistUi, now: () -> Long, modifier: Modifier = Modifier) {
+    val syncText = remember(playlist.lastSyncedAt, now()) {
+        "Synced ${TimeFormat.formatRelative(playlist.lastSyncedAt, now())}"
+    }
     Column(modifier = modifier) {
         Text(
             text = playlist.name,
@@ -402,7 +405,7 @@ private fun PlaylistInfoColumn(playlist: PlaylistUi, now: () -> Long, modifier: 
             modifier = Modifier.testTag(LibraryTestTags.COUNT),
         )
         Text(
-            text = "Synced ${TimeFormat.formatRelative(playlist.lastSyncedAt, now())}",
+            text = syncText,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.testTag(LibraryTestTags.SYNC_TIME),

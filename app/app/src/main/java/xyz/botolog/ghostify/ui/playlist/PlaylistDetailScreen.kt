@@ -1,12 +1,8 @@
 package xyz.botolog.ghostify.ui.playlist
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -476,36 +472,45 @@ private fun PlaylistContent(
 
     val coverSize by animateDpAsState(
         targetValue = COVER_SIZE * (1f - collapseProgress) + COVER_SIZE_COLLAPSED * collapseProgress,
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        animationSpec = tween(durationMillis = 50),
         label = "coverSize",
     )
 
-    val titleSize by remember {
-        derivedStateOf { 22f - (22f - 16f) * collapseProgress }
+    val titleScale by remember {
+        derivedStateOf { 1f - (1f - 16f / 22f) * collapseProgress }
     }
 
     val showSubtitle by remember {
         derivedStateOf { collapseProgress < 0.5f }
     }
 
+    val showCollapsed by remember {
+        derivedStateOf { collapseProgress > 0.8f }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().testTag(PlaylistDetailTestTags.TRACK_LIST),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             item(key = "header") {
                 ExpandedHeader(
                     state = state,
                     contract = contract,
                     coverSize = coverSize,
-                    titleSize = titleSize,
+                    titleScale = titleScale,
                     showSubtitle = showSubtitle,
                 )
             }
             item(key = "syncing") {
                 SyncingIndicator(isSyncing = state.isSyncing)
             }
-            items(state.tracks, key = { it.id }, contentType = { "track" }) { track ->
+            items(
+                state.tracks,
+                key = { it.id },
+                contentType = { "track_${it.status}" },
+            ) { track ->
                 TrackRow(
                     track = track,
                     isHighlighted = track.id == highlightSongId,
@@ -516,11 +521,13 @@ private fun PlaylistContent(
             }
         }
 
-        CollapsedBar(
-            state = state,
-            contract = contract,
-            collapseProgress = collapseProgress,
-        )
+        if (showCollapsed) {
+            CollapsedBar(
+                state = state,
+                contract = contract,
+                collapseProgress = collapseProgress,
+            )
+        }
     }
 }
 
@@ -532,7 +539,7 @@ private fun ExpandedHeader(
     state: PlaylistDetailUiState,
     contract: PlaylistDetailContract,
     coverSize: androidx.compose.ui.unit.Dp,
-    titleSize: Float,
+    titleScale: Float,
     showSubtitle: Boolean,
 ) {
     Column(
@@ -557,7 +564,11 @@ private fun ExpandedHeader(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     state.name,
-                    fontSize = titleSize.sp,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = titleScale
+                        scaleY = titleScale
+                    },
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -705,108 +716,99 @@ private fun CollapsedBar(
     contract: PlaylistDetailContract,
     collapseProgress: Float,
 ) {
-    val alpha by animateFloatAsState(
-        targetValue = if (collapseProgress > 0.8f) 1f else 0f,
-        animationSpec = tween(200),
-        label = "collapsedAlpha",
-    )
-
-    if (alpha > 0f) {
-        Surface(
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .zIndex(10f),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 4.dp,
+    ) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .graphicsLayer { this.alpha = alpha }
-                .zIndex(10f),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 4.dp,
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
+            AsyncImage(
+                model = state.coverUrl,
+                contentDescription = null,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AsyncImage(
-                    model = state.coverUrl,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(COVER_SIZE_COLLAPSED)
-                        .clip(RoundedCornerShape(4.dp)),
-                    contentScale = ContentScale.Crop,
+                    .size(COVER_SIZE_COLLAPSED)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Crop,
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    state.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+            }
 
-                Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
-                Column(modifier = Modifier.weight(1f)) {
+            IconButton(
+                onClick = contract::playAll,
+                enabled = state.downloadedCount > 0 && !state.isSyncing,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "Play all",
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(36.dp)) {
+                if (state.isDownloadingAll) {
+                    CircularProgressIndicator(
+                        progress = { ((state.downloadAllProgress ?: 0) / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier.size(36.dp),
+                        strokeWidth = 3.dp,
+                        strokeCap = StrokeCap.Round,
+                    )
                     Text(
-                        state.name,
-                        style = MaterialTheme.typography.titleMedium,
+                        text = "${state.downloadAllProgress ?: 0}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                IconButton(
-                    onClick = contract::playAll,
-                    enabled = state.downloadedCount > 0 && !state.isSyncing,
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        Icons.Filled.PlayArrow,
-                        contentDescription = "Play all",
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(36.dp)) {
-                    if (state.isDownloadingAll) {
-                        CircularProgressIndicator(
-                            progress = { ((state.downloadAllProgress ?: 0) / 100f).coerceIn(0f, 1f) },
-                            modifier = Modifier.size(36.dp),
-                            strokeWidth = 3.dp,
-                            strokeCap = StrokeCap.Round,
-                        )
-                        Text(
-                            text = "${state.downloadAllProgress ?: 0}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    } else {
-                        IconButton(
-                            onClick = contract::downloadAll,
-                            enabled = state.trackCount > 0 && !state.isSyncing,
-                            modifier = Modifier.size(36.dp),
-                        ) {
-                            Icon(
-                                Icons.Filled.Download,
-                                contentDescription = "Download all",
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
-                }
-
-                IconButton(
-                    onClick = contract::sync,
-                    enabled = !state.isSyncing && !state.isDownloadingAll,
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    if (state.isSyncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
+                } else {
+                    IconButton(
+                        onClick = contract::downloadAll,
+                        enabled = state.trackCount > 0 && !state.isSyncing,
+                        modifier = Modifier.size(36.dp),
+                    ) {
                         Icon(
-                            Icons.Filled.Sync,
-                            contentDescription = "Sync",
+                            Icons.Filled.Download,
+                            contentDescription = "Download all",
                             modifier = Modifier.size(18.dp),
                         )
                     }
+                }
+            }
+
+            IconButton(
+                onClick = contract::sync,
+                enabled = !state.isSyncing && !state.isDownloadingAll,
+                modifier = Modifier.size(36.dp),
+            ) {
+                if (state.isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.Sync,
+                        contentDescription = "Sync",
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }
