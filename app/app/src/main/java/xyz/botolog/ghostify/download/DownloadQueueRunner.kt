@@ -6,11 +6,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Outcome of a download run.
@@ -156,7 +158,7 @@ class DownloadQueueRunner(
         val semaphore = Semaphore(concurrency)
 
         try {
-            downloadAllTracks(playlistId, selected, cancellationToken, semaphore, onProgress, onSongProgress)
+            downloadAllTracks(playlistId, selected, cancellationToken, concurrency, semaphore, onProgress, onSongProgress)
             checkCancellation(cancellationToken)
         } catch (e: UserCanceledException) {
             Timber.i("DownloadQueueRunner.run: user cancelled")
@@ -177,14 +179,16 @@ class DownloadQueueRunner(
         playlistId: String,
         selected: List<SongRecord>,
         cancellationToken: () -> Boolean,
+        concurrency: Int,
         semaphore: Semaphore,
         onProgress: (DownloadProgress) -> Unit,
         onSongProgress: (songId: String, fraction: Float) -> Unit,
     ) {
+        val downloadIndex = AtomicInteger(0)
         coroutineScope {
             selected.map { song ->
                 async {
-                    downloadSingleTrack(playlistId, song, cancellationToken, semaphore, onProgress, onSongProgress)
+                    downloadSingleTrack(playlistId, song, cancellationToken, concurrency, semaphore, downloadIndex, onProgress, onSongProgress)
                 }
             }.awaitAll()
         }
@@ -194,13 +198,22 @@ class DownloadQueueRunner(
         playlistId: String,
         song: SongRecord,
         cancellationToken: () -> Boolean,
+        concurrency: Int,
         semaphore: Semaphore,
+        downloadIndex: AtomicInteger,
         onProgress: (DownloadProgress) -> Unit,
         onSongProgress: (songId: String, fraction: Float) -> Unit,
     ) {
         semaphore.withPermit {
             currentCoroutineContext().ensureActive()
             if (cancellationToken()) throw UserCanceledException()
+
+            val index = downloadIndex.getAndIncrement()
+            if (index < concurrency) {
+                val staggerMs = STAGGER_DELAY_PER_INDEX_MS * index
+                Timber.d("DownloadQueueRunner: song ${song.id} waiting ${staggerMs}ms (index=$index) before download")
+                delay(staggerMs)
+            }
 
             repo.setStatus(song.id, DownloadStatus.DOWNLOADING)
             Timber.d("DownloadQueueRunner: song ${song.id} state changed to DOWNLOADING")
@@ -314,5 +327,6 @@ class DownloadQueueRunner(
         const val MIN_CONCURRENCY = 1
         const val DOWNLOAD_FAILED_MESSAGE = "Download failed"
         const val CANCEL_ERROR_MESSAGE = "Download canceled"
+        const val STAGGER_DELAY_PER_INDEX_MS = 2000L
     }
 }

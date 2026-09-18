@@ -149,8 +149,21 @@ class PlaylistDetailViewModel(
     override fun playAll() {
         Timber.i("PlaylistDetailViewModel.playAll: START")
         launch {
-            val songs = getDownloadedSongs()
-            player.playPlaylist(songs)
+            val batchSize = 200
+            val firstBatch = songRepo.getDownloadedSongsBatch(playlistId, batchSize, 0)
+                .filter { it.status == DataSongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
+                .sortedBy { it.position }
+                .map { it.toPlayerSong() }
+            player.playPlaylistLazy(
+                initialBatch = firstBatch,
+                loadMore = { offset ->
+                    val raw = songRepo.getDownloadedSongsBatch(playlistId, batchSize, offset)
+                    if (raw.isEmpty()) return@playPlaylistLazy null
+                    raw.filter { it.status == DataSongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
+                        .sortedBy { it.position }
+                        .map { it.toPlayerSong() }
+                },
+            )
         }
     }
 
@@ -167,8 +180,22 @@ class PlaylistDetailViewModel(
     override fun playFromSong(songId: String) {
         Timber.i("PlaylistDetailViewModel.playFromSong: START $songId")
         launch {
-            val songs = getDownloadedSongs()
-            player.playPlaylist(songs, startSongId = songId)
+            val batchSize = 200
+            val firstBatch = songRepo.getDownloadedSongsBatch(playlistId, batchSize, 0)
+                .filter { it.status == DataSongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
+                .sortedBy { it.position }
+                .map { it.toPlayerSong() }
+            player.playPlaylistLazy(
+                initialBatch = firstBatch,
+                startSongId = songId,
+                loadMore = { offset ->
+                    val raw = songRepo.getDownloadedSongsBatch(playlistId, batchSize, offset)
+                    if (raw.isEmpty()) return@playPlaylistLazy null
+                    raw.filter { it.status == DataSongStatus.DOWNLOADED && !it.filePath.isNullOrBlank() }
+                        .sortedBy { it.position }
+                        .map { it.toPlayerSong() }
+                },
+            )
         }
     }
 

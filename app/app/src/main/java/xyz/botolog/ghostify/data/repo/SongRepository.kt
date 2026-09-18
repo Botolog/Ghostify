@@ -64,6 +64,18 @@ class SongRepository(
     }
 
     /**
+     * Fetches a batch of downloaded songs for lazy queue loading.
+     *
+     * @param playlistId The playlist to query.
+     * @param limit Maximum number of songs to return.
+     * @param offset Number of songs to skip.
+     * @return The ordered list of downloaded songs in this batch.
+     */
+    suspend fun getDownloadedSongsBatch(playlistId: String, limit: Int, offset: Int): List<SongEntity> {
+        return songDao.getDownloadedSongsPaged(playlistId, limit, offset)
+    }
+
+    /**
      * One-shot fetch of songs filtered by status.
      *
      * @param playlistId The playlist to filter within.

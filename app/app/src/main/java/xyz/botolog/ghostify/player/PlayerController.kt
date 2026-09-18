@@ -16,6 +16,7 @@ import xyz.botolog.ghostify.player.core.ErrorAction
 import xyz.botolog.ghostify.player.core.PlaybackConstants
 import xyz.botolog.ghostify.player.core.PlayerError
 import xyz.botolog.ghostify.player.core.PlayerErrorClassifier
+import xyz.botolog.ghostify.player.core.LazyPlayerQueueBuilder
 import xyz.botolog.ghostify.player.core.PlayerQueueBuilder
 import xyz.botolog.ghostify.player.core.PlayerSnapshot
 import xyz.botolog.ghostify.player.core.PlayerStateMapper
@@ -104,11 +105,90 @@ class PlayerController private constructor(
         Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId")
         // A new playlist supersedes any in-flight artwork backfill from the previous queue.
         cancelArtworkBackfill("superseded by new playPlaylist")
+        backfillJob?.cancel()
+        backfillJob = null
         scope.launch(Dispatchers.IO) {
             when (val result = queueBuilder.build(songs, startSongId)) {
                 is QueueBuildResult.NothingToPlay -> handleNothingToPlay()
                 is QueueBuildResult.Ready -> handleQueueReady(result)
             }
+        }
+    }
+
+    private var backfillJob: Job? = null
+
+    /**
+     * Lazily builds a queue: starts playback with [initialBatch], then loads more songs
+     * in the background via [loadMore] and appends them to ExoPlayer incrementally.
+     *
+     * This avoids blocking playback while validating thousands of files on disk.
+     *
+     * @param initialBatch first page of songs (already fetched by the caller).
+     * @param startSongId optional song to start from; defaults to the first playable item.
+     * @param loadMore suspend function returning the next batch of songs, or `null` when done.
+     */
+    fun playPlaylistLazy(
+        initialBatch: List<Song>,
+        startSongId: String? = null,
+        loadMore: suspend (offset: Int) -> List<Song>?,
+    ) {
+        Timber.i("playPlaylistLazy: initialBatch=${initialBatch.size}, startSongId=$startSongId")
+        cancelArtworkBackfill("superseded by new playPlaylistLazy")
+        backfillJob?.cancel()
+        scope.launch(Dispatchers.IO) {
+            val lazyBuilder = LazyPlayerQueueBuilder()
+            when (val result = lazyBuilder.buildInitial(initialBatch, startSongId)) {
+                is QueueBuildResult.NothingToPlay -> {
+                    // Initial batch had nothing — try loading more
+                    val nextBatch = loadMore(initialBatch.size)
+                    if (nextBatch.isNullOrEmpty()) {
+                        handleNothingToPlay()
+                        return@launch
+                    }
+                    when (val retry = lazyBuilder.buildInitial(nextBatch, startSongId)) {
+                        is QueueBuildResult.NothingToPlay -> handleNothingToPlay()
+                        is QueueBuildResult.Ready -> {
+                            handleQueueReady(retry)
+                            launchBackfill(lazyBuilder, retry.items.size + initialBatch.size, loadMore)
+                        }
+                    }
+                }
+                is QueueBuildResult.Ready -> {
+                    handleQueueReady(result)
+                    launchBackfill(lazyBuilder, initialBatch.size, loadMore)
+                }
+            }
+        }
+    }
+
+    /**
+     * Loads remaining songs in the background and appends them to the ExoPlayer queue.
+     */
+    private fun launchBackfill(
+        lazyBuilder: LazyPlayerQueueBuilder,
+        offset: Int,
+        loadMore: suspend (offset: Int) -> List<Song>?,
+    ) {
+        backfillJob = scope.launch(Dispatchers.IO) {
+            var currentOffset = offset
+            while (isActive) {
+                val batch = loadMore(currentOffset) ?: break
+                if (batch.isEmpty()) break
+                val newItems = lazyBuilder.loadMore(batch)
+                if (newItems.isNotEmpty()) {
+                    val mediaItems = newItems.map { item ->
+                        MediaItemMapper.toMediaItem(item, null)
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        exoPlayer.addMediaItems(mediaItems)
+                        _state.update { it.copy(queue = lazyBuilder.allItemsCopy()) }
+                    }
+                    Timber.d("playPlaylistLazy: appended ${newItems.size} items, total=${lazyBuilder.totalItems}")
+                }
+                currentOffset += batch.size
+                if (lazyBuilder.isFullyLoaded(batch.size, LazyPlayerQueueBuilder.INITIAL_BATCH_SIZE)) break
+            }
+            Timber.i("playPlaylistLazy: backfill complete, total=${lazyBuilder.totalItems}")
         }
     }
 
@@ -337,6 +417,7 @@ class PlayerController private constructor(
     fun release() {
         Timber.i("PlayerController.release: START")
         tickerJob?.cancel()
+        backfillJob?.cancel()
         cancelArtworkBackfill("controller released")
         exoPlayer.removeListener(this)
         scope.cancel()

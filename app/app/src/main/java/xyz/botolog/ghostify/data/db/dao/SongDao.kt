@@ -40,6 +40,20 @@ interface SongDao {
     suspend fun getSongsForPlaylist(playlistId: String): List<SongEntity>
 
     /**
+     * One-shot fetch of songs for a playlist, filtered to DOWNLOADED with a file path, paginated.
+     *
+     * @param playlistId The playlist to query.
+     * @param limit Maximum number of songs to return.
+     * @param offset Number of songs to skip.
+     * @return The ordered list of downloaded songs.
+     */
+    @Query(
+        "SELECT * FROM songs WHERE playlist_id = :playlistId AND status = 'DOWNLOADED' AND file_path IS NOT NULL " +
+            "ORDER BY position ASC, added_at ASC LIMIT :limit OFFSET :offset",
+    )
+    suspend fun getDownloadedSongsPaged(playlistId: String, limit: Int, offset: Int): List<SongEntity>
+
+    /**
      * Observes songs filtered by status within a playlist.
      *
      * @param playlistId The playlist to filter within.
