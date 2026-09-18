@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.ui.contract
 
 import androidx.compose.runtime.Immutable
 import xyz.botolog.ghostify.ui.model.TrackUi
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -14,6 +15,9 @@ interface PlaylistDetailContract {
 
     /** Observable UI state for the Playlist detail screen. */
     val state: StateFlow<PlaylistDetailUiState>
+
+    /** One-shot event emitted when the playlist is deleted and the UI should navigate back. */
+    val deleted: SharedFlow<Unit>
 
     /** Download every track that is missing (PENDING / FAILED). */
     fun downloadAll()
@@ -60,6 +64,16 @@ interface PlaylistDetailContract {
      */
     fun retryTrack(trackId: String)
 
+    /** Deletes the entire playlist and navigates back. */
+    fun deletePlaylist()
+
+    /**
+     * Renames the playlist.
+     *
+     * @param newName the new name to apply.
+     */
+    fun renamePlaylist(newName: String)
+
     /**
      * Immutable UI state for the Playlist detail screen.
      *
@@ -88,5 +102,12 @@ interface PlaylistDetailContract {
         val downloadAllProgress: Int? = null,
         val isSyncing: Boolean = false,
         val error: String? = null,
+        val origin: String = "",
+        val createdAt: Long = 0L,
+        val lastSyncedAt: Long? = null,
+        val owner: String = "",
+        val spotifyId: String = "",
+        val totalDurationMs: Long = 0L,
+        val totalFileSizeBytes: Long = 0L,
     )
 }

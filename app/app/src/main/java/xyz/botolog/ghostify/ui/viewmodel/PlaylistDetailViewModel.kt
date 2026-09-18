@@ -12,13 +12,19 @@ import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract.PlaylistDetailUiState
 import xyz.botolog.ghostify.ui.model.SongStatus as UiSongStatus
 import xyz.botolog.ghostify.ui.model.TrackUi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import timber.log.Timber
+import java.io.File
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
-import timber.log.Timber
 
 /**
  * Backs the Playlist detail screen: playlist metadata, the ordered track list
@@ -49,6 +55,9 @@ class PlaylistDetailViewModel(
     private val _state = MutableStateFlow(PlaylistDetailUiState(playlistId = playlistId))
     override val state: StateFlow<PlaylistDetailUiState> = _state.asStateFlow()
 
+    private val _deleted = MutableSharedFlow<Unit>()
+    override val deleted: SharedFlow<Unit> = _deleted.asSharedFlow()
+
     /** Tracks whether a sync operation is currently in progress. */
     private val syncing = MutableStateFlow(false)
 
@@ -58,6 +67,8 @@ class PlaylistDetailViewModel(
     /** Cached tracks list — only rebuilt when the underlying songs change. */
     private var cachedTracks: List<TrackUi> = emptyList()
     private var lastSongsKey: List<Pair<String, DataSongStatus>> = emptyList()
+    private var cachedTotalDurationMs: Long = 0L
+    private var cachedTotalFileSizeBytes: Long = 0L
 
     init {
         Timber.i("PlaylistDetailViewModel: init")
@@ -73,6 +84,19 @@ class PlaylistDetailViewModel(
                 if (songsKey != lastSongsKey) {
                     lastSongsKey = songsKey
                     cachedTracks = songs.sortedBy { it.position }.map { it.toTrackUi() }
+                    cachedTotalDurationMs = songs.sumOf { it.durationMs.toLong() }
+                    cachedTotalFileSizeBytes = withContext(Dispatchers.IO) {
+                        songs.sumOf { song ->
+                            song.fileSize ?: song.filePath?.let { path ->
+                                try {
+                                    val file = File(path)
+                                    if (file.exists()) file.length() else 0L
+                                } catch (_: Exception) {
+                                    0L
+                                }
+                            } ?: 0L
+                        }
+                    }
                 }
                 mapToUi(playlist, progress, isSyncing, loadError)
             }
@@ -165,6 +189,22 @@ class PlaylistDetailViewModel(
         }
     }
 
+    override fun deletePlaylist() {
+        Timber.i("PlaylistDetailViewModel.deletePlaylist: START $playlistId")
+        launch {
+            repo.deletePlaylist(playlistId)
+            _deleted.emit(Unit)
+        }
+    }
+
+    override fun renamePlaylist(newName: String) {
+        Timber.i("PlaylistDetailViewModel.renamePlaylist: START $playlistId -> $newName")
+        launch {
+            val playlist = repo.getPlaylist(playlistId) ?: return@launch
+            repo.updatePlaylist(playlist.copy(name = newName))
+        }
+    }
+
     /**
      * Returns all downloaded songs in this playlist, sorted by position.
      */
@@ -210,6 +250,13 @@ class PlaylistDetailViewModel(
             downloadAllProgress = if (isRunning) progress?.overallPercent?.toInt() else null,
             isSyncing = isSyncing,
             error = loadError,
+            origin = playlist.origin.name,
+            createdAt = playlist.createdAt,
+            lastSyncedAt = playlist.lastSyncedAt,
+            owner = playlist.owner ?: "",
+            spotifyId = playlist.spotifyId,
+            totalDurationMs = cachedTotalDurationMs,
+            totalFileSizeBytes = cachedTotalFileSizeBytes,
         )
     }
 

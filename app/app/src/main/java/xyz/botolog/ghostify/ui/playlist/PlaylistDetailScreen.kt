@@ -23,18 +23,28 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.animation.animateColorAsState
@@ -54,12 +64,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract.PlaylistDetailUiState
 import xyz.botolog.ghostify.ui.model.SongStatus
 import xyz.botolog.ghostify.ui.model.TrackUi
 import xyz.botolog.ghostify.ui.util.DurationFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Test tag constants for the playlist detail screen. Used by Compose UI tests to locate elements.
@@ -114,6 +129,46 @@ fun PlaylistDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by contract.state.collectAsState()
+    val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
+    var showInfoDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        contract.deleted.collect {
+            onBack()
+        }
+    }
+
+    if (showInfoDialog) {
+        PlaylistInfoDialog(
+            state = state,
+            onDismiss = { showInfoDialog = false },
+        )
+    }
+
+    if (showRenameDialog) {
+        PlaylistRenameDialog(
+            currentName = state.name,
+            onConfirm = { newName ->
+                contract.renamePlaylist(newName)
+                showRenameDialog = false
+            },
+            onDismiss = { showRenameDialog = false },
+        )
+    }
+
+    if (showDeleteDialog) {
+        PlaylistDeleteDialog(
+            playlistName = state.name,
+            onConfirm = {
+                contract.deletePlaylist()
+                showDeleteDialog = false
+            },
+            onDismiss = { showDeleteDialog = false },
+        )
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -123,6 +178,65 @@ fun PlaylistDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Menu")
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Info") },
+                            onClick = {
+                                showMenu = false
+                                showInfoDialog = true
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Filled.Info, contentDescription = null)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Rename") },
+                            onClick = {
+                                showMenu = false
+                                showRenameDialog = true
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Filled.Edit, contentDescription = null)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share") },
+                            onClick = {
+                                showMenu = false
+                                Toast.makeText(context, "Not implemented yet", Toast.LENGTH_SHORT).show()
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Filled.Share, contentDescription = null)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Delete",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                showDeleteDialog = true
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(),
@@ -135,6 +249,141 @@ fun PlaylistDetailScreen(
             padding = padding,
             highlightSongId = highlightSongId,
         )
+    }
+}
+
+@Composable
+private fun PlaylistInfoDialog(
+    state: PlaylistDetailUiState,
+    onDismiss: () -> Unit,
+) {
+    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Playlist Info") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                InfoRow("Name", state.name)
+                InfoRow("Owner", state.owner.ifBlank { "—" })
+                InfoRow("Origin", state.origin)
+                InfoRow("Tracks", "${state.trackCount}")
+                InfoRow("Downloaded", "${state.downloadedCount}")
+                if (state.totalDurationMs > 0) {
+                    InfoRow("Total duration", formatDuration(state.totalDurationMs))
+                }
+                if (state.totalFileSizeBytes > 0) {
+                    InfoRow("Total size", formatFileSize(state.totalFileSizeBytes))
+                }
+                if (state.createdAt > 0L) {
+                    InfoRow("Created", dateFormat.format(Date(state.createdAt)))
+                }
+                if (state.lastSyncedAt != null && state.lastSyncedAt > 0L) {
+                    InfoRow("Last synced", dateFormat.format(Date(state.lastSyncedAt)))
+                }
+                if (state.spotifyId.isNotBlank()) {
+                    InfoRow("ID", state.spotifyId)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
+private fun PlaylistRenameDialog(
+    currentName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(currentName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Playlist") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Playlist name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(name) },
+                enabled = name.isNotBlank() && name != currentName,
+            ) {
+                Text("Rename")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun PlaylistDeleteDialog(
+    playlistName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete Playlist") },
+        text = { Text("Are you sure you want to delete \"$playlistName\"? This cannot be undone.") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Delete")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+private fun formatDuration(totalMs: Long): String {
+    val totalSeconds = totalMs / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
+}
+
+private fun formatFileSize(bytes: Long): String {
+    val kb = bytes / 1024.0
+    val mb = kb / 1024.0
+    val gb = mb / 1024.0
+    return when {
+        gb >= 1.0 -> String.format("%.2f GB", gb)
+        mb >= 1.0 -> String.format("%.1f MB", mb)
+        else -> String.format("%.0f KB", kb)
     }
 }
 
