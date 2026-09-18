@@ -1,8 +1,8 @@
 package xyz.botolog.ghostify.ui.library
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
@@ -53,6 +54,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -331,90 +333,33 @@ private fun SwipeablePlaylistRow(
     onOpenPlaylist: (String) -> Unit,
     now: () -> Long,
 ) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                onDelete(playlist.id)
-                true
-            } else false
-        }
+    PlaylistRow(
+        playlist = playlist,
+        onClick = { onOpenPlaylist(playlist.id) },
+        now = now,
     )
-
-    SwipeToDismissBox(
-        state = dismissState,
-        backgroundContent = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.error,
-                )
-            }
-        },
-        enableDismissFromStartToEnd = false,
-    ) {
-        PlaylistRow(
-            playlist = playlist,
-            onClick = { onOpenPlaylist(playlist.id) },
-            onMoveUp = {
-                val idx = playlists.indexOfFirst { it.id == playlist.id }
-                if (idx > 0) {
-                    val above = playlists[idx - 1]
-                    onReorder(playlist.id, idx - 1)
-                    onReorder(above.id, idx)
-                }
-            },
-            onMoveDown = {
-                val idx = playlists.indexOfFirst { it.id == playlist.id }
-                if (idx < playlists.lastIndex) {
-                    val below = playlists[idx + 1]
-                    onReorder(playlist.id, idx + 1)
-                    onReorder(below.id, idx)
-                }
-            },
-            isFirst = playlists.firstOrNull()?.id == playlist.id,
-            isLast = playlists.lastOrNull()?.id == playlist.id,
-            now = now,
-        )
-    }
 }
 
 /**
  * Displays a single playlist row with cover art, name, track count, sync time,
  * download badge, and a context menu for reordering.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlaylistRow(
     playlist: PlaylistUi,
     onClick: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    isFirst: Boolean,
-    isLast: Boolean,
     now: () -> Long,
 ) {
-    var showMenu by remember { mutableStateOf(false) }
-
-    val originTint = when (playlist.origin) {
-        PlaylistOrigin.SPOTIFY -> Color(0x2034E876)
-        PlaylistOrigin.YOUTUBE -> Color(0x20E53935)
+    val originBorderColor = when (playlist.origin) {
+        PlaylistOrigin.SPOTIFY -> Color(0xFF1DB954)
+        PlaylistOrigin.YOUTUBE -> Color(0xFFE53935)
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(originTint)
             .testTag(LibraryTestTags.item(playlist.id))
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = { showMenu = true },
-            )
+            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -423,6 +368,8 @@ private fun PlaylistRow(
             contentDescription = "Cover of ${playlist.name}",
             modifier = Modifier
                 .size(COVER_SIZE)
+                .clip(RoundedCornerShape(8.dp))
+                .border(2.dp, originBorderColor, RoundedCornerShape(8.dp))
                 .testTag(LibraryTestTags.COVER),
             contentScale = ContentScale.Crop,
         )
@@ -432,17 +379,6 @@ private fun PlaylistRow(
         PlaylistInfoColumn(playlist = playlist, now = now, modifier = Modifier.weight(1f))
 
         DownloadBadge(playlist = playlist)
-
-        Spacer(modifier = Modifier.width(4.dp))
-
-        PlaylistContextMenu(
-            showMenu = showMenu,
-            onDismissMenu = { showMenu = false },
-            isFirst = isFirst,
-            isLast = isLast,
-            onMoveUp = onMoveUp,
-            onMoveDown = onMoveDown,
-        )
     }
 }
 

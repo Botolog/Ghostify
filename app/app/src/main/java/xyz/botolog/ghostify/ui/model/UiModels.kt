@@ -69,6 +69,7 @@ data class TrackUi(
     val durationMs: Long,
     val status: SongStatus,
     val position: Int,
+    val coverUrl: String? = null,
 )
 
 /**
