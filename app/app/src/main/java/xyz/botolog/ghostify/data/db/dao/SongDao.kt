@@ -253,4 +253,13 @@ interface SongDao {
 
     @Query("UPDATE songs SET lyrics = :lyrics, lyrics_edited = :edited WHERE id = :songId")
     suspend fun updateLyricsAndEdited(songId: String, lyrics: String?, edited: Boolean)
+
+    /**
+     * Searches songs by title or artist name across all playlists.
+     *
+     * @param query The search term to match against title and artists columns.
+     * @return Matching songs ordered by title.
+     */
+    @Query("SELECT * FROM songs WHERE title LIKE '%' || :query || '%' OR artists LIKE '%' || :query || '%' ORDER BY title ASC")
+    suspend fun searchByTitleOrArtist(query: String): List<SongEntity>
 }

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -75,6 +76,7 @@ object LibraryTestTags {
     const val EMPTY = "library_empty"
     const val FAB = "library_fab"
     const val SETTINGS = "library_settings"
+    const val SEARCH = "library_search"
     const val SHUTDOWN = "library_shutdown"
     const val COVER = "playlist_cover"
     const val NAME = "playlist_name"
@@ -112,6 +114,7 @@ fun LibraryScreen(
     contract: LibraryContract,
     onOpenPlaylist: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     addDialog: @Composable () -> Unit = {},
     now: () -> Long = { System.currentTimeMillis() },
     modifier: Modifier = Modifier,
@@ -126,6 +129,7 @@ fun LibraryScreen(
                 contract = contract,
                 onShutdown = { showShutdownDialog = true },
                 onOpenSettings = onOpenSettings,
+                onOpenSearch = onOpenSearch,
             )
         },
         floatingActionButton = {
@@ -170,6 +174,7 @@ private fun LibraryTopBar(
     contract: LibraryContract,
     onShutdown: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenSearch: () -> Unit,
 ) {
     CenterAlignedTopAppBar(
         title = { Text("Library") },
@@ -183,9 +188,12 @@ private fun LibraryTopBar(
         },
         actions = {
             IconButton(
-                // Contract hook for future VM-side logic; the lambda performs the
-                // navigation (wired in GhostifyApp) — the VM method intentionally
-                // does not navigate itself.
+                onClick = onOpenSearch,
+                modifier = Modifier.testTag(LibraryTestTags.SEARCH),
+            ) {
+                Icon(Icons.Filled.Search, contentDescription = "Search")
+            }
+            IconButton(
                 onClick = {
                     contract.onOpenSettings()
                     onOpenSettings()

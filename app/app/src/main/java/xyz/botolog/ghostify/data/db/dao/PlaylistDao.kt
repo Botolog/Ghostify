@@ -153,4 +153,13 @@ interface PlaylistDao {
      */
     @Query("UPDATE playlists SET sort_order = :sortOrder WHERE id = :id")
     suspend fun setSortOrder(id: String, sortOrder: Int)
+
+    /**
+     * Searches playlists by name.
+     *
+     * @param query The search term to match against the name column.
+     * @return Matching playlists ordered by name.
+     */
+    @Query("SELECT * FROM playlists WHERE name LIKE '%' || :query || '%' ORDER BY name ASC")
+    suspend fun searchByName(query: String): List<PlaylistEntity>
 }

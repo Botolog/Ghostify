@@ -33,6 +33,7 @@ import xyz.botolog.ghostify.ui.player.FullPlayerOverlay
 import xyz.botolog.ghostify.ui.player.MiniPlayer
 import xyz.botolog.ghostify.ui.player.PlayerScreen
 import xyz.botolog.ghostify.ui.playlist.PlaylistDetailScreen
+import xyz.botolog.ghostify.ui.search.SearchScreen
 import xyz.botolog.ghostify.ui.settings.SettingsScreen
 import xyz.botolog.ghostify.ui.theme.GhostifyTheme
 
@@ -44,14 +45,22 @@ object Routes {
     const val PLAYER = "player"
     const val SETTINGS = "settings"
     const val PLAYLIST = "playlist/{playlistId}"
+    const val SEARCH = "search"
 
     /**
      * Builds the route string for the playlist detail screen.
      *
      * @param playlistId the unique identifier of the playlist.
+     * @param highlightSongId optional song id to scroll to and highlight.
      * @return the full navigation route.
      */
-    fun playlist(playlistId: String) = "playlist/$playlistId"
+    fun playlist(playlistId: String, highlightSongId: String? = null): String {
+        return if (highlightSongId != null) {
+            "playlist/$playlistId?highlightSongId=$highlightSongId"
+        } else {
+            "playlist/$playlistId"
+        }
+    }
 }
 
 /**
@@ -92,18 +101,24 @@ fun GhostifyApp(
                         contract = deps.library,
                         onOpenPlaylist = { id -> navController.navigate(Routes.playlist(id)) },
                         onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                        onOpenSearch = { navController.navigate(Routes.SEARCH) },
                         addDialog = { AddPlaylistDialog(contract = deps.addPlaylist) },
                     )
                 }
 
                 composable(
-                    route = Routes.PLAYLIST,
-                    arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
+                    route = "playlist/{playlistId}?highlightSongId={highlightSongId}",
+                    arguments = listOf(
+                        navArgument("playlistId") { type = NavType.StringType },
+                        navArgument("highlightSongId") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    ),
                 ) { entry ->
                     val playlistId = entry.arguments?.getString("playlistId").orEmpty()
+                    val highlightSongId = entry.arguments?.getString("highlightSongId")
                     PlaylistDetailScreen(
                         contract = deps.detailFor(playlistId),
                         onBack = { navController.popBackStack() },
+                        highlightSongId = highlightSongId,
                     )
                 }
 
@@ -118,6 +133,19 @@ fun GhostifyApp(
                     SettingsScreen(
                         contract = deps.settings,
                         onBack = { navController.popBackStack() },
+                    )
+                }
+
+                composable(Routes.SEARCH) {
+                    SearchScreen(
+                        contract = deps.search,
+                        onBack = { navController.popBackStack() },
+                        onPlaylistClick = { playlistId ->
+                            navController.navigate(Routes.playlist(playlistId))
+                        },
+                        onSongClick = { playlistId, songId ->
+                            navController.navigate(Routes.playlist(playlistId, songId))
+                        },
                     )
                 }
             }
@@ -165,4 +193,5 @@ data class GhostifyDependencies(
     val detailFor: (playlistId: String) -> PlaylistDetailContract,
     val player: PlayerContract,
     val settings: SettingsContract,
+    val search: xyz.botolog.ghostify.ui.contract.SearchContract,
 )

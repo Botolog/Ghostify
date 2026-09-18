@@ -20,7 +20,7 @@ import timber.log.Timber
  * @property transactions Provides transactional write boundaries.
  */
 class PlaylistRepository(
-    private val playlistDao: PlaylistDao,
+    val playlistDao: PlaylistDao,
     private val songDao: SongDao,
     private val transactions: TransactionRunner,
 ) {

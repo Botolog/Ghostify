@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
             detailFor = vms::detailFor,
             player = vms.player(),
             settings = vms.settings(),
+            search = vms.search(),
         )
     }
 

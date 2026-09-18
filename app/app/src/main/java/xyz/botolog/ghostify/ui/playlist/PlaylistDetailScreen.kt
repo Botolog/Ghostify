@@ -37,9 +37,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -89,6 +96,7 @@ private val ICON_SIZE = 18.dp
 private val STATUS_ICON_SIZE = 20.dp
 private val TRACK_STATUS_BOX_SIZE = 24.dp
 private val SYNC_INDICATOR_SIZE = 16.dp
+private val HIGHLIGHT_DURATION_MS = 1500L
 
 /**
  * Full screen showing playlist details including cover art, track list, and action buttons.
@@ -102,6 +110,7 @@ private val SYNC_INDICATOR_SIZE = 16.dp
 fun PlaylistDetailScreen(
     contract: PlaylistDetailContract,
     onBack: () -> Unit,
+    highlightSongId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by contract.state.collectAsState()
@@ -124,6 +133,7 @@ fun PlaylistDetailScreen(
             state = state,
             contract = contract,
             padding = padding,
+            highlightSongId = highlightSongId,
         )
     }
 }
@@ -137,6 +147,7 @@ private fun PlaylistDetailContent(
     state: PlaylistDetailUiState,
     contract: PlaylistDetailContract,
     padding: PaddingValues,
+    highlightSongId: String? = null,
 ) {
     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
         when {
@@ -151,7 +162,7 @@ private fun PlaylistDetailContent(
                 message = state.error,
                 onRetry = contract::sync,
             )
-            else -> PlaylistContent(state = state, contract = contract)
+            else -> PlaylistContent(state = state, contract = contract, highlightSongId = highlightSongId)
         }
     }
 }
@@ -182,6 +193,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
 private fun PlaylistContent(
     state: PlaylistDetailUiState,
     contract: PlaylistDetailContract,
+    highlightSongId: String? = null,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         PlaylistHeader(state = state)
@@ -194,6 +206,7 @@ private fun PlaylistContent(
             onPlaySong = contract::playFromSong,
             onDownloadSong = contract::downloadSong,
             onRetrySong = contract::retryTrack,
+            highlightSongId = highlightSongId,
         )
     }
 }
@@ -368,8 +381,22 @@ private fun TrackList(
     onPlaySong: (String) -> Unit,
     onDownloadSong: (String) -> Unit,
     onRetrySong: (String) -> Unit,
+    highlightSongId: String? = null,
 ) {
     val listState = rememberLazyListState()
+    var highlightedSongId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(tracks, highlightSongId) {
+        if (highlightSongId != null && tracks.isNotEmpty()) {
+            val index = tracks.indexOfFirst { it.id == highlightSongId }
+            if (index >= 0) {
+                listState.scrollToItem(index)
+                highlightedSongId = highlightSongId
+                delay(HIGHLIGHT_DURATION_MS)
+                highlightedSongId = null
+            }
+        }
+    }
 
     LazyColumn(
         state = listState,
@@ -381,6 +408,7 @@ private fun TrackList(
         items(tracks, key = { it.id }, contentType = { "track" }) { track ->
             TrackRow(
                 track = track,
+                isHighlighted = track.id == highlightedSongId,
                 onPlay = { onPlaySong(track.id) },
                 onDownload = { onDownloadSong(track.id) },
                 onRetry = { onRetrySong(track.id) },
@@ -396,14 +424,21 @@ private fun TrackList(
 @Composable
 private fun TrackRow(
     track: TrackUi,
+    isHighlighted: Boolean = false,
     onPlay: () -> Unit,
     onDownload: () -> Unit,
     onRetry: () -> Unit,
 ) {
     val isFailed = track.status == SongStatus.FAILED
     val isDownloaded = track.status == SongStatus.DOWNLOADED
+    val highlightColor = MaterialTheme.colorScheme.primaryContainer
+    val animatedBackground by animateColorAsState(
+        targetValue = if (isHighlighted) highlightColor else Color.Transparent,
+        animationSpec = tween(durationMillis = 300),
+        label = "highlight",
+    )
     val rowBackground =
-        if (isFailed) MaterialTheme.colorScheme.errorContainer else Color.Transparent
+        if (isFailed) MaterialTheme.colorScheme.errorContainer else animatedBackground
 
     Row(
         modifier = Modifier

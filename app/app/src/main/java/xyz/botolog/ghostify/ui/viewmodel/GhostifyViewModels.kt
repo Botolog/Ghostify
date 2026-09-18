@@ -12,6 +12,7 @@ import xyz.botolog.ghostify.ui.contract.AddPlaylistContract
 import xyz.botolog.ghostify.ui.contract.LibraryContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
+import xyz.botolog.ghostify.ui.contract.SearchContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.util.PlaylistUrlValidator
 import timber.log.Timber
@@ -64,6 +65,11 @@ class GhostifyViewModels(
 
     private val settingsVm = SettingsViewModel(context, settings, repo, songRepo, musicStore)
 
+    private val searchVm = SearchViewModel(
+        playlistDao = repo.playlistDao,
+        songDao = songRepo.songDao,
+    )
+
     /** Cache of detail VMs keyed by playlist id. */
     private val detailCache = HashMap<String, PlaylistDetailViewModel>()
 
@@ -100,6 +106,14 @@ class GhostifyViewModels(
     }
 
     /**
+     * Returns the singleton [SearchContract] instance.
+     */
+    fun search(): SearchContract {
+        Timber.i("GhostifyViewModels.search: START")
+        return searchVm
+    }
+
+    /**
      * Returns a cached [PlaylistDetailContract] for the given playlist.
      *
      * A new instance is created on first access and reused for subsequent calls
@@ -130,6 +144,7 @@ class GhostifyViewModels(
         addPlaylist.clear()
         playerVm.clear()
         settingsVm.clear()
+        searchVm.clear()
         detailCache.values.forEach { it.clear() }
         detailCache.clear()
     }
