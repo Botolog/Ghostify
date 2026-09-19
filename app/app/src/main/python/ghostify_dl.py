@@ -1207,7 +1207,7 @@ class TrackDownloader:
             "scan_for_songs": False,
             "audio_providers": audio_providers or ["youtube-music", "youtube"],
             "lyrics_providers": lyrics_providers or [],
-            "yt_dlp_args": yt_dlp_args or "",
+            "yt_dlp_args": yt_dlp_args or "--format bestaudio/best",
             "ffmpeg": ffmpeg,
             "threads": 1,
             "filter_results": True,
@@ -1856,13 +1856,27 @@ class TrackDownloader:
             f"[GHOSTIFY_DEBUG] _download_song: download_url={getattr(song, 'download_url', None)} duration={getattr(song, 'duration', None)}",
             flush=True,
         )
+        recovered = False
         try:
             _song, path = self._downloader.search_and_download(song)
         except BaseException as exc:  # noqa: BLE001 - KeyboardInterrupt etc.
             self._cleanup_attempt(before)
-            if isinstance(exc, TrackDownloadError):
+            # If the audio file landed on disk despite the error (e.g. download
+            # succeeded but metadata tagging failed), recover it instead of
+            # treating the whole download as a failure.
+            if expected.exists() and expected.stat().st_size > 0:
+                logger.warning(
+                    "Download raised %s but file exists at %s — recovering",
+                    type(exc).__name__,
+                    expected,
+                )
+                _song = song
+                path = expected
+                recovered = True
+            elif isinstance(exc, TrackDownloadError):
                 raise
-            raise TrackDownloadError(_kind_for(exc), str(exc)) from exc
+            else:
+                raise TrackDownloadError(_kind_for(exc), str(exc)) from exc
         finally:
             self._active_progress = None
 
@@ -1876,8 +1890,12 @@ class TrackDownloader:
 
         path = Path(path)
 
-        # 5) Integrity validation (parses as MP3, tagged, plausible duration).
-        warnings = self._validate(path, song)
+        # 5) Integrity validation — skip for recovered files (audio downloaded
+        #    OK but tagging failed; tags are non-fatal).
+        if recovered:
+            warnings: List[str] = ["metadata tagging skipped (recovered)"]
+        else:
+            warnings = self._validate(path, song)
         logger.info("Downloaded %s with warnings: %s", path, warnings or "none")
 
         # 6) Persist the sidecar so the next request skips without network.

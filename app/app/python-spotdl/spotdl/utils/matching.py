@@ -53,7 +53,6 @@ FORBIDDEN_WORDS = [
     "acapella",
     "slowed",
     "instrumental",
-    "cover",
 ]
 
 
@@ -98,6 +97,7 @@ _STANDARD_TITLE_WORDS = frozenset(
         "lyrics",
         "4k",
         "8k",
+        "cover",
     }
 )
 
@@ -140,9 +140,13 @@ def _penalty_unrelated_words(song: Song, result: Result) -> float:
     song_words = set()
     song_words.update(slugify(song.name).replace("-", " ").split())
     for artist in song.artists or []:
-        song_words.update(slugify(artist).replace("-", " ").split())
+        slug = slugify(artist)
+        song_words.update(slug.replace("-", " ").split())
+        song_words.add(slug.replace("-", ""))
     if song.artist:
-        song_words.update(slugify(song.artist).replace("-", " ").split())
+        slug = slugify(song.artist)
+        song_words.update(slug.replace("-", " ").split())
+        song_words.add(slug.replace("-", ""))
 
     penalty = 0.0
     for word in result_words:
@@ -151,8 +155,8 @@ def _penalty_unrelated_words(song: Song, result: Result) -> float:
         if word in _CONTENT_TYPE_WORDS:
             penalty += 20
         else:
-            penalty += 5
-    return min(penalty, 40)
+            penalty += 3
+    return min(penalty, 30)
 
 
 def fill_string(strings: List[str], main_string: str, string_to_check: str) -> str:
@@ -728,7 +732,7 @@ def calc_time_match(song: Song, result: Result) -> float:
     """
 
     time_diff = abs(song.duration - result.duration)
-    score = exp(-0.1 * time_diff)
+    score = exp(-0.05 * time_diff)
     return score * 100
 
 
@@ -861,12 +865,12 @@ def order_results(
         time_match = calc_time_match(song, result)
         debug(song.song_id, result.result_id, f"Final time match: {time_match}")
 
-        # Ignore results with name match lower than 60%
-        if name_match <= 60:
+        # Ignore results with name match lower than 55%
+        if name_match <= 55:
             debug(
                 song.song_id,
                 result.result_id,
-                "Skipping result due to name match lower than 60%",
+                "Skipping result due to name match lower than 55%",
             )
             continue
 
@@ -923,12 +927,14 @@ def order_results(
                 f"Average match /w album match: {average_match}",
             )
 
-        # Skip results with time match lower than 25%
-        if time_match < 25:
+        # Skip results with time match lower than 5%
+        # (YouTube videos often have different durations from Spotify
+        #  due to intros/outros, radio edits, etc.)
+        if time_match < 5:
             debug(
                 song.song_id,
                 result.result_id,
-                "Skipping result due to time match lower than 25%",
+                "Skipping result due to time match lower than 5%",
             )
             continue
 
