@@ -719,16 +719,33 @@ def _get_yt_provider() -> Any:
     return provider
 
 
+def _get_youtube_fallback_provider() -> Any:
+    """Thread-local plain-YouTube fallback provider (yt-dlp ytsearch)."""
+    provider = getattr(_worker_local, "yt_fallback", None)
+    if provider is not None:
+        return provider
+    from spotdl.providers.audio.youtube import YouTube
+
+    provider = YouTube()
+    _worker_local.yt_fallback = provider
+    return provider
+
+
 def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
-    """Resolve a YouTube id for ``song`` or return None on any failure."""
+    """Resolve a YouTube id for ``song`` or return None on any failure.
+
+    Tries YouTube Music first; if no results, falls back to plain YouTube
+    search (ytsearch) before giving up.
+    """
     if per_track_timeout <= 0:
         return None
-    provider = _get_yt_provider()
+    yt_retries = 3
+    from spotdl.utils.formatter import create_song_title
 
-    def _search() -> Optional[str]:
-        from spotdl.utils.formatter import create_song_title
+    query = create_song_title(song.name, song.artists or [])
 
-        query = create_song_title(song.name, song.artists or [])
+    def _search_ytmusic() -> Optional[str]:
+        provider = _get_yt_provider()
         results = provider.get_results(
             query, filter="songs", ignore_spelling=True, limit=10
         )
@@ -738,13 +755,46 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
                 return video_id
         return None
 
-    try:
-        return _call_with_deadline(per_track_timeout, _search)
-    except Exception:  # noqa: BLE001 - any per-track failure -> yt_id None
-        logger.debug(
-            "YouTube resolution failed for song %s", getattr(song, "song_id", "?")
-        )
+    def _search_youtube_fallback() -> Optional[str]:
+        provider = _get_youtube_fallback_provider()
+        results = provider.get_results(query, limit=10)
+        for result in results or ():
+            video_id = _extract_video_id(getattr(result, "url", None))
+            if video_id:
+                return video_id
         return None
+
+    # Try YouTube Music with retries
+    last_exc: Optional[BaseException] = None
+    for attempt in range(yt_retries):
+        try:
+            result = _call_with_deadline(per_track_timeout, _search_ytmusic)
+            if result:
+                return result
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+        if attempt < yt_retries - 1:
+            time.sleep(1.5 * (attempt + 1))
+
+    # Fallback: plain YouTube search
+    logger.debug(
+        "YTMusic returned no results for %s, trying YouTube fallback",
+        getattr(song, "song_id", "?"),
+    )
+    try:
+        result = _call_with_deadline(per_track_timeout, _search_youtube_fallback)
+        if result:
+            return result
+    except Exception as exc:  # noqa: BLE001
+        last_exc = exc
+
+    logger.debug(
+        "YouTube resolution failed for song %s after %d attempts: %s",
+        getattr(song, "song_id", "?"),
+        yt_retries,
+        last_exc,
+    )
+    return None
 
 
 def _extract_video_id(url: Any) -> Optional[str]:
