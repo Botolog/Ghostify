@@ -74,6 +74,14 @@ class DownloadQueueRunnerTest {
         override suspend fun updateDownloadMeta(songId: String, bitrate: Int?, fileSize: Long?, downloadedAt: Long?) {
             // no-op – not exercised by these tests
         }
+
+        override suspend fun updateLyricsSource(songId: String, source: String?) {
+            // no-op – not exercised by these tests
+        }
+
+        override suspend fun updateLyricsEdited(songId: String, edited: Boolean) {
+            // no-op – not exercised by these tests
+        }
     }
 
     private class FakeTrackDownloader(
