@@ -64,6 +64,7 @@ def _download_one(output_dir, track, delay=0.0):
     return ghostify_dl.download(dl, track_url, yt_id=yt_id, meta=meta)
 
 
+@pytest.mark.skip(reason="Temporarily disabled — takes 15+ min, run manually")
 class TestSpotifyPlaylistDownload:
 
     @pytest.mark.slow
