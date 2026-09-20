@@ -82,6 +82,14 @@ class DownloadQueueRunnerTest {
         override suspend fun updateLyricsEdited(songId: String, edited: Boolean) {
             // no-op – not exercised by these tests
         }
+
+        override suspend fun updateCoverArtLocalPath(songId: String, path: String?) {
+            // no-op – not exercised by these tests
+        }
+
+        override suspend fun updatePlaylistCoverArtLocalPath(playlistId: String, path: String?) {
+            // no-op
+        }
     }
 
     private class FakeTrackDownloader(

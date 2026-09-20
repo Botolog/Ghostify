@@ -165,14 +165,14 @@ class UiModelsTest {
 
     @Test
     fun playlistUiEquality() {
-        val a = PlaylistUi("1", "A", "O", null, 10, 0, PlaylistStatus.NEW)
-        val b = PlaylistUi("1", "A", "O", null, 10, 0, PlaylistStatus.NEW)
+        val a = PlaylistUi("1", "A", "O", null, null, 10, 0, PlaylistStatus.NEW)
+        val b = PlaylistUi("1", "A", "O", null, null, 10, 0, PlaylistStatus.NEW)
         assertEquals(a, b)
     }
 
     @Test
     fun playlistUiCopyChangesStatus() {
-        val original = PlaylistUi("1", "A", "O", null, 10, 0, PlaylistStatus.NEW)
+        val original = PlaylistUi("1", "A", "O", null, null, 10, 0, PlaylistStatus.NEW)
         val copied = original.copy(status = PlaylistStatus.READY)
         assertEquals(PlaylistStatus.READY, copied.status)
         assertEquals(original.id, copied.id)

@@ -268,6 +268,9 @@ interface SongDao {
     @Query("UPDATE songs SET lyrics = :lyrics, lyrics_edited = :edited WHERE id = :songId")
     suspend fun updateLyricsAndEdited(songId: String, lyrics: String?, edited: Boolean)
 
+    @Query("UPDATE songs SET cover_art_local_path = :path WHERE id = :songId")
+    suspend fun updateCoverArtLocalPath(songId: String, path: String?)
+
     /**
      * Searches songs by title or artist name across all playlists.
      *

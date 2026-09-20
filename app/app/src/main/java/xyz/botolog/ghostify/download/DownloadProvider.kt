@@ -30,10 +30,14 @@ class DownloadProvider private constructor(
         xyz.botolog.ghostify.data.repo.SettingsRepository(db.settingDao())
     }
 
+    private val artworkPersistence: xyz.botolog.ghostify.player.ArtworkPersistence by lazy {
+        xyz.botolog.ghostify.player.ArtworkPersistence(app)
+    }
+
     private val runner: DownloadQueueRunner by lazy {
-        DownloadQueueRunner(repo, downloaderOverride ?: buildWiredDownloader()) {
+        DownloadQueueRunner(repo, downloaderOverride ?: buildWiredDownloader(), {
             runBlocking { settingsRepo.getConcurrency() }
-        }
+        }, artworkPersistence)
     }
 
     /** Builds the Chaquopy-backed [TrackDownloader] with the real bridge + store. */

@@ -39,6 +39,7 @@ data class PlaylistUi(
     val name: String,
     val owner: String,
     val coverUrl: String?,
+    val coverArtLocalPath: String? = null,
     val trackCount: Int,
     val downloadedCount: Int,
     val status: PlaylistStatus,
@@ -70,6 +71,7 @@ data class TrackUi(
     val status: SongStatus,
     val position: Int,
     val coverUrl: String? = null,
+    val coverArtLocalPath: String? = null,
 )
 
 /**

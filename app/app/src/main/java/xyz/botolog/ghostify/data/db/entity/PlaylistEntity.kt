@@ -46,6 +46,9 @@ data class PlaylistEntity(
     @ColumnInfo(name = "cover_url")
     val coverUrl: String? = null,
 
+    @ColumnInfo(name = "cover_art_local_path")
+    val coverArtLocalPath: String? = null,
+
     @ColumnInfo(name = "track_count")
     val trackCount: Int = 0,
 

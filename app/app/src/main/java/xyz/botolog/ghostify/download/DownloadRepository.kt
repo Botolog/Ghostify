@@ -33,6 +33,7 @@ data class SongRecord(
     val album: String? = null,
     val durationMs: Long = 0,
     val coverUrl: String? = null,
+    val coverArtLocalPath: String? = null,
 ) {
     /**
      * True when this track originated from a YouTube playlist.
@@ -168,4 +169,8 @@ interface DownloadRepository {
     suspend fun updateLyricsSource(songId: String, source: String?)
 
     suspend fun updateLyricsEdited(songId: String, edited: Boolean)
+
+    suspend fun updateCoverArtLocalPath(songId: String, path: String?)
+
+    suspend fun updatePlaylistCoverArtLocalPath(playlistId: String, path: String?)
 }

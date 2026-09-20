@@ -132,6 +132,20 @@ object Migrations {
         }
     }
 
+    /** The v7 → v8 DDL. Adds local cover art paths for offline artwork. */
+    val MIGRATION_7_8_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE songs ADD COLUMN cover_art_local_path TEXT",
+        "ALTER TABLE playlists ADD COLUMN cover_art_local_path TEXT",
+    )
+
+    /** v7 → v8 migration. */
+    val MIGRATION_7_8: Migration = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_7_8.migrate")
+            MIGRATION_7_8_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
     /** All migrations in order, passed to [Room.databaseBuilder]. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
@@ -140,5 +154,6 @@ object Migrations {
         MIGRATION_4_5,
         MIGRATION_5_6,
         MIGRATION_6_7,
+        MIGRATION_7_8,
     )
 }

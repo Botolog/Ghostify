@@ -94,6 +94,7 @@ interface PlaylistDetailContract {
         val playlistId: String = "",
         val name: String = "",
         val coverUrl: String? = null,
+        val coverArtLocalPath: String? = null,
         val tracks: List<TrackUi> = emptyList(),
         val downloadedCount: Int = 0,
         val trackCount: Int = 0,

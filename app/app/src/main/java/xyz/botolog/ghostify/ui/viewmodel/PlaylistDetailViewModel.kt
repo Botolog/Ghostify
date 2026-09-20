@@ -274,6 +274,7 @@ class PlaylistDetailViewModel(
             playlistId = playlistId,
             name = playlist.name,
             coverUrl = playlist.coverUrl,
+            coverArtLocalPath = playlist.coverArtLocalPath,
             tracks = cachedTracks,
             downloadedCount = downloaded,
             trackCount = playlist.trackCount,

@@ -552,7 +552,7 @@ private fun ExpandedHeader(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(
-                model = state.coverUrl,
+                model = state.coverArtLocalPath?.let { java.io.File(it) } ?: state.coverUrl,
                 contentDescription = "Playlist cover",
                 modifier = Modifier
                     .size(coverSize)
@@ -730,7 +730,7 @@ private fun CollapsedBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(
-                model = state.coverUrl,
+                model = state.coverArtLocalPath?.let { java.io.File(it) } ?: state.coverUrl,
                 contentDescription = null,
                 modifier = Modifier
                     .size(COVER_SIZE_COLLAPSED)
@@ -874,7 +874,7 @@ private fun TrackRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = track.coverUrl,
+            model = track.coverArtLocalPath?.let { java.io.File(it) } ?: track.coverUrl,
             contentDescription = null,
             modifier = Modifier
                 .size(40.dp)

@@ -113,6 +113,7 @@ class LibraryViewModel(
             name = entity.name,
             owner = entity.owner.orEmpty(),
             coverUrl = entity.coverUrl,
+            coverArtLocalPath = entity.coverArtLocalPath,
             trackCount = entity.trackCount,
             downloadedCount = downloaded,
             status = if (isRunning) UiPlaylistStatus.DOWNLOADING else entity.status.toUi(),

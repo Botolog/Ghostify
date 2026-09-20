@@ -364,7 +364,7 @@ private fun PlaylistRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = playlist.coverUrl,
+            model = playlist.coverArtLocalPath?.let { java.io.File(it) } ?: playlist.coverUrl,
             contentDescription = "Cover of ${playlist.name}",
             modifier = Modifier
                 .size(COVER_SIZE)

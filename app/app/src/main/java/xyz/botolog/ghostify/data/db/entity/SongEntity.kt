@@ -82,6 +82,9 @@ data class SongEntity(
     @ColumnInfo(name = "cover_url")
     val coverUrl: String? = null,
 
+    @ColumnInfo(name = "cover_art_local_path")
+    val coverArtLocalPath: String? = null,
+
     @ColumnInfo(name = "yt_id")
     val ytId: String? = null,
 

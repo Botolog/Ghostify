@@ -159,6 +159,14 @@ class RoomDownloadRepository(
         songDao.updateLyricsEdited(songId, edited)
     }
 
+    override suspend fun updateCoverArtLocalPath(songId: String, path: String?) {
+        songDao.updateCoverArtLocalPath(songId, path)
+    }
+
+    override suspend fun updatePlaylistCoverArtLocalPath(playlistId: String, path: String?) {
+        playlistDao.updateCoverArtLocalPath(playlistId, path)
+    }
+
     private fun SongEntity.toRecord(): SongRecord = SongRecord(
         id = id,
         playlistId = playlistId,
@@ -173,6 +181,7 @@ class RoomDownloadRepository(
         album = album,
         durationMs = durationMs.toLong(),
         coverUrl = coverUrl,
+        coverArtLocalPath = coverArtLocalPath,
     )
 }
 

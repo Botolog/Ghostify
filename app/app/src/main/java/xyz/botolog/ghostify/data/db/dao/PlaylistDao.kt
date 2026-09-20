@@ -162,4 +162,7 @@ interface PlaylistDao {
      */
     @Query("SELECT * FROM playlists WHERE name LIKE '%' || :query || '%' ORDER BY name ASC")
     suspend fun searchByName(query: String): List<PlaylistEntity>
+
+    @Query("UPDATE playlists SET cover_art_local_path = :path WHERE id = :playlistId")
+    suspend fun updateCoverArtLocalPath(playlistId: String, path: String?)
 }

@@ -59,6 +59,7 @@ class DownloadQueueRunner(
     private val repo: DownloadRepository,
     private val downloader: TrackDownloader,
     private val concurrencySupplier: () -> Int = { 1 },
+    private val artworkPersistence: xyz.botolog.ghostify.player.ArtworkPersistence? = null,
 ) {
 
     /**
@@ -72,7 +73,7 @@ class DownloadQueueRunner(
         repo: DownloadRepository,
         downloader: TrackDownloader,
         concurrency: Int,
-    ) : this(repo, downloader, { concurrency })
+    ) : this(repo, downloader, { concurrency }, null)
 
     /**
      * Runs a download for the given playlist with default (no-op) callbacks.
@@ -254,6 +255,15 @@ class DownloadQueueRunner(
                 repo.updateYoutubeMeta(songId, result.ytUrl, result.ytName, result.ytChannel)
                 val bitrateInt = result.bitrate?.trimEnd('k')?.toIntOrNull()
                 repo.updateDownloadMeta(songId, bitrateInt, result.fileSize, System.currentTimeMillis())
+                result.filePath?.let { path ->
+                    artworkPersistence?.let { persistence ->
+                        val localPath = persistence.persist(songId, path)
+                        if (localPath != null) {
+                            repo.updateCoverArtLocalPath(songId, localPath)
+                            Timber.d("DownloadQueueRunner: saved cover art for song $songId")
+                        }
+                    }
+                }
                 Timber.d("DownloadQueueRunner: song $songId state changed to DOWNLOADED")
             }
             else -> {
@@ -284,6 +294,9 @@ class DownloadQueueRunner(
         onProgress: (DownloadProgress) -> Unit,
     ) {
         withContext(NonCancellable) {
+            if (outcome == RunOutcome.COMPLETED) {
+                persistPlaylistCover(playlistId)
+            }
             repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
             Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
             onProgress(
@@ -293,6 +306,20 @@ class DownloadQueueRunner(
                     if (outcome == RunOutcome.CANCELED) DownloadRunState.CANCELED else DownloadRunState.COMPLETED,
                 ),
             )
+        }
+    }
+
+    private suspend fun persistPlaylistCover(playlistId: String) {
+        val persistence = artworkPersistence ?: return
+        val songs = repo.songsFor(playlistId)
+        val firstDownloaded = songs
+            .filter { it.status == DownloadStatus.DOWNLOADED && it.filePath != null }
+            .minByOrNull { it.position }
+        if (firstDownloaded != null) {
+            val localPath = persistence.persistPlaylistCover(playlistId, firstDownloaded.id)
+            if (localPath != null) {
+                repo.updatePlaylistCoverArtLocalPath(playlistId, localPath)
+            }
         }
     }
 
