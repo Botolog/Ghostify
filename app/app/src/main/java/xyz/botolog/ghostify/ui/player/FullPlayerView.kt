@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -65,12 +67,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.res.Configuration
 import coil.compose.AsyncImage
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
@@ -84,6 +88,10 @@ private val HORIZONTAL_PADDING = 24.dp
 private val PLAY_BUTTON_SIZE = 64.dp
 private val PLAY_ICON_SIZE = 40.dp
 private val TRANSPORT_ICON_SIZE = 32.dp
+
+// ── Landscape Dimensions ──────────────────────────────────────────────
+private val LANDSCAPE_ARTWORK_MAX_WIDTH = 400.dp
+private val LANDSCAPE_LEFT_PANEL_MAX_WIDTH = 480.dp
 
 /** Minimum horizontal drag distance (px) to count as a swipe. */
 private const val SWIPE_THRESHOLD = 50f
@@ -107,6 +115,7 @@ fun FullPlayerOverlay(
     visible: Boolean,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    landscapeControlsSide: String = "left",
 ) {
     val state by contract.state.collectAsState()
 
@@ -160,6 +169,7 @@ fun FullPlayerOverlay(
                     onBack = onBack,
                     onLyricsTap = { lyricsExpanded = true },
                     onInfoTap = { showSongInfo = true },
+                    landscapeControlsSide = landscapeControlsSide,
                 )
             }
         }
@@ -170,6 +180,40 @@ fun FullPlayerOverlay(
 
 @Composable
 private fun FullPlayerContent(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    onBack: () -> Unit,
+    onLyricsTap: () -> Unit,
+    onInfoTap: () -> Unit,
+    landscapeControlsSide: String = "left",
+) {
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    if (isLandscape) {
+        LandscapePlayerContent(
+            state = state,
+            contract = contract,
+            onBack = onBack,
+            onLyricsTap = onLyricsTap,
+            onInfoTap = onInfoTap,
+            controlsSide = landscapeControlsSide,
+        )
+    } else {
+        PortraitPlayerContent(
+            state = state,
+            contract = contract,
+            onBack = onBack,
+            onLyricsTap = onLyricsTap,
+            onInfoTap = onInfoTap,
+        )
+    }
+}
+
+// ── Portrait Player Content (original) ────────────────────────────────
+
+@Composable
+private fun PortraitPlayerContent(
     state: PlayerUiState,
     contract: PlayerContract,
     onBack: () -> Unit,
@@ -318,6 +362,237 @@ private fun FullPlayerContent(
                 .padding(horizontal = HORIZONTAL_PADDING),
         )
     }
+}
+
+// ── Landscape Player Content ──────────────────────────────────────────
+
+@Composable
+private fun LandscapePlayerContent(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    onBack: () -> Unit,
+    onLyricsTap: () -> Unit,
+    onInfoTap: () -> Unit,
+    controlsSide: String = "left",
+) {
+    val controlsOnLeft = controlsSide == "left"
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        if (controlsOnLeft) {
+            // Left panel: Controls — Right panel: Lyrics
+            ControlsPanel(
+                state = state,
+                contract = contract,
+                modifier = Modifier
+                    .widthIn(max = LANDSCAPE_LEFT_PANEL_MAX_WIDTH)
+                    .weight(0.45f),
+            )
+            VerticalDivider()
+            LyricsPanel(
+                state = state,
+                onBack = onBack,
+                onInfoTap = onInfoTap,
+                onLyricsTap = onLyricsTap,
+                contract = contract,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+            )
+        } else {
+            // Left panel: Lyrics — Right panel: Controls
+            LyricsPanel(
+                state = state,
+                onBack = onBack,
+                onInfoTap = onInfoTap,
+                onLyricsTap = onLyricsTap,
+                contract = contract,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+            )
+            VerticalDivider()
+            ControlsPanel(
+                state = state,
+                contract = contract,
+                modifier = Modifier
+                    .widthIn(max = LANDSCAPE_LEFT_PANEL_MAX_WIDTH)
+                    .weight(0.45f),
+            )
+        }
+    }
+}
+
+// ── Swipeable Cover Art ───────────────────────────────────────────────
+
+@Composable
+private fun ControlsPanel(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(max = LANDSCAPE_ARTWORK_MAX_WIDTH)
+                .aspectRatio(1f)
+                .padding(horizontal = 8.dp),
+        ) {
+            SwipeableCoverArt(
+                coverUrl = state.nowPlaying?.coverUrl,
+                onSwipeLeft = contract::next,
+                onSwipeRight = contract::previousTrack,
+                onSwipeDown = { },
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = state.nowPlaying?.title.orEmpty(),
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
+        )
+
+        Text(
+            text = state.nowPlaying?.artist.orEmpty(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        FullPlayerSeekBar(state = state, contract = contract)
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = HORIZONTAL_PADDING),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = DurationFormat.format(state.positionMs),
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Text(
+                text = DurationFormat.format(state.durationMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = contract::previous) {
+                Icon(
+                    Icons.Filled.SkipPrevious,
+                    contentDescription = "Previous",
+                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                )
+            }
+
+            IconButton(
+                onClick = contract::togglePlay,
+                modifier = Modifier.size(PLAY_BUTTON_SIZE),
+            ) {
+                Icon(
+                    imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (state.isPlaying) "Pause" else "Play",
+                    modifier = Modifier.size(PLAY_ICON_SIZE),
+                )
+            }
+
+            IconButton(onClick = contract::next) {
+                Icon(
+                    Icons.Filled.SkipNext,
+                    contentDescription = "Next",
+                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricsPanel(
+    state: PlayerUiState,
+    onBack: () -> Unit,
+    onInfoTap: () -> Unit,
+    onLyricsTap: () -> Unit,
+    contract: PlayerContract,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(start = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "Collapse player",
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = onInfoTap) {
+                Icon(
+                    imageVector = Icons.Filled.Info,
+                    contentDescription = "Song info",
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+        }
+
+        LyricsMiniView(
+            lyrics = state.lyrics,
+            positionMs = state.positionMs,
+            onTap = onLyricsTap,
+            onRetryLyrics = contract::retryLyrics,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun VerticalDivider() {
+    Spacer(
+        modifier = Modifier
+            .width(1.dp)
+            .fillMaxHeight()
+            .padding(vertical = 16.dp)
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+    )
 }
 
 // ── Swipeable Cover Art ───────────────────────────────────────────────

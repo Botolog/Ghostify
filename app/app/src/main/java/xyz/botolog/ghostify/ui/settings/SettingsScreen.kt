@@ -265,6 +265,10 @@ private fun SettingsContent(
         AutoDownloadSetting(state = state, contract = contract)
         Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
 
+        SectionHeader("UI")
+        LandscapeControlsSideSetting(state = state, contract = contract)
+        Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
+
         SectionHeader("Storage")
         CacheSetting(state = state, contract = contract)
         Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
@@ -444,6 +448,36 @@ private fun AutoDownloadSetting(state: SettingsUiState, contract: SettingsContra
             checked = state.autoDownloadOnAdd,
             onCheckedChange = contract::setAutoDownload,
             modifier = Modifier.testTag(SettingsTestTags.AUTO_DOWNLOAD),
+        )
+    }
+}
+
+/**
+ * Landscape controls side selection chips for choosing left or right placement.
+ */
+@Composable
+private fun LandscapeControlsSideSetting(state: SettingsUiState, contract: SettingsContract) {
+    Text("Landscape controls side", style = MaterialTheme.typography.bodyLarge)
+    Text(
+        "Choose which side the playback controls appear on in landscape mode.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = INNER_SPACING),
+        horizontalArrangement = Arrangement.spacedBy(INNER_SPACING),
+    ) {
+        FilterChip(
+            selected = state.landscapeControlsSide == "left",
+            onClick = { contract.setLandscapeControlsSide("left") },
+            label = { Text("Left") },
+        )
+        FilterChip(
+            selected = state.landscapeControlsSide == "right",
+            onClick = { contract.setLandscapeControlsSide("right") },
+            label = { Text("Right") },
         )
     }
 }

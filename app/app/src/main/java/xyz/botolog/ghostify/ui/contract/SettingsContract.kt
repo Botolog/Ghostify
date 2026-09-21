@@ -61,6 +61,13 @@ interface SettingsContract {
     fun setAutoDownload(enabled: Boolean)
 
     /**
+     * Update the landscape controls side preference.
+     *
+     * @param side "left" or "right".
+     */
+    fun setLandscapeControlsSide(side: String)
+
+    /**
      * Deletes orphan/cache files; library records are untouched.
      */
     fun clearCache()
@@ -114,6 +121,7 @@ interface SettingsContract {
         val storagePath: String = "",
         val concurrentDownloads: Int = 1,
         val autoDownloadOnAdd: Boolean = false,
+        val landscapeControlsSide: String = "left",
         val cacheStats: CacheStats = CacheStats(0, 0),
         val isClearingCache: Boolean = false,
         val pendingMigrationPath: String? = null,

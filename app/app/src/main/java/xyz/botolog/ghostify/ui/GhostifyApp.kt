@@ -14,6 +14,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
@@ -88,7 +89,8 @@ fun GhostifyApp(
         val currentRoute = backStackEntry?.destination?.route
         val playerState by deps.player.state.collectAsState()
 
-        var fullPlayerOpen by remember { mutableStateOf(false) }
+        var fullPlayerOpen by rememberSaveable { mutableStateOf(false) }
+        val settingsState by deps.settings.state.collectAsState()
 
         Column(modifier = modifier.fillMaxSize()) {
             NavHost(
@@ -172,6 +174,7 @@ fun GhostifyApp(
             contract = deps.player,
             visible = fullPlayerOpen,
             onBack = { fullPlayerOpen = false },
+            landscapeControlsSide = settingsState.landscapeControlsSide,
         )
     }
 }

@@ -219,6 +219,11 @@ class SettingsViewModel(
         launch { settings.setAutoDownload(enabled) }
     }
 
+    override fun setLandscapeControlsSide(side: String) {
+        Timber.i("SettingsViewModel.setLandscapeControlsSide: side=$side")
+        launch { settings.setLandscapeControlsSide(side) }
+    }
+
     override fun clearCache() {
         Timber.i("SettingsViewModel.clearCache: START")
         launch {
@@ -332,13 +337,15 @@ class SettingsViewModel(
             settings.observeConcurrency(),
             settings.observeAutoDownload(),
             settings.observeStorageDir(),
-        ) { bitrate, concurrency, autoDownload, storageDir ->
+            settings.observeLandscapeControlsSide(),
+        ) { bitrate, concurrency, autoDownload, storageDir, landscapeControlsSide ->
             _state.update {
                 it.copy(
                     bitrate = bitrateFromKbps(bitrate),
                     storagePath = storageDir,
                     concurrentDownloads = concurrency,
                     autoDownloadOnAdd = autoDownload,
+                    landscapeControlsSide = landscapeControlsSide,
                 )
             }
         }

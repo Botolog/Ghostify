@@ -32,6 +32,9 @@ class SettingsRepository(private val settingDao: SettingDao) {
         /** Preference key for auto-downloading tracks on playlist add. */
         const val KEY_AUTO_DOWNLOAD = "auto_download_on_add"
 
+        /** Preference key for which side the controls appear on in landscape mode. */
+        const val KEY_LANDSCAPE_CONTROLS_SIDE = "landscape_controls_side"
+
         // ── Defaults ──────────────────────────────────────────────────
 
         /** Default storage directory name. */
@@ -45,6 +48,9 @@ class SettingsRepository(private val settingDao: SettingDao) {
 
         /** Default auto-download flag. */
         const val DEFAULT_AUTO_DOWNLOAD = false
+
+        /** Default landscape controls side ("left" keeps current layout). */
+        const val DEFAULT_LANDSCAPE_CONTROLS_SIDE = "left"
 
         /** Strings recognised as truthy when parsing boolean settings. */
         private val TRUTHY_VALUES = setOf("true", "1", "yes")
@@ -252,6 +258,42 @@ class SettingsRepository(private val settingDao: SettingDao) {
     suspend fun setAutoDownload(value: Boolean) {
         Timber.i("SettingsRepository.setAutoDownload: START")
         set(KEY_AUTO_DOWNLOAD, value.toString())
+    }
+
+    // ── landscape_controls_side ───────────────────────────────────────
+
+    /**
+     * Observes which side the controls appear on in landscape mode.
+     *
+     * @return A [Flow] emitting "left" or "right".
+     */
+    fun observeLandscapeControlsSide(): Flow<String> {
+        Timber.i("SettingsRepository.observeLandscapeControlsSide: START")
+        val result = observe(KEY_LANDSCAPE_CONTROLS_SIDE, DEFAULT_LANDSCAPE_CONTROLS_SIDE)
+        Timber.i("SettingsRepository.observeLandscapeControlsSide: returning $result")
+        return result
+    }
+
+    /**
+     * One-shot fetch of the landscape controls side preference.
+     *
+     * @return "left" or "right".
+     */
+    suspend fun getLandscapeControlsSide(): String {
+        Timber.i("SettingsRepository.getLandscapeControlsSide: START")
+        val result = get(KEY_LANDSCAPE_CONTROLS_SIDE, DEFAULT_LANDSCAPE_CONTROLS_SIDE)
+        Timber.i("SettingsRepository.getLandscapeControlsSide: returning $result")
+        return result
+    }
+
+    /**
+     * Persists the landscape controls side preference.
+     *
+     * @param value "left" or "right".
+     */
+    suspend fun setLandscapeControlsSide(value: String) {
+        Timber.i("SettingsRepository.setLandscapeControlsSide: START")
+        set(KEY_LANDSCAPE_CONTROLS_SIDE, value)
     }
 
     // ── Private helpers ───────────────────────────────────────────────
