@@ -34,13 +34,6 @@
     <!-- No uses-feature restrictions: the app must remain installable on the
          full API 26+ device range. -->
 
-    <!-- Required on Android 11+ for media service discovery (Android Auto, Wear). -->
-    <queries>
-        <intent>
-            <action android:name="androidx.media3.session.MediaLibraryService" />
-        </intent>
-    </queries>
-
     <application
         android:name=".GhostifyApplication"
         android:allowBackup="true"
@@ -55,16 +48,6 @@
         android:theme="@style/Theme.Ghostify"
         android:usesCleartextTraffic="false">
 
-        <!-- Android Auto: declares media browsing capability. -->
-        <meta-data
-            android:name="com.google.android.gms.car.application"
-            android:resource="@xml/automotive_app_desc" />
-
-        <!-- Android Auto: tintable attribution icon for the car UI. -->
-        <meta-data
-            android:name="androidx.car.app.TintableAttributionIcon"
-            android:resource="@drawable/ic_notification" />
-
         <!-- Single-activity Compose app. Exported so the launcher can start it;
              singleTop so notification taps don't stack instances. -->
         <activity
@@ -77,26 +60,15 @@
             </intent-filter>
         </activity>
 
-        <!-- Media3 MediaLibraryService. Must be exported so the system media
-             browser (Android Auto, Wear OS, Bluetooth) can bind and browse
-             the media tree via MediaBrowserService protocol. -->
+        <!-- Media3 MediaSessionService. exported=false: controllers reach the
+             session through the system's MediaSessionManager, never by binding
+             this component directly. Hosts the shared PlaybackEngine session. -->
         <service
             android:name=".background.PlaybackService"
-            android:exported="true"
+            android:exported="false"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
-                <action android:name="androidx.media3.session.MediaLibraryService" />
-                <action android:name="android.media.browse.MediaBrowserService"/>
-            </intent-filter>
-        </service>
-
-        <!-- Ghostify Car App Service for Android Auto lyrics display. -->
-        <service
-            android:name=".car.GhostifyCarAppService"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.MEDIA" />
+                <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
 

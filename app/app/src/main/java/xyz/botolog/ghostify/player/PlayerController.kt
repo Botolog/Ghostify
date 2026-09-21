@@ -427,17 +427,6 @@ class PlayerController private constructor(
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         Timber.d("PlayerController.onMediaItemTransition: mediaId=${mediaItem?.mediaId}, reason=$reason")
-        val mediaId = mediaItem?.mediaId
-        val isExternal = mediaId != null &&
-            _state.value.queue.none { it.songId == mediaId } &&
-            exoPlayer.mediaItemCount > 0
-        if (isExternal) {
-            Timber.i("PlayerController.onMediaItemTransition: external queue change detected (e.g. Android Auto)")
-            nothingToPlay = false
-            val newQueue = buildQueueFromExoPlayer()
-            _state.update { it.copy(queue = newQueue) }
-            extractArtworkForCurrentItem()
-        }
         publishSnapshot()
     }
 
@@ -482,49 +471,6 @@ class PlayerController private constructor(
         when (PlayerErrorClassifier.classify(error.errorCode)) {
             ErrorAction.SKIP_CURRENT -> skipUnplayableItem()
             ErrorAction.STOP_PLAYBACK -> publishSnapshot()
-        }
-    }
-
-    /**
-     * Builds queue items from ExoPlayer's current media items.
-     *
-     * Used when items are added externally (e.g. Android Auto) so the phone UI's
-     * internal queue stays in sync with what ExoPlayer is actually playing.
-     */
-    private fun buildQueueFromExoPlayer(): List<QueueItem> {
-        Timber.i("PlayerController.buildQueueFromExoPlayer: itemCount=${exoPlayer.mediaItemCount}")
-        return (0 until exoPlayer.mediaItemCount).map { index ->
-            val item = exoPlayer.getMediaItemAt(index)
-            QueueItem(
-                songId = item.mediaId,
-                title = item.mediaMetadata.title?.toString(),
-                artist = item.mediaMetadata.artist?.toString(),
-                album = item.mediaMetadata.albumTitle?.toString(),
-                durationMs = item.mediaMetadata.durationMs,
-                filePath = item.localConfiguration?.uri?.path.orEmpty(),
-                indexInQueue = index,
-            )
-        }
-    }
-
-    /**
-     * Extracts artwork for the current item in the background.
-     *
-     * Used when items are added externally (e.g. Android Auto) so the phone UI
-     * shows cover art without blocking the callback.
-     */
-    private fun extractArtworkForCurrentItem() {
-        val currentItem = exoPlayer.currentMediaItem ?: return
-        val mediaId = currentItem.mediaId ?: return
-        if (artworkByMediaId.containsKey(mediaId)) return
-        val filePath = currentItem.localConfiguration?.uri?.path ?: return
-        Timber.i("PlayerController.extractArtworkForCurrentItem: mediaId=$mediaId")
-        scope.launch(Dispatchers.IO) {
-            val art = runCatching { artworkExtractor.extractArtwork(filePath) }.getOrNull() ?: return@launch
-            withContext(Dispatchers.Main.immediate) {
-                artworkByMediaId[mediaId] = art
-                publishSnapshot()
-            }
         }
     }
 
@@ -639,7 +585,7 @@ class PlayerController private constructor(
             currentTitle = currentItem?.mediaMetadata?.title?.toString(),
             currentArtist = currentItem?.mediaMetadata?.artist?.toString(),
             currentAlbum = currentItem?.mediaMetadata?.albumTitle?.toString(),
-            artworkBytes = currentItem?.mediaId?.let { id -> artworkByMediaId[id] ?: currentItem.mediaMetadata.artworkData },
+            artworkBytes = currentItem?.mediaId?.let { artworkByMediaId[it] },
         )
     }
 

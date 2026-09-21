@@ -124,7 +124,6 @@ class PlayerQueueBuilder(
             filePath = path,
             indexInQueue = INDEX_PLACEHOLDER,
             coverUrl = song.coverUrl,
-            lyrics = song.lyrics,
         )
     }
 

@@ -6,8 +6,8 @@ import android.os.Process
 import android.util.Log
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.ListenableFuture
@@ -19,11 +19,11 @@ import xyz.botolog.ghostify.player.PlaybackEngine
 import timber.log.Timber
 
 /**
- * Foreground `MediaLibraryService` that is the single source of truth for audio
+ * Foreground `MediaSessionService` that is the single source of truth for audio
  * playback in Ghostify.
  *
  * Responsibilities:
- *  - Hosts the shared `ExoPlayer` + `MediaLibrarySession` from [PlaybackEngine]; hands
+ *  - Hosts the shared `ExoPlayer` + `MediaSession` from [PlaybackEngine]; hands
  *    the session to controllers (UI `MediaController`, Bluetooth, Android Auto)
  *    via [onGetSession]. The UI's [xyz.botolog.ghostify.player.PlayerController] drives
  *    the same player, so there is never a second audio engine.
@@ -43,7 +43,7 @@ import timber.log.Timber
  * and the seek bar all flow through the MediaSession -> player, which the
  * foreground service keeps alive.
  */
-class PlaybackService : MediaLibraryService() {
+class PlaybackService : MediaSessionService() {
 
     companion object {
 
@@ -52,7 +52,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private var player: ExoPlayer? = null
-    private var session: MediaLibraryService.MediaLibrarySession? = null
+    private var session: MediaSession? = null
     private var focusController: AudioFocusController? = null
     private var noisyReceiver: AudioBecomingNoisyReceiver? = null
     private var playbackEverStarted = false
@@ -83,28 +83,23 @@ class PlaybackService : MediaLibraryService() {
      * Hands out the session created eagerly in [onCreate].
      *
      * @param controllerInfo info about the connecting controller.
-     * @return the shared [MediaLibraryService.MediaLibrarySession], or null if not yet created.
+     * @return the shared [MediaSession].
      */
     override fun onGetSession(
         controllerInfo: MediaSession.ControllerInfo,
-    ): MediaLibraryService.MediaLibrarySession? {
+    ): MediaSession {
         Timber.i("PlaybackService.onGetSession: START, session=${session != null}")
-        val s = session
-        if (s == null) {
-            Timber.w("PlaybackService.onGetSession: session is null")
-            return null
-        }
+        val s = session ?: throw IllegalStateException("Session not created in onCreate")
         Timber.i("PlaybackService.onGetSession: returning session")
         return s
     }
 
-    /** Initialises the shared ExoPlayer, AudioFocusController, noisy receiver and MediaLibrarySession. */
+    /** Initialises the shared ExoPlayer, AudioFocusController, noisy receiver and MediaSession. */
     private fun initSessionAndPlayer() {
         if (session != null) return
         Timber.i("initSessionAndPlayer: START")
         try {
             val p = obtainPlayer()
-            p.prepare()
             val control = PlayerControlAdapter(p)
             val focus = createFocusController(control)
             val noisy = AudioBecomingNoisyReceiver(control)
@@ -163,16 +158,36 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * Builds the [MediaLibraryService.MediaLibrarySession] via [PlaybackEngine], including a
-     * browse-tree callback for Android Auto.
+     * Builds the [MediaSession] via [PlaybackEngine], including a custom-command
+     * handler for the shutdown action.
      *
      * @param p the shared [ExoPlayer].
      * @param focus the audio-focus controller (unused here but kept for symmetry).
      */
-    private fun buildSession(p: ExoPlayer, focus: AudioFocusController): MediaLibraryService.MediaLibrarySession {
+    private fun buildSession(p: ExoPlayer, focus: AudioFocusController): MediaSession {
         Timber.i("initSessionAndPlayer: calling PlaybackEngine.session(this, MainActivity)")
-        val libraryCallback = GhostifyMediaLibraryCallback(applicationContext)
-        return PlaybackEngine.session(this, MainActivity::class.java, libraryCallback)
+        return PlaybackEngine.session(this, MainActivity::class.java, buildShutdownCallback())
+    }
+
+    /** Returns a [MediaSession.Callback] that handles the shutdown custom command. */
+    private fun buildShutdownCallback(): MediaSession.Callback = object : MediaSession.Callback {
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: android.os.Bundle,
+        ): ListenableFuture<SessionResult> {
+            if (customCommand.customAction == PlaybackNotificationProvider.ACTION_SHUTDOWN) {
+                Timber.i("PlaybackService: shutdown command received, killing process")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                player?.stop()
+                this@PlaybackService.session?.release()
+                Process.killProcess(Process.myPid())
+            }
+            return com.google.common.util.concurrent.Futures.immediateFuture(
+                SessionResult(SessionResult.RESULT_SUCCESS),
+            )
+        }
     }
 
     /** Stores the constructed objects as service-level fields. */
@@ -205,7 +220,7 @@ class PlaybackService : MediaLibraryService() {
 
     /**
      * A foreground media service must keep playing after the Recents swipe
-     * removes the task (T-096). The default [MediaLibraryService.onTaskRemoved]
+     * removes the task (T-096). The default [MediaSessionService.onTaskRemoved]
      * calls `stopSelf()`, which we intentionally do NOT: the foreground
      * notification and foreground state already survive task removal.
      */

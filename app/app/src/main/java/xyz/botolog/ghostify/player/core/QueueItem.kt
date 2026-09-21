@@ -24,7 +24,6 @@ data class QueueItem(
     val filePath: String,
     val indexInQueue: Int,
     val coverUrl: String? = null,
-    val lyrics: String? = null,
 ) {
     /**
      * Media ID used by the player to identify this item.
