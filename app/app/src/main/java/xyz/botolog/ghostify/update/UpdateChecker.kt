@@ -112,9 +112,14 @@ object UpdateChecker {
                     throw IOException("No assets array found in release JSON")
                 }
 
-                val apkUrl = findApkUrl(body, assetsStart)
+                val isDebug = try {
+                    context.applicationContext.applicationInfo.flags and
+                        android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+                } catch (_: Exception) { false }
+
+                val apkUrl = findApkUrl(body, assetsStart, preferDebug = isDebug)
                     ?: throw IOException("No APK asset found in release")
-                val assetName = extractApkFileName(body, assetsStart)
+                val assetName = extractApkFileName(body, assetsStart, preferDebug = isDebug)
                 val latestVersionCode = extractVersionCodeFromFileName(assetName, tagName)
                     ?: throw IOException("Could not extract versionCode from $assetName")
 
@@ -125,7 +130,7 @@ object UpdateChecker {
                     latestVersionCode,
                 )
 
-                if (latestVersionCode <= currentVersionCode) {
+                if (!shouldOfferUpdate(currentVersionCode, latestVersionCode)) {
                     Timber.d(TAG, "Already up to date")
                     return@withContext null
                 }
@@ -241,13 +246,22 @@ object UpdateChecker {
     // ── Private JSON helpers ──────────────────────────────────────────────
 
     /**
+     * Returns `true` when [latestVersionCode] is strictly greater than
+     * [currentVersionCode].  Equal or lower values never trigger an update
+     * so the app never offers a downgrade.
+     */
+    internal fun shouldOfferUpdate(currentVersionCode: Long, latestVersionCode: Long): Boolean {
+        return latestVersionCode > currentVersionCode
+    }
+
+    /**
      * Extracts a string value from a flat JSON object by key.
      *
      * This is intentionally simple — it handles escaped quotes and `\\n` but
      * does not attempt full recursive JSON parsing.  Sufficient for the small,
      * well-known GitHub release payload.
      */
-    private fun extractJsonString(json: String, key: String): String? {
+    internal fun extractJsonString(json: String, key: String): String? {
         val pattern = "\"$key\""
         val start = json.indexOf(pattern)
         if (start == -1) return null
@@ -267,7 +281,7 @@ object UpdateChecker {
             .replace("\\\\", "\\")
     }
 
-    private fun findClosingQuote(json: String, from: Int): Int {
+    internal fun findClosingQuote(json: String, from: Int): Int {
         var i = from
         while (i < json.length) {
             if (json[i] == '\\') {
@@ -281,66 +295,138 @@ object UpdateChecker {
     }
 
     /**
-     * Finds the download URL for the first `.apk` asset in the JSON body.
+     * Finds the download URL for an `.apk` asset in the JSON body.
+     *
+     * When [preferDebug] is set, prefers the matching variant first
+     * (debug → `-debug.apk`, release → `-release.apk`), then falls back
+     * to any `.apk` asset.
      */
-    private fun findApkUrl(json: String, fromAssets: Int): String? {
-        var i = fromAssets
-        while (i < json.length) {
-            val apkIdx = json.indexOf(".apk", i)
-            if (apkIdx == -1) return null
-
-            val lineStart = json.lastIndexOf('\n', apkIdx).coerceAtLeast(0)
-            val line = json.substring(lineStart, apkIdx + 4)
-            if ("browser_download_url" in line) {
-                val urlStart = line.indexOf("https://")
-                if (urlStart != -1) {
-                    return line.substring(urlStart).trimEnd('"', ' ', '\t')
-                }
-            }
-            i = apkIdx + 4
+    internal fun findApkUrl(json: String, fromAssets: Int, preferDebug: Boolean? = null): String? {
+        for (apkIdx in matchingApkIndices(json, fromAssets, preferDebug)) {
+            val url = extractApkUrlAt(json, apkIdx)
+            if (url != null) return url
         }
         return null
     }
 
     /**
      * Extracts the APK asset filename from the `assets` array.
+     *
+     * When [preferDebug] is set, prefers the matching variant first,
+     * then falls back to any `.apk` asset.
      */
-    private fun extractApkFileName(json: String, fromAssets: Int): String {
+    internal fun extractApkFileName(json: String, fromAssets: Int, preferDebug: Boolean? = null): String {
+        for (apkIdx in matchingApkIndices(json, fromAssets, preferDebug)) {
+            val name = extractApkNameAt(json, apkIdx)
+            if (name != null) return name
+        }
+        return ""
+    }
+
+    /**
+     * Returns `.apk` indices matching the preferred variant, then all `.apk` indices.
+     */
+    private fun matchingApkIndices(json: String, fromAssets: Int, preferDebug: Boolean?): Sequence<Int> = sequence {
+        val desiredSuffix = when (preferDebug) {
+            true -> "-debug.apk"
+            false -> "-release.apk"
+            null -> null
+        }
+
+        // First pass: preferred variant
+        if (desiredSuffix != null) {
+            var i = fromAssets
+            while (i < json.length) {
+                val apkIdx = json.indexOf(".apk", i)
+                if (apkIdx == -1) break
+                val name = extractApkNameAt(json, apkIdx)
+                if (name != null && name.endsWith(desiredSuffix)) yield(apkIdx)
+                i = apkIdx + 4
+            }
+        }
+
+        // Second pass: any .apk not already yielded
         var i = fromAssets
         while (i < json.length) {
             val apkIdx = json.indexOf(".apk", i)
-            if (apkIdx == -1) return ""
-
-            val segment = json.substring(i.coerceAtMost(apkIdx), apkIdx + 4)
-            val nameIdx = segment.lastIndexOf("\"name\"")
-            if (nameIdx != -1) {
-                val afterName = segment.indexOf('"', nameIdx + 6)
-                if (afterName != -1) {
-                    val closeQuote = findClosingQuote(segment, afterName + 1)
-                    if (closeQuote != -1) {
-                        return segment.substring(afterName + 1, closeQuote)
-                    }
-                }
+            if (apkIdx == -1) break
+            val name = extractApkNameAt(json, apkIdx)
+            if (name != null) {
+                val isDesired = desiredSuffix != null && name.endsWith(desiredSuffix)
+                if (!isDesired) yield(apkIdx)
             }
             i = apkIdx + 4
         }
-        return ""
+    }
+
+    /**
+     * Extracts the `"name"` value for the asset containing [apkIdx].
+     */
+    private fun extractApkNameAt(json: String, apkIdx: Int): String? {
+        val preceding = json.substring(0, apkIdx)
+        val nameKey = "\"name\""
+        val nameIdx = preceding.lastIndexOf(nameKey)
+        if (nameIdx == -1) return null
+        val colonIdx = json.indexOf(':', nameIdx + nameKey.length)
+        if (colonIdx == -1) return null
+        val quoteStart = json.indexOf('"', colonIdx + 1)
+        if (quoteStart == -1) return null
+        val quoteEnd = findClosingQuote(json, quoteStart + 1)
+        if (quoteEnd == -1) return null
+        val candidate = json.substring(quoteStart + 1, quoteEnd)
+        return if (candidate.endsWith(".apk")) candidate else null
+    }
+
+    /**
+     * Extracts the `"browser_download_url"` for the asset containing [apkIdx].
+     *
+     * Finds the asset's `"name"` first, then searches forward from there for
+     * `"browser_download_url"` so we don't pick up a different asset's URL.
+     */
+    private fun extractApkUrlAt(json: String, apkIdx: Int): String? {
+        val preceding = json.substring(0, apkIdx)
+        val nameKey = "\"name\""
+        val nameIdx = preceding.lastIndexOf(nameKey)
+        if (nameIdx == -1) return null
+        val bduKey = "\"browser_download_url\""
+        val bduIdx = json.indexOf(bduKey, nameIdx)
+        if (bduIdx == -1) return null
+        val colonIdx = json.indexOf(':', bduIdx + bduKey.length)
+        if (colonIdx == -1) return null
+        val urlStart = json.indexOf('"', colonIdx + 1)
+        if (urlStart == -1) return null
+        val urlEnd = findClosingQuote(json, urlStart + 1)
+        if (urlEnd == -1) return null
+        val url = json.substring(urlStart + 1, urlEnd)
+        return if (url.endsWith(".apk")) url else null
     }
 
     /**
      * Extracts a numeric version code from an APK filename or falls back to the
      * tag name.
      *
-     * Filename pattern: `anything-vNN.apk` or `anything_vNN.apk`.
+     * Filename patterns: `anything-vN.apk`, `anything-vN.N.N-debug.apk`, etc.
      * If the tag name itself is a plain number it is used directly.
      */
-    private fun extractVersionCodeFromFileName(fileName: String, tagName: String): Long? {
-        val regex = Regex("""[vV](\d+)\.apk$""")
-        val match = regex.find(fileName)
-        if (match != null) {
-            return match.groupValues[1].toLongOrNull()
+    internal fun extractVersionCodeFromFileName(fileName: String, tagName: String): Long? {
+        // Pattern 1: pure numeric version — ghostify-v59-debug.apk -> 59
+        val pureNumRegex = Regex("""[vV](\d+)[-_].*\.apk$""")
+        val pureMatch = pureNumRegex.find(fileName)
+        if (pureMatch != null) {
+            return pureMatch.groupValues[1].toLongOrNull()
         }
 
+        // Pattern 2: semantic version — ghostify-v0.3.0-debug.apk -> 30
+        val semverRegex = Regex("""[vV](\d+)\.(\d+)(?:\.(\d+))?.*\.apk$""")
+        val semverMatch = semverRegex.find(fileName)
+        if (semverMatch != null) {
+            val major = semverMatch.groupValues[1].toLongOrNull() ?: 0L
+            val minor = semverMatch.groupValues[2].toLongOrNull() ?: 0L
+            val patch = semverMatch.groupValues[3].toLongOrNull() ?: 0L
+            return major * 10000 + minor * 100 + patch
+        }
+
+        // Pattern 3: tag name is a plain number
         val tagNumber = tagName.trimStart('v', 'V').toLongOrNull()
         if (tagNumber != null) return tagNumber
 
