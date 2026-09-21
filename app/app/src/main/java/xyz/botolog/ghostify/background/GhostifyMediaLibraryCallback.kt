@@ -15,10 +15,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.guava.future
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import xyz.botolog.ghostify.GhostifyApplication
 import xyz.botolog.ghostify.data.model.SongStatus
+import xyz.botolog.ghostify.player.ArtworkExtractor
 import xyz.botolog.ghostify.player.MediaItemMapper
+import xyz.botolog.ghostify.player.MediaMetadataRetrieverArtworkExtractor
 import xyz.botolog.ghostify.player.core.QueueItem
 import java.io.File
 
@@ -45,6 +48,7 @@ class GhostifyMediaLibraryCallback(
 
     private val scope = CoroutineScope(Dispatchers.Main)
     private val container get() = (appContext as GhostifyApplication).container
+    private val artworkExtractor: ArtworkExtractor = MediaMetadataRetrieverArtworkExtractor()
 
     override fun onGetLibraryRoot(
         session: MediaLibraryService.MediaLibrarySession,
@@ -195,10 +199,10 @@ class GhostifyMediaLibraryCallback(
         song: xyz.botolog.ghostify.data.db.entity.SongEntity,
         indexInQueue: Int,
     ): MediaItem {
-        val artworkUri = song.coverArtLocalPath?.let { path ->
-            val file = File(path)
-            if (file.exists() && file.isFile) Uri.fromFile(file) else null
+        val artworkBytes = withContext(Dispatchers.IO) {
+            runCatching { artworkExtractor.extractArtwork(song.filePath!!) }.getOrNull()
         }
+        val artworkUri = resolveArtworkUri(song)
         val queueItem = QueueItem(
             songId = song.id,
             title = song.title,
@@ -210,7 +214,43 @@ class GhostifyMediaLibraryCallback(
             coverUrl = song.coverUrl,
             lyrics = song.lyrics,
         )
-        return MediaItemMapper.toMediaItem(queueItem, null, artworkUri)
+        return MediaItemMapper.toMediaItem(queueItem, artworkBytes, artworkUri)
+    }
+
+    /**
+     * Resolves the artwork URI for a song, preferring the persisted cover art file.
+     * Falls back to the embedded artwork extracted on-the-fly from the MP3.
+     *
+     * Android Auto's Now Playing screen reads `METADATA_KEY_ART_URI` /
+     * `METADATA_KEY_ALBUM_ART_URI`, which require a URI — embedded byte arrays
+     * are ignored.  The returned [Uri] is a `file://` URI that Media3 can
+     * resolve through the session.
+     */
+    private suspend fun resolveArtworkUri(
+        song: xyz.botolog.ghostify.data.db.entity.SongEntity,
+    ): Uri? {
+        // 1. Prefer the pre-persisted cover art JPEG on disk.
+        song.coverArtLocalPath?.let { path ->
+            val file = File(path)
+            if (file.exists() && file.isFile) return Uri.fromFile(file)
+        }
+        // 2. Fallback: extract embedded artwork from the MP3 and persist it now
+        //    so future calls find it on disk.
+        val filePath = song.filePath ?: return null
+        val audioFile = File(filePath)
+        if (!audioFile.exists()) return null
+        val bytes = withContext(Dispatchers.IO) {
+            runCatching { artworkExtractor.extractArtwork(filePath) }.getOrNull()
+        } ?: return null
+        // Write a temporary JPEG so the URI is valid for the session lifetime.
+        val tmpFile = withContext(Dispatchers.IO) {
+            runCatching {
+                val tmp = File(appContext.cacheDir, "artwork_${song.id}.jpg")
+                tmp.writeBytes(bytes)
+                tmp
+            }.getOrNull()
+        } ?: return null
+        return Uri.fromFile(tmpFile)
     }
 
     override fun onSearch(

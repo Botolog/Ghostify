@@ -266,8 +266,9 @@ class PlayerController private constructor(
      * Runs one item at a time on [Dispatchers.IO]; each result lands in [artworkByMediaId]
      * (main thread, where all map reads happen) followed by a batched [publishSnapshot] via
      * [ArtworkBackfillBatcher], so `CurrentItem.artworkBytes` fills in as tracks become
-     * current without churning the UI. Exactly one backfill runs per controller: a new call
-     * cancels the previous job.
+     * current without churning the UI.  If the extracted item happens to be the one currently
+     * playing, its [MediaItem] is also updated so the notification shows artwork immediately.
+     * Exactly one backfill runs per controller: a new call cancels the previous job.
      *
      * @param items queue items in playlist order.
      * @param startIndex index whose artwork was already extracted during queue building.
@@ -285,7 +286,13 @@ class PlayerController private constructor(
                     ?: continue
                 val currentMediaId = withContext(Dispatchers.Main.immediate) {
                     artworkByMediaId[item.songId] = art
-                    exoPlayer.currentMediaItem?.mediaId
+                    // If this item is now playing (e.g. user skipped ahead), update its
+                    // MediaItem so the notification shows artwork.
+                    val current = exoPlayer.currentMediaItem
+                    if (current?.mediaId == item.songId && current.mediaMetadata.artworkData == null) {
+                        updateCurrentItemArtwork(art)
+                    }
+                    current?.mediaId
                 }
                 if (batcher.shouldPublish(item.songId, currentMediaId)) {
                     withContext(Dispatchers.Main.immediate) { publishSnapshot() }
@@ -511,21 +518,52 @@ class PlayerController private constructor(
      * Extracts artwork for the current item in the background.
      *
      * Used when items are added externally (e.g. Android Auto) so the phone UI
-     * shows cover art without blocking the callback.
+     * shows cover art without blocking the callback.  Also updates the [MediaItem]
+     * in ExoPlayer so the foreground-service notification displays album art.
      */
     private fun extractArtworkForCurrentItem() {
         val currentItem = exoPlayer.currentMediaItem ?: return
         val mediaId = currentItem.mediaId ?: return
-        if (artworkByMediaId.containsKey(mediaId)) return
         val filePath = currentItem.localConfiguration?.uri?.path ?: return
+
+        // If artwork was already backfilled but not written into the MediaItem, fix
+        // that immediately so the notification picks it up.
+        val cachedArt = artworkByMediaId[mediaId]
+        if (cachedArt != null) {
+            if (currentItem.mediaMetadata.artworkData == null) {
+                updateCurrentItemArtwork(cachedArt)
+            }
+            return
+        }
+
         Timber.i("PlayerController.extractArtworkForCurrentItem: mediaId=$mediaId")
         scope.launch(Dispatchers.IO) {
             val art = runCatching { artworkExtractor.extractArtwork(filePath) }.getOrNull() ?: return@launch
             withContext(Dispatchers.Main.immediate) {
                 artworkByMediaId[mediaId] = art
+                updateCurrentItemArtwork(art)
                 publishSnapshot()
             }
         }
+    }
+
+    /**
+     * Writes [artwork] into the current [MediaItem]'s metadata so the media
+     * notification (and lockscreen) show the album art.
+     *
+     * No-op if the item already carries artwork data (avoids redundant replace calls).
+     */
+    private fun updateCurrentItemArtwork(artwork: ByteArray) {
+        val currentItem = exoPlayer.currentMediaItem ?: return
+        if (currentItem.mediaMetadata.artworkData != null) return
+        val updatedMetadata = currentItem.mediaMetadata.buildUpon()
+            .setArtworkData(artwork, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            .build()
+        val updatedItem = currentItem.buildUpon()
+            .setMediaMetadata(updatedMetadata)
+            .build()
+        exoPlayer.replaceMediaItem(exoPlayer.currentMediaItemIndex, updatedItem)
+        Timber.i("PlayerController: updated MediaItem artwork for mediaId=${currentItem.mediaId}")
     }
 
     // --- Internals ------------------------------------------------------------------

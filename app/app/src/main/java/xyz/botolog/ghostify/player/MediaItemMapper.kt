@@ -21,14 +21,13 @@ object MediaItemMapper {
      * Maps a [QueueItem] to a Media3 [MediaItem] with full metadata.
      *
      * @param item the queue item to convert.
-     * @param artworkBytes optional embedded artwork bytes (currently unused; prefer
-     *        [artworkUri] for Android Auto compliance).
-     * @param artworkUri optional artwork URI pointing to a file on disk.
+     * @param artworkBytes optional embedded artwork bytes (typically JPEG) for notification/lockscreen.
+     * @param artworkUri optional artwork URI for Android Auto browse tree display.
      * @return a fully-built [MediaItem] ready for ExoPlayer.
      */
     fun toMediaItem(item: QueueItem, artworkBytes: ByteArray?, artworkUri: Uri? = null): MediaItem {
         Timber.i("MediaItemMapper.toMediaItem: START mediaId=${item.mediaId}")
-        val metadata = buildMetadata(item, artworkUri)
+        val metadata = buildMetadata(item, artworkBytes, artworkUri)
         val result = MediaItem.Builder()
             .setMediaId(item.mediaId)
             .setUri(item.filePath)
@@ -39,7 +38,7 @@ object MediaItemMapper {
     }
 
     /** Builds [MediaMetadata] with title, artist, album, duration, optional artwork and lyrics. */
-    private fun buildMetadata(item: QueueItem, artworkUri: Uri?): MediaMetadata {
+    private fun buildMetadata(item: QueueItem, artworkBytes: ByteArray?, artworkUri: Uri?): MediaMetadata {
         val extras = Bundle()
         item.lyrics?.let { extras.putString(EXTRA_LYRICS, it) }
         val builder = MediaMetadata.Builder()
@@ -48,6 +47,9 @@ object MediaItemMapper {
             .setAlbumTitle(item.album)
             .setDurationMs(item.durationMs ?: C.TIME_UNSET)
             .setExtras(extras)
+        artworkBytes?.let { bytes ->
+            builder.setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        }
         artworkUri?.let { uri ->
             builder.setArtworkUri(uri)
         }

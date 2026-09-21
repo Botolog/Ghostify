@@ -1,9 +1,14 @@
 package xyz.botolog.ghostify.background
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.pm.ServiceInfo
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Process
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaLibraryService
@@ -49,6 +54,9 @@ class PlaybackService : MediaLibraryService() {
 
         /** Notification channel ID used by [PlaybackNotificationProvider]. */
         const val NOTIFICATION_ID: Int = 1
+
+        /** Notification channel ID for the foreground service notification. */
+        private const val NOTIFICATION_CHANNEL_ID: String = "ghostify_playback"
     }
 
     private var player: ExoPlayer? = null
@@ -198,9 +206,57 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Timber.i("PlaybackService.onStartCommand: START, intent=$intent, flags=$flags, startId=$startId")
+
+        promoteToForeground()
+
         val result = super.onStartCommand(intent, flags, startId)
         Timber.i("PlaybackService.onStartCommand: returning $result")
         return result
+    }
+
+    /**
+     * Promotes the service to foreground immediately with a placeholder notification.
+     *
+     * Media3's [MediaLibraryService] handles the real media notification via
+     * [PlaybackNotificationProvider], but its internal dispatcher creates the
+     * notification asynchronously.  On Android 14+ (targetSdk 35) the system can
+     * kill the service during that window if it isn't already foreground.  Calling
+     * [startForeground] here closes that race.
+     *
+     * Media3 will overwrite this placeholder with the full media notification
+     * (with transport controls and artwork) once its dispatcher runs.
+     */
+    private fun promoteToForeground() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    "Playback",
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply { setShowBadge(false) }
+                getSystemService(NotificationManager::class.java)
+                    .createNotificationChannel(channel)
+            }
+            val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Ghostify")
+                .setContentText("Playing music...")
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setSilent(true)
+                .build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            Timber.i("PlaybackService: startForeground called successfully")
+        } catch (t: Throwable) {
+            Timber.e(t, "PlaybackService: startForeground FAILED")
+        }
     }
 
     /**
