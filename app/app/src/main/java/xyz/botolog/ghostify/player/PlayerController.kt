@@ -71,6 +71,7 @@ class PlayerController private constructor(
     private val artworkExtractor: ArtworkExtractor,
     private val session: MediaSession?,
     private val scope: CoroutineScope,
+    private val persistence: PlayerStatePersistence? = null,
 ) : Player.Listener {
 
     private val _state = MutableStateFlow(PlayerUiState())
@@ -79,6 +80,9 @@ class PlayerController private constructor(
     private var lastError: PlayerError? = null
     private var tickerJob: Job? = null
     private var artworkBackfillJob: Job? = null
+    private var saveJob: Job? = null
+    var currentPlaylistId: String? = null
+        private set
 
     /** Snapshot of the current playback state, updated on every relevant player event. */
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -87,6 +91,9 @@ class PlayerController private constructor(
         exoPlayer.addListener(this)
         startPositionTicker()
         publishSnapshot()
+        scope.launch {
+            restoreSavedState()
+        }
     }
 
     // --- Queue building -------------------------------------------------------------
@@ -101,8 +108,9 @@ class PlayerController private constructor(
      * @param songs list of songs from which to build the playback queue.
      * @param startSongId optional song to start from (by `songs.id`); defaults to the first item.
      */
-    fun playPlaylist(songs: List<Song>, startSongId: String? = null) {
-        Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId")
+    fun playPlaylist(songs: List<Song>, startSongId: String? = null, playlistId: String? = null) {
+        Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId, playlistId=$playlistId")
+        currentPlaylistId = playlistId
         // A new playlist supersedes any in-flight artwork backfill from the previous queue.
         cancelArtworkBackfill("superseded by new playPlaylist")
         backfillJob?.cancel()
@@ -130,9 +138,11 @@ class PlayerController private constructor(
     fun playPlaylistLazy(
         initialBatch: List<Song>,
         startSongId: String? = null,
+        playlistId: String? = null,
         loadMore: suspend (offset: Int) -> List<Song>?,
     ) {
-        Timber.i("playPlaylistLazy: initialBatch=${initialBatch.size}, startSongId=$startSongId")
+        Timber.i("playPlaylistLazy: initialBatch=${initialBatch.size}, startSongId=$startSongId, playlistId=$playlistId")
+        currentPlaylistId = playlistId
         cancelArtworkBackfill("superseded by new playPlaylistLazy")
         backfillJob?.cancel()
         scope.launch(Dispatchers.IO) {
@@ -304,6 +314,88 @@ class PlayerController private constructor(
         artworkBackfillJob = null
     }
 
+    // --- State persistence --------------------------------------------------------
+
+    /**
+     * Restores the player state from the last session.
+     *
+     * Rebuilds the queue from saved song IDs, seeks to the saved position,
+     * and restores shuffle/repeat/volume settings.
+     */
+    private suspend fun restoreSavedState() {
+        if (persistence == null) return
+        val saved = persistence.load() ?: return
+        Timber.i("PlayerController.restoreSavedState: restoring songId=${saved.currentSongId}")
+        val songs = persistence.restoreSongs(saved.queueSongIds)
+        if (songs.isEmpty()) {
+            Timber.w("PlayerController.restoreSavedState: no playable songs, clearing state")
+            persistence.clear()
+            return
+        }
+        when (val result = queueBuilder.build(songs, saved.currentSongId)) {
+            is QueueBuildResult.NothingToPlay -> {
+                Timber.w("PlayerController.restoreSavedState: nothing to play after rebuild")
+                persistence.clear()
+            }
+            is QueueBuildResult.Ready -> {
+                val mediaItems = buildMediaItems(result.items, result.startIndex)
+                withContext(Dispatchers.Main.immediate) {
+                    nothingToPlay = false
+                    lastError = null
+                    artworkByMediaId.clear()
+                    artworkByMediaId.putAll(mediaItems.artwork)
+                    exoPlayer.setMediaItems(mediaItems.items, result.startIndex, PlaybackConstants.TIME_UNSET)
+                    exoPlayer.prepare()
+                    exoPlayer.shuffleModeEnabled = saved.shuffleEnabled
+                    exoPlayer.repeatMode = saved.repeatMode.media3Value
+                    exoPlayer.volume = saved.volume.coerceIn(0f, 1f)
+                    if (saved.positionMs > 0) {
+                        exoPlayer.seekTo(saved.positionMs)
+                    }
+                    if (saved.wasPlaying) {
+                        exoPlayer.play()
+                    }
+                    _state.update { it.copy(queue = result.items) }
+                    publishSnapshot()
+                    startPlaybackService()
+                }
+                launchArtworkBackfill(result.items, result.startIndex)
+                Timber.i("PlayerController.restoreSavedState: restored successfully")
+            }
+        }
+    }
+
+    /**
+     * Saves the current player state to persistence (debounced).
+     *
+     * Only saves when there is a queue loaded. Cancels any pending save
+     * and reschedules with a 2-second delay to avoid excessive writes
+     * during rapid state changes (e.g. position ticker).
+     */
+    private fun saveState() {
+        if (persistence == null) return
+        if (nothingToPlay || _state.value.queue.isEmpty()) return
+        saveJob?.cancel()
+        saveJob = scope.launch {
+            delay(SAVE_DEBOUNCE_MS)
+            val snapshot = _state.value
+            val currentIdx = snapshot.currentQueueIndex
+            val queueSongIds = snapshot.queue.map { it.songId }
+            persistence.save(
+                currentSongId = snapshot.currentItem?.mediaId,
+                playlistId = currentPlaylistId,
+                queueSongIds = queueSongIds,
+                queueIndex = currentIdx.coerceAtLeast(0),
+                shuffleEnabled = snapshot.shuffleEnabled,
+                repeatMode = snapshot.repeatMode,
+                volume = snapshot.volume,
+                positionMs = snapshot.positionMs,
+                wasPlaying = snapshot.isPlaying,
+            )
+            Timber.d("PlayerController.saveState: saved idx=$currentIdx, queueSize=${queueSongIds.size}")
+        }
+    }
+
     // --- Transport controls ----------------------------------------------------------
 
     /** Resumes playback. */
@@ -417,6 +509,7 @@ class PlayerController private constructor(
     fun release() {
         Timber.i("PlayerController.release: START")
         tickerJob?.cancel()
+        saveJob?.cancel()
         backfillJob?.cancel()
         cancelArtworkBackfill("controller released")
         exoPlayer.removeListener(this)
@@ -563,6 +656,7 @@ class PlayerController private constructor(
                 lastError = lastError,
             )
         }
+        saveState()
     }
 
     /** Creates a snapshot of every relevant ExoPlayer field. */
@@ -612,6 +706,9 @@ class PlayerController private constructor(
         /** Interval in milliseconds between position-ticker updates. */
         private const val TICK_INTERVAL_MS = 250L
 
+        /** Delay in milliseconds before persisting state (debounce). */
+        private const val SAVE_DEBOUNCE_MS = 2000L
+
         /**
          * Creates a controller backed by the shared process-wide [ExoPlayer] (see
          * [PlaybackEngine]) and its [MediaSession], so the UI and the background
@@ -622,6 +719,7 @@ class PlayerController private constructor(
          * @param artworkExtractor extracts embedded album art.
          * @param sessionActivityClass optional activity class for the notification tap target.
          * @param scope coroutine scope for background work and the position ticker.
+         * @param persistence optional persistence for restoring player state across restarts.
          */
         fun create(
             context: Context,
@@ -629,6 +727,7 @@ class PlayerController private constructor(
             artworkExtractor: ArtworkExtractor = MediaMetadataRetrieverArtworkExtractor(),
             sessionActivityClass: Class<*>? = null,
             scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            persistence: PlayerStatePersistence? = null,
         ): PlayerController {
             Timber.i("PlayerController.create: START")
             val appCtx = context.applicationContext
@@ -642,6 +741,7 @@ class PlayerController private constructor(
                 artworkExtractor = artworkExtractor,
                 session = sess,
                 scope = scope,
+                persistence = persistence,
             )
         }
     }

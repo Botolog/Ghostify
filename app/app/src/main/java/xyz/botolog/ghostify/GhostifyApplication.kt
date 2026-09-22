@@ -21,6 +21,7 @@ import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.file.MusicStore
 import xyz.botolog.ghostify.logging.FileLoggingTree
 import xyz.botolog.ghostify.player.PlayerController
+import xyz.botolog.ghostify.player.PlayerStatePersistence
 import xyz.botolog.ghostify.python.FfmpegLocator
 import xyz.botolog.ghostify.python.PlaylistMetadataBridge
 import xyz.botolog.ghostify.recovery.KilledProcessRecovery
@@ -155,6 +156,13 @@ class GhostifyContainer(private val context: Application) {
         SongRepository(database.songDao(), database.transactionRunner())
     }
 
+    val playerStatePersistence: PlayerStatePersistence by lazy {
+        PlayerStatePersistence(
+            settings = settingsRepository,
+            songDao = database.songDao(),
+        )
+    }
+
     // --- python bridges -----------------------------------------------------
 
     val metadataBridge: PlaylistMetadataBridge by lazy { PlaylistMetadataBridge() }
@@ -190,6 +198,7 @@ class GhostifyContainer(private val context: Application) {
         xyz.botolog.ghostify.player.PlayerController.create(
             context = context,
             sessionActivityClass = MainActivity::class.java,
+            persistence = playerStatePersistence,
         )
     }
 

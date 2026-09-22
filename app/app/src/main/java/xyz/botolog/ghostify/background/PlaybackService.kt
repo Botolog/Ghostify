@@ -16,6 +16,7 @@ import xyz.botolog.ghostify.R
 import xyz.botolog.ghostify.background.core.AudioFocusController
 import xyz.botolog.ghostify.background.core.FocusPolicy
 import xyz.botolog.ghostify.player.PlaybackEngine
+import xyz.botolog.ghostify.player.PlayerStatePersistence
 import timber.log.Timber
 
 /**
@@ -178,7 +179,12 @@ class PlaybackService : MediaSessionService() {
             args: android.os.Bundle,
         ): ListenableFuture<SessionResult> {
             if (customCommand.customAction == PlaybackNotificationProvider.ACTION_SHUTDOWN) {
-                Timber.i("PlaybackService: shutdown command received, killing process")
+                Timber.i("PlaybackService: shutdown command received, clearing saved state and killing process")
+                val app = application as? xyz.botolog.ghostify.GhostifyApplication
+                val persistence = app?.container?.playerStatePersistence
+                kotlinx.coroutines.runBlocking {
+                    persistence?.clear()
+                }
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 player?.stop()
                 this@PlaybackService.session?.release()

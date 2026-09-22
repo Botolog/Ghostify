@@ -156,6 +156,7 @@ class PlaylistDetailViewModel(
                 .map { it.toPlayerSong() }
             player.playPlaylistLazy(
                 initialBatch = firstBatch,
+                playlistId = playlistId,
                 loadMore = { offset ->
                     val raw = songRepo.getDownloadedSongsBatch(playlistId, batchSize, offset)
                     if (raw.isEmpty()) return@playPlaylistLazy null
@@ -188,6 +189,7 @@ class PlaylistDetailViewModel(
             player.playPlaylistLazy(
                 initialBatch = firstBatch,
                 startSongId = songId,
+                playlistId = playlistId,
                 loadMore = { offset ->
                     val raw = songRepo.getDownloadedSongsBatch(playlistId, batchSize, offset)
                     if (raw.isEmpty()) return@playPlaylistLazy null
