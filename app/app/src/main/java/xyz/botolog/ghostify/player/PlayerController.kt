@@ -81,6 +81,7 @@ class PlayerController private constructor(
     private var tickerJob: Job? = null
     private var artworkBackfillJob: Job? = null
     private var saveJob: Job? = null
+    val queueManager = PlayerQueueManager()
     var currentPlaylistId: String? = null
         private set
 
@@ -190,8 +191,8 @@ class PlayerController private constructor(
                         MediaItemMapper.toMediaItem(item, null)
                     }
                     withContext(Dispatchers.Main.immediate) {
+                        queueManager.appendItems(newItems)
                         exoPlayer.addMediaItems(mediaItems)
-                        _state.update { it.copy(queue = lazyBuilder.allItemsCopy()) }
                     }
                     Timber.d("playPlaylistLazy: appended ${newItems.size} items, total=${lazyBuilder.totalItems}")
                 }
@@ -210,6 +211,7 @@ class PlayerController private constructor(
         // The artwork map is cleared here, so a stale backfill must not keep writing into it.
         cancelArtworkBackfill("nothing to play")
         artworkByMediaId.clear()
+        queueManager.clear()
         exoPlayer.clearMediaItems()
         _state.update {
             PlayerUiState(
@@ -229,11 +231,11 @@ class PlayerController private constructor(
             nothingToPlay = false
             lastError = null
             artworkByMediaId.clear()
+            queueManager.setQueue(result.items)
             artworkByMediaId.putAll(mediaItems.artwork)
             exoPlayer.setMediaItems(mediaItems.items, result.startIndex, PlaybackConstants.TIME_UNSET)
             exoPlayer.prepare()
             exoPlayer.play()
-            _state.update { it.copy(queue = result.items) }
             publishSnapshot()
             startPlaybackService()
         }
@@ -355,7 +357,7 @@ class PlayerController private constructor(
                     if (saved.wasPlaying) {
                         exoPlayer.play()
                     }
-                    _state.update { it.copy(queue = result.items) }
+                    queueManager.setQueue(result.items)
                     publishSnapshot()
                     startPlaybackService()
                 }
@@ -374,25 +376,26 @@ class PlayerController private constructor(
      */
     private fun saveState() {
         if (persistence == null) return
-        if (nothingToPlay || _state.value.queue.isEmpty()) return
+        if (nothingToPlay || queueManager.queue.isEmpty()) return
         saveJob?.cancel()
         saveJob = scope.launch {
             delay(SAVE_DEBOUNCE_MS)
             val snapshot = _state.value
-            val currentIdx = snapshot.currentQueueIndex
-            val queueSongIds = snapshot.queue.map { it.songId }
+            val queueSongIds = queueManager.queue.map { it.songId }
+            val currentSongId = snapshot.currentItem?.mediaId
+            val currentQueueIdx = queueManager.queue.indexOfFirst { it.songId == currentSongId }
             persistence.save(
-                currentSongId = snapshot.currentItem?.mediaId,
+                currentSongId = currentSongId,
                 playlistId = currentPlaylistId,
                 queueSongIds = queueSongIds,
-                queueIndex = currentIdx.coerceAtLeast(0),
+                queueIndex = currentQueueIdx.coerceAtLeast(0),
                 shuffleEnabled = snapshot.shuffleEnabled,
                 repeatMode = snapshot.repeatMode,
                 volume = snapshot.volume,
                 positionMs = snapshot.positionMs,
                 wasPlaying = snapshot.isPlaying,
             )
-            Timber.d("PlayerController.saveState: saved idx=$currentIdx, queueSize=${queueSongIds.size}")
+            Timber.d("PlayerController.saveState: saved idx=$currentQueueIdx, queueSize=${queueSongIds.size}")
         }
     }
 
@@ -493,6 +496,69 @@ class PlayerController private constructor(
     fun toggleRepeatMode() {
         Timber.i("PlayerController.toggleRepeatMode: START")
         exoPlayer.repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode).next().media3Value
+    }
+
+    /**
+     * Moves a media item within the queue from one position to another.
+     *
+     * @param fromIndex the current position of the item to move.
+     * @param toIndex the target position.
+     */
+    fun reorderQueue(fromIndex: Int, toIndex: Int) {
+        Timber.i("PlayerController.reorderQueue: from=$fromIndex, to=$toIndex")
+        if (!queueManager.reorder(fromIndex, toIndex)) return
+
+        val savedMediaId = exoPlayer.currentMediaItem?.mediaId
+        val savedPosition = exoPlayer.currentPosition
+        val wasPlaying = exoPlayer.isPlaying
+
+        exoPlayer.moveMediaItem(fromIndex, toIndex)
+
+        if (savedMediaId != null) {
+            val newIndex = queueManager.indexOf(savedMediaId)
+            if (newIndex >= 0 && newIndex != exoPlayer.currentMediaItemIndex) {
+                exoPlayer.seekTo(newIndex, savedPosition.coerceAtLeast(0))
+            }
+        }
+        if (wasPlaying && !exoPlayer.isPlaying) exoPlayer.play()
+        publishSnapshot()
+    }
+
+    /**
+     * Adds a song to the queue after all user-queued songs.
+     *
+     * @param songId the song database ID.
+     * @param mediaItem the Media3 item to insert.
+     */
+    fun addToQueueNext(songId: String, mediaItem: MediaItem) {
+        Timber.i("PlayerController.addToQueueNext: songId=$songId")
+        if (exoPlayer.mediaItemCount == 0) return
+        val currentIdx = exoPlayer.currentMediaItemIndex
+
+        val mutation = queueManager.addToQueueNext(songId, mediaItem, currentIdx) ?: return
+
+        // Mirror the mutation on ExoPlayer.
+        val savedMediaId = exoPlayer.currentMediaItem?.mediaId
+        val savedPosition = exoPlayer.currentPosition
+        val wasPlaying = exoPlayer.isPlaying
+
+        when (mutation) {
+            is QueueMutation.Add -> {
+                exoPlayer.addMediaItem(mutation.index, mutation.mediaItem)
+            }
+            is QueueMutation.Move -> {
+                exoPlayer.moveMediaItem(mutation.from, mutation.to)
+            }
+        }
+
+        if (savedMediaId != null) {
+            val newCurrentIdx = queueManager.indexOf(savedMediaId)
+            if (newCurrentIdx >= 0 && newCurrentIdx != exoPlayer.currentMediaItemIndex) {
+                exoPlayer.seekTo(newCurrentIdx, savedPosition.coerceAtLeast(0))
+            }
+        }
+        if (wasPlaying && !exoPlayer.isPlaying) exoPlayer.play()
+        publishSnapshot()
     }
 
     /**
@@ -651,7 +717,7 @@ class PlayerController private constructor(
         _state.update { current ->
             PlayerStateMapper.toUiState(
                 snapshot = snapshot,
-                queue = current.queue,
+                queue = queueManager.queue,
                 nothingToPlay = nothingToPlay,
                 lastError = lastError,
             )

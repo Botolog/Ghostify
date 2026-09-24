@@ -69,6 +69,24 @@ interface PlayerContract {
     /** Save edited lyrics for the currently playing track. */
     fun saveLyrics(lyrics: String, edited: Boolean = false)
 
+    /**
+     * Reorder the queue by moving an item from one position to another.
+     *
+     * @param fromIndex the current position of the item to move.
+     * @param toIndex the target position.
+     */
+    fun reorderQueue(fromIndex: Int, toIndex: Int)
+
+    /**
+     * Add a song to the queue, positioned after all user-queued songs.
+     *
+     * If the song is already in the queue, it is moved to the new position.
+     * If the song is currently playing, no action is taken.
+     *
+     * @param songId the song database ID to add.
+     */
+    fun addToQueue(songId: String)
+
     /** Re-fetch lyrics from the given provider. Calls [onResult] with the result (or null). */
     fun refetchLyrics(provider: String, onResult: (String?) -> Unit)
 

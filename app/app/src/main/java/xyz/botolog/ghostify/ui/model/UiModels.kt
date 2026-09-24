@@ -98,10 +98,12 @@ data class PlaylistPreview(
  * @property isCurrent `true` if this is the currently playing item.
  */
 data class QueueItem(
+    val songId: String,
     val title: String,
     val artist: String,
     val durationMs: Long,
     val isCurrent: Boolean = false,
+    val queuedByUser: Boolean = false,
 )
 
 /**

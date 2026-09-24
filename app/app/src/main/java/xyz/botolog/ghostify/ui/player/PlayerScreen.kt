@@ -184,7 +184,7 @@ private fun PlayerContent(
     }
 
     if (state.queueOpen) {
-        QueueSheet(contract = contract, queue = state.queue, onDismiss = contract::closeQueue)
+        QueueEditorBottomSheet(contract = contract, onDismiss = contract::closeQueue)
     }
 }
 

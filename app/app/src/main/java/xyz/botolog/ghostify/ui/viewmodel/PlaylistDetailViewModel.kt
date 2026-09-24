@@ -178,6 +178,29 @@ class PlaylistDetailViewModel(
         }
     }
 
+    override fun addToQueue(trackId: String) {
+        Timber.i("PlaylistDetailViewModel.addToQueue: trackId=$trackId")
+        launch {
+            val song = songRepo.getSong(trackId) ?: return@launch
+            if (song.status != DataSongStatus.DOWNLOADED || song.filePath.isNullOrBlank()) {
+                Timber.w("addToQueue: song $trackId is not downloaded, skipping")
+                return@launch
+            }
+            val coreItem = xyz.botolog.ghostify.player.core.QueueItem(
+                songId = song.id,
+                title = song.title,
+                artist = song.artists,
+                album = song.album.orEmpty(),
+                durationMs = song.durationMs.toLong(),
+                filePath = song.filePath,
+                indexInQueue = 0,
+                coverUrl = song.coverUrl,
+            )
+            val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(coreItem, null)
+            player.addToQueueNext(song.id, mediaItem)
+        }
+    }
+
     override fun playFromSong(songId: String) {
         Timber.i("PlaylistDetailViewModel.playFromSong: START $songId")
         launch {

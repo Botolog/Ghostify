@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
@@ -132,6 +133,8 @@ fun FullPlayerOverlay(
         var lyricsExpanded by remember { mutableStateOf(false) }
         var lyricsEditing by remember { mutableStateOf(false) }
         var showSongInfo by remember { mutableStateOf(false) }
+        var queueEditorOpen by remember { mutableStateOf(false) }
+        BackHandler(enabled = queueEditorOpen) { queueEditorOpen = false }
         BackHandler(enabled = lyricsEditing) { lyricsEditing = false }
         BackHandler(enabled = lyricsExpanded && !lyricsEditing) { lyricsExpanded = false }
 
@@ -169,9 +172,17 @@ fun FullPlayerOverlay(
                     onBack = onBack,
                     onLyricsTap = { lyricsExpanded = true },
                     onInfoTap = { showSongInfo = true },
+                    onQueueClick = { queueEditorOpen = true },
                     landscapeControlsSide = landscapeControlsSide,
                 )
             }
+        }
+
+        if (queueEditorOpen) {
+            QueueEditorBottomSheet(
+                contract = contract,
+                onDismiss = { queueEditorOpen = false },
+            )
         }
     }
 }
@@ -185,6 +196,7 @@ private fun FullPlayerContent(
     onBack: () -> Unit,
     onLyricsTap: () -> Unit,
     onInfoTap: () -> Unit,
+    onQueueClick: () -> Unit,
     landscapeControlsSide: String = "left",
 ) {
     val configuration = LocalConfiguration.current
@@ -197,6 +209,7 @@ private fun FullPlayerContent(
             onBack = onBack,
             onLyricsTap = onLyricsTap,
             onInfoTap = onInfoTap,
+            onQueueClick = onQueueClick,
             controlsSide = landscapeControlsSide,
         )
     } else {
@@ -206,6 +219,7 @@ private fun FullPlayerContent(
             onBack = onBack,
             onLyricsTap = onLyricsTap,
             onInfoTap = onInfoTap,
+            onQueueClick = onQueueClick,
         )
     }
 }
@@ -219,6 +233,7 @@ private fun PortraitPlayerContent(
     onBack: () -> Unit,
     onLyricsTap: () -> Unit,
     onInfoTap: () -> Unit,
+    onQueueClick: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -242,6 +257,14 @@ private fun PortraitPlayerContent(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = onQueueClick) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDescription = "Queue",
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
             IconButton(onClick = onInfoTap) {
                 Icon(
                     imageVector = Icons.Filled.Info,
@@ -373,6 +396,7 @@ private fun LandscapePlayerContent(
     onBack: () -> Unit,
     onLyricsTap: () -> Unit,
     onInfoTap: () -> Unit,
+    onQueueClick: () -> Unit,
     controlsSide: String = "left",
 ) {
     val controlsOnLeft = controlsSide == "left"

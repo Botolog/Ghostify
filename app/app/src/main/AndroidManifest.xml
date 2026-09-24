@@ -10,6 +10,9 @@
     <!-- Network: Spotify public metadata fetch + YouTube audio resolution/download. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Haptic feedback on swipe-to-queue gesture. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Android 13+ runtime permission for download / playback notifications.
          On API < 33 this is a normal permission that installs silently. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

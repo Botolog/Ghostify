@@ -264,26 +264,26 @@ class UiModelsTest {
 
     @Test
     fun queueItemCreationWithDefaults() {
-        val item = QueueItem(title = "Title", artist = "Artist", durationMs = 200000L)
+        val item = QueueItem(songId = "S1", title = "Title", artist = "Artist", durationMs = 200000L)
         assertEquals(false, item.isCurrent)
     }
 
     @Test
     fun queueItemCreationWithIsCurrent() {
-        val item = QueueItem(title = "T", artist = "A", durationMs = 100L, isCurrent = true)
+        val item = QueueItem(songId = "S2", title = "T", artist = "A", durationMs = 100L, isCurrent = true)
         assertEquals(true, item.isCurrent)
     }
 
     @Test
     fun queueItemEquality() {
-        val a = QueueItem("T", "A", 100L, false)
-        val b = QueueItem("T", "A", 100L, false)
+        val a = QueueItem(songId = "S3", title = "T", artist = "A", durationMs = 100L, isCurrent = false)
+        val b = QueueItem(songId = "S3", title = "T", artist = "A", durationMs = 100L, isCurrent = false)
         assertEquals(a, b)
     }
 
     @Test
     fun queueItemCopyChangesIsCurrent() {
-        val original = QueueItem("T", "A", 100L, false)
+        val original = QueueItem(songId = "S4", title = "T", artist = "A", durationMs = 100L, isCurrent = false)
         val copied = original.copy(isCurrent = true)
         assertTrue(copied.isCurrent)
         assertEquals(original.title, copied.title)

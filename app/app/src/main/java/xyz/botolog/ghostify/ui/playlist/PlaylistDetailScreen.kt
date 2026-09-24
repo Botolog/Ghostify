@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -511,13 +510,22 @@ private fun PlaylistContent(
                 key = { it.id },
                 contentType = { "track_${it.status}" },
             ) { track ->
-                TrackRow(
-                    track = track,
-                    isHighlighted = track.id == highlightSongId,
-                    onPlay = { contract.playFromSong(track.id) },
-                    onDownload = { contract.downloadSong(track.id) },
-                    onRetry = { contract.retryTrack(track.id) },
-                )
+                SwipeToAddTrackRow(
+                    onAddToQueue = { contract.addToQueue(track.id) },
+                    onClick = {
+                        when {
+                            track.status == SongStatus.DOWNLOADED -> contract.playFromSong(track.id)
+                            track.status == SongStatus.FAILED -> contract.retryTrack(track.id)
+                            else -> contract.downloadSong(track.id)
+                        }
+                    },
+                    enabled = track.status == SongStatus.DOWNLOADED,
+                ) {
+                    TrackRow(
+                        track = track,
+                        isHighlighted = track.id == highlightSongId,
+                    )
+                }
             }
         }
 
@@ -843,9 +851,6 @@ private fun SyncingIndicator(isSyncing: Boolean) {
 private fun TrackRow(
     track: TrackUi,
     isHighlighted: Boolean = false,
-    onPlay: () -> Unit,
-    onDownload: () -> Unit,
-    onRetry: () -> Unit,
 ) {
     val isFailed = track.status == SongStatus.FAILED
     val isDownloaded = track.status == SongStatus.DOWNLOADED
@@ -863,13 +868,6 @@ private fun TrackRow(
             .fillMaxWidth()
             .background(rowBackground)
             .testTag(PlaylistDetailTestTags.track(track.id))
-            .clickable {
-                when {
-                    isDownloaded -> onPlay()
-                    isFailed -> onRetry()
-                    else -> onDownload()
-                }
-            }
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

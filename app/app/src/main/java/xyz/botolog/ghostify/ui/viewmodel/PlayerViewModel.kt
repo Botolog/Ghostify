@@ -3,6 +3,7 @@ package xyz.botolog.ghostify.ui.viewmodel
 import xyz.botolog.ghostify.data.db.dao.SongDao
 import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.player.PlayerController
+import xyz.botolog.ghostify.player.MediaItemMapper
 import xyz.botolog.ghostify.player.core.CurrentItem
 import xyz.botolog.ghostify.player.core.PlayerUiState as CorePlayerUiState
 import xyz.botolog.ghostify.ui.contract.PlayerContract
@@ -149,6 +150,36 @@ class PlayerViewModel(
         player.skipToMediaItem(index)
     }
 
+    override fun reorderQueue(fromIndex: Int, toIndex: Int) {
+        Timber.i("PlayerViewModel.reorderQueue: from=$fromIndex, to=$toIndex")
+        player.reorderQueue(fromIndex, toIndex)
+    }
+
+    override fun addToQueue(songId: String) {
+        Timber.i("PlayerViewModel.addToQueue: songId=$songId")
+        launch {
+            val entity = songDao.getById(songId) ?: return@launch
+            if (entity.status != xyz.botolog.ghostify.data.model.SongStatus.DOWNLOADED || entity.filePath.isNullOrBlank()) {
+                Timber.w("addToQueue: song $songId is not downloaded, skipping")
+                return@launch
+            }
+            val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(
+                xyz.botolog.ghostify.player.core.QueueItem(
+                    songId = entity.id,
+                    title = entity.title,
+                    artist = entity.artists,
+                    album = entity.album.orEmpty(),
+                    durationMs = entity.durationMs.toLong(),
+                    filePath = entity.filePath,
+                    indexInQueue = 0,
+                    coverUrl = entity.coverUrl,
+                ),
+                null,
+            )
+            player.addToQueueNext(songId, mediaItem)
+        }
+    }
+
     override fun toggleQueue() {
         Timber.i("PlayerViewModel.toggleQueue: START")
         queueOpen.update { !it }
@@ -254,10 +285,12 @@ class PlayerViewModel(
     private fun mapQueueItems(core: CorePlayerUiState): List<QueueItem> =
         core.queue.mapIndexed { index, item ->
             QueueItem(
+                songId = item.songId,
                 title = item.title.orEmpty(),
                 artist = item.artist.orEmpty(),
                 durationMs = item.durationMs ?: DEFAULT_DURATION_MS,
                 isCurrent = index == core.currentQueueIndex,
+                queuedByUser = item.queuedByUser,
             )
         }
 

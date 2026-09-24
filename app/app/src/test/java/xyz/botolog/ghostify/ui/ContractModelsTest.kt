@@ -38,7 +38,7 @@ class ContractModelsTest {
     @Test
     fun playerUiStateCreationWithAllFields() {
         val nowPlaying = NowPlaying("T", "A", "B", "url")
-        val queue = listOf(QueueItem("T1", "A1", 100L, true))
+        val queue = listOf(QueueItem(songId = "S1", title = "T1", artist = "A1", durationMs = 100L, isCurrent = true))
         val state = PlayerUiState(
             empty = false,
             nowPlaying = nowPlaying,

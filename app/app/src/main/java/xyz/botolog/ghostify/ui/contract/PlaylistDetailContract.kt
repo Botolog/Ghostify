@@ -64,6 +64,13 @@ interface PlaylistDetailContract {
      */
     fun retryTrack(trackId: String)
 
+    /**
+     * Add a track to the playback queue (after all user-queued songs).
+     *
+     * @param trackId the id of the track to add.
+     */
+    fun addToQueue(trackId: String)
+
     /** Deletes the entire playlist and navigates back. */
     fun deletePlaylist()
 
