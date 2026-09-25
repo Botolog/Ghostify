@@ -61,7 +61,7 @@ class GhostifyViewModels(
         newId = newId,
     )
 
-    private val playerVm = PlayerViewModel(player, songRepo.songDao, downloads)
+    private val playerVm = PlayerViewModel(player, songRepo.songDao, downloads, settings)
 
     private val settingsVm = SettingsViewModel(context, settings, repo, songRepo, musicStore)
 

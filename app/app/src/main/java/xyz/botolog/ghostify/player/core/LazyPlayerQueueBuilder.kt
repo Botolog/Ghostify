@@ -49,7 +49,7 @@ class LazyPlayerQueueBuilder(
 
         val startIndex = resolveStartIndex(startSongId)
         Timber.i("LazyPlayerQueueBuilder.buildInitial: ${allItems.size} playable, startIndex=$startIndex")
-        return QueueBuildResult.Ready(items = allItems.toList(), startIndex = startIndex)
+        return QueueBuildResult.Ready(items = allItems.toList(), startIndex = startIndex, startSongId = startSongId)
     }
 
     /**

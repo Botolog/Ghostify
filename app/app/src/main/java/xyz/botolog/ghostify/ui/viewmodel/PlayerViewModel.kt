@@ -1,6 +1,7 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
 import xyz.botolog.ghostify.data.db.dao.SongDao
+import xyz.botolog.ghostify.data.repo.SettingsRepository
 import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.player.PlayerController
 import xyz.botolog.ghostify.player.MediaItemMapper
@@ -38,6 +39,7 @@ class PlayerViewModel(
     private val player: PlayerController,
     private val songDao: SongDao,
     private val downloads: DownloadManager,
+    private val settingsRepository: SettingsRepository,
 ) : ContractViewModel(), PlayerContract {
 
     private val _state = MutableStateFlow(PlayerUiState())
@@ -88,10 +90,10 @@ class PlayerViewModel(
                 }
         }
 
-        // Observe player state, queue flag, lyrics, AND song entity — combine all four into one emission.
+        // Observe player state, queue flag, lyrics, song entity, AND showQueueCovers — combine all into one emission.
         launch {
-            combine(player.state, queueOpen, currentLyrics, currentSongEntity) { core, open, lyrics, entity ->
-                val ui = mapToUi(core, open, entity)
+            combine(player.state, queueOpen, currentLyrics, currentSongEntity, settingsRepository.observeShowQueueCovers()) { core, open, lyrics, entity, showQueueCovers ->
+                val ui = mapToUi(core, open, entity, showQueueCovers)
                 val mediaId = ui.nowPlaying?.let { findMediaId(ui) }
                 currentSongId.value = mediaId
                 ui.copy(
@@ -250,6 +252,7 @@ class PlayerViewModel(
         core: CorePlayerUiState,
         open: Boolean,
         songEntity: xyz.botolog.ghostify.data.db.entity.SongEntity?,
+        showQueueCovers: Boolean,
     ): PlayerUiState {
         val isEmpty = core.nothingToPlay || core.queue.isEmpty()
         val current = core.currentItem
@@ -264,6 +267,7 @@ class PlayerViewModel(
             volume = core.volume,
             queue = mapQueueItems(core),
             queueOpen = open,
+            showQueueCovers = showQueueCovers,
         )
     }
 
@@ -291,6 +295,7 @@ class PlayerViewModel(
                 durationMs = item.durationMs ?: DEFAULT_DURATION_MS,
                 isCurrent = index == core.currentQueueIndex,
                 queuedByUser = item.queuedByUser,
+                coverUrl = item.coverUrl,
             )
         }
 

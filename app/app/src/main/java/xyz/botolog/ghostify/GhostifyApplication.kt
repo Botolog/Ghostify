@@ -199,6 +199,7 @@ class GhostifyContainer(private val context: Application) {
             context = context,
             sessionActivityClass = MainActivity::class.java,
             persistence = playerStatePersistence,
+            loopPlaylists = settingsRepository.observeLoopPlaylists(),
         )
     }
 

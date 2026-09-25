@@ -32,9 +32,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -72,6 +75,7 @@ class PlayerController private constructor(
     private val session: MediaSession?,
     private val scope: CoroutineScope,
     private val persistence: PlayerStatePersistence? = null,
+    private val loopPlaylists: Flow<Boolean>,
 ) : Player.Listener {
 
     private val _state = MutableStateFlow(PlayerUiState())
@@ -82,6 +86,9 @@ class PlayerController private constructor(
     private var artworkBackfillJob: Job? = null
     private var saveJob: Job? = null
     val queueManager = PlayerQueueManager()
+    private var isSyncingExoPlayer = false
+    private var loopPlaylistsEnabled = true
+    private var endOfQueueHandled = false
     var currentPlaylistId: String? = null
         private set
 
@@ -94,6 +101,11 @@ class PlayerController private constructor(
         publishSnapshot()
         scope.launch {
             restoreSavedState()
+        }
+        scope.launch {
+            loopPlaylists.distinctUntilChanged().collect { enabled ->
+                loopPlaylistsEnabled = enabled
+            }
         }
     }
 
@@ -216,31 +228,63 @@ class PlayerController private constructor(
         _state.update {
             PlayerUiState(
                 nothingToPlay = true,
-                shuffleEnabled = exoPlayer.shuffleModeEnabled,
+                shuffleEnabled = queueManager.isShuffled,
                 repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode),
                 volume = exoPlayer.volume,
             )
         }
     }
 
-    /** Builds MediaItems, configures the player and starts the foreground service. */
     private suspend fun handleQueueReady(result: QueueBuildResult.Ready) {
-        val mediaItems = buildMediaItems(result.items, result.startIndex)
-        Timber.i("playPlaylist: ${result.items.size} playable items, starting at ${result.startIndex}")
+        val clickedSongId = result.startSongId
+        val (currentItems, startIndex) = withContext(Dispatchers.Main.immediate) {
+            val shouldShuffle = queueManager.isShuffled
+            Timber.i("handleQueueReady: ${result.items.size} items, startIdx=${result.startIndex}, shuffle=$shouldShuffle, clickedSong=$clickedSongId")
+
+            queueManager.setQueue(result.items)
+
+            if (clickedSongId != null) {
+                val clickedIdx = queueManager.indexOf(clickedSongId)
+                if (clickedIdx > 0) {
+                    val rotated = queueManager.queue.subList(clickedIdx, queueManager.size) +
+                        queueManager.queue.subList(0, clickedIdx)
+                    queueManager.setQueue(rotated)
+                }
+                if (shouldShuffle && queueManager.size > 1) {
+                    queueManager.shuffle(keepFirstPinned = true)
+                }
+            } else {
+                if (shouldShuffle) {
+                    queueManager.shuffle()
+                }
+            }
+
+            val items = queueManager.queue
+            val index = if (clickedSongId != null) {
+                0
+            } else if (shouldShuffle) {
+                0
+            } else {
+                result.startIndex
+            }
+            items to index
+        }
+
+        val mediaItems = buildMediaItems(currentItems, startIndex)
+
         withContext(Dispatchers.Main.immediate) {
             nothingToPlay = false
             lastError = null
             artworkByMediaId.clear()
-            queueManager.setQueue(result.items)
+            exoPlayer.shuffleModeEnabled = false
             artworkByMediaId.putAll(mediaItems.artwork)
-            exoPlayer.setMediaItems(mediaItems.items, result.startIndex, PlaybackConstants.TIME_UNSET)
+            exoPlayer.setMediaItems(mediaItems.items, startIndex, PlaybackConstants.TIME_UNSET)
             exoPlayer.prepare()
             exoPlayer.play()
             publishSnapshot()
             startPlaybackService()
         }
-        // Playback is already running; fill in the remaining artwork off the critical path.
-        launchArtworkBackfill(result.items, result.startIndex)
+        launchArtworkBackfill(currentItems, startIndex)
     }
 
     /** Holds a batch of built [MediaItem]s together with their extracted artwork bytes. */
@@ -340,15 +384,40 @@ class PlayerController private constructor(
                 persistence.clear()
             }
             is QueueBuildResult.Ready -> {
-                val mediaItems = buildMediaItems(result.items, result.startIndex)
+                val clickedSongId = saved.currentSongId
+                withContext(Dispatchers.Main.immediate) {
+                    queueManager.setQueue(result.items)
+                    if (clickedSongId != null) {
+                        val clickedIdx = queueManager.indexOf(clickedSongId)
+                        if (clickedIdx > 0) {
+                            val rotated = queueManager.queue.subList(clickedIdx, queueManager.size) +
+                                queueManager.queue.subList(0, clickedIdx)
+                            queueManager.setQueue(rotated)
+                        }
+                        if (saved.shuffleEnabled && queueManager.size > 1) {
+                            queueManager.shuffle(keepFirstPinned = true)
+                        }
+                    } else if (saved.shuffleEnabled) {
+                        queueManager.shuffle()
+                    }
+                }
+                val currentItems = queueManager.queue
+                val startIndex = if (clickedSongId != null) {
+                    0
+                } else if (saved.shuffleEnabled) {
+                    0
+                } else {
+                    saved.currentSongId?.let { queueManager.indexOf(it) }?.coerceAtLeast(0) ?: 0
+                }
+                val mediaItems = buildMediaItems(currentItems, startIndex)
                 withContext(Dispatchers.Main.immediate) {
                     nothingToPlay = false
                     lastError = null
                     artworkByMediaId.clear()
                     artworkByMediaId.putAll(mediaItems.artwork)
-                    exoPlayer.setMediaItems(mediaItems.items, result.startIndex, PlaybackConstants.TIME_UNSET)
+                    exoPlayer.shuffleModeEnabled = false
+                    exoPlayer.setMediaItems(mediaItems.items, startIndex, PlaybackConstants.TIME_UNSET)
                     exoPlayer.prepare()
-                    exoPlayer.shuffleModeEnabled = saved.shuffleEnabled
                     exoPlayer.repeatMode = saved.repeatMode.media3Value
                     exoPlayer.volume = saved.volume.coerceIn(0f, 1f)
                     if (saved.positionMs > 0) {
@@ -357,11 +426,10 @@ class PlayerController private constructor(
                     if (saved.wasPlaying) {
                         exoPlayer.play()
                     }
-                    queueManager.setQueue(result.items)
                     publishSnapshot()
                     startPlaybackService()
                 }
-                launchArtworkBackfill(result.items, result.startIndex)
+                launchArtworkBackfill(currentItems, startIndex)
                 Timber.i("PlayerController.restoreSavedState: restored successfully")
             }
         }
@@ -472,14 +540,34 @@ class PlayerController private constructor(
      * @param enabled true to shuffle, false for sequential order.
      */
     fun setShuffleEnabled(enabled: Boolean) {
-        Timber.i("PlayerController.setShuffleEnabled: START enabled=$enabled")
-        exoPlayer.shuffleModeEnabled = enabled
+        Timber.i("PlayerController.setShuffleEnabled: enabled=$enabled")
+        if (exoPlayer.shuffleModeEnabled) {
+            exoPlayer.shuffleModeEnabled = false
+        }
+        if (enabled != queueManager.isShuffled && queueManager.size > 0) {
+            if (enabled) {
+                val activeIndex = currentQueueIndex()
+                if (activeIndex >= 0) {
+                    queueManager.shuffleAfter(activeIndex)
+                    syncExoPlayerFromQueueManager(activeIndex)
+                }
+            } else {
+                val activeMediaId = exoPlayer.currentMediaItem?.mediaId
+                queueManager.unshuffle()
+                val canonicalIndex = activeMediaId?.let(queueManager::indexOf)?.takeIf { it >= 0 }
+                syncExoPlayerFromQueueManager(canonicalIndex)
+            }
+        }
+        if (exoPlayer.shuffleModeEnabled) {
+            exoPlayer.shuffleModeEnabled = false
+        }
+        publishSnapshot()
     }
 
     /** Toggles shuffle mode on/off. */
     fun toggleShuffle() {
-        Timber.i("PlayerController.toggleShuffle: START")
-        exoPlayer.shuffleModeEnabled = !exoPlayer.shuffleModeEnabled
+        Timber.i("PlayerController.toggleShuffle")
+        setShuffleEnabled(!queueManager.isShuffled)
     }
 
     /**
@@ -586,12 +674,42 @@ class PlayerController private constructor(
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         Timber.d("PlayerController.onMediaItemTransition: mediaId=${mediaItem?.mediaId}, reason=$reason")
-        publishSnapshot()
+        if (isSyncingExoPlayer) return
+        endOfQueueHandled = false
+        val completedRepeatAllCycle =
+            reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
+                exoPlayer.repeatMode == Player.REPEAT_MODE_ALL &&
+                loopPlaylistsEnabled &&
+                queueManager.isShuffled
+        if (completedRepeatAllCycle) {
+            startNextQueueCycle(reshuffle = true)
+        } else {
+            publishSnapshot()
+        }
     }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
         Timber.d("PlayerController.onPlaybackStateChanged: state=$playbackState")
-        publishSnapshot()
+        if (isSyncingExoPlayer) return
+        if (playbackState != Player.STATE_ENDED) {
+            endOfQueueHandled = false
+            publishSnapshot()
+            return
+        }
+        if (
+            exoPlayer.repeatMode != Player.REPEAT_MODE_OFF ||
+            endOfQueueHandled ||
+            exoPlayer.mediaItemCount == 0
+        ) {
+            publishSnapshot()
+            return
+        }
+        endOfQueueHandled = true
+        if (loopPlaylistsEnabled) {
+            startNextQueueCycle(reshuffle = queueManager.isShuffled)
+        } else {
+            publishSnapshot()
+        }
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -616,7 +734,16 @@ class PlayerController private constructor(
 
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
         Timber.d("PlayerController.onShuffleModeEnabledChanged: shuffleModeEnabled=$shuffleModeEnabled")
-        publishSnapshot()
+        if (shuffleModeEnabled) {
+            if (!isSyncingExoPlayer) {
+                setShuffleEnabled(true)
+            }
+            if (exoPlayer.shuffleModeEnabled) {
+                exoPlayer.shuffleModeEnabled = false
+            }
+        } else {
+            publishSnapshot()
+        }
     }
 
     override fun onVolumeChanged(volume: Float) {
@@ -635,6 +762,167 @@ class PlayerController private constructor(
 
     // --- Internals ------------------------------------------------------------------
 
+    private fun currentQueueIndex(): Int {
+        if (exoPlayer.mediaItemCount == 0) return -1
+        val currentMediaId = exoPlayer.currentMediaItem?.mediaId
+        if (currentMediaId != null) {
+            return queueManager.indexOf(currentMediaId).takeIf { it >= 0 } ?: -1
+        }
+        val playerIndex = exoPlayer.currentMediaItemIndex
+        return if (playerIndex in 0 until queueManager.size) playerIndex else -1
+    }
+
+    private fun syncExoPlayerFromQueueManager(anchoredIndex: Int? = null) {
+        isSyncingExoPlayer = true
+        try {
+            resequenceExoPlayerFromQueueManager(anchoredIndex)
+        } finally {
+            isSyncingExoPlayer = false
+        }
+    }
+
+    private fun restorePlayWhenReady(wasPlayWhenReady: Boolean) {
+        if (wasPlayWhenReady == exoPlayer.playWhenReady) return
+        if (wasPlayWhenReady) exoPlayer.play() else exoPlayer.pause()
+    }
+
+    private fun resequenceExoPlayerFromQueueManager(anchoredIndex: Int? = null) {
+        val desiredCount = queueManager.size
+        if (desiredCount == 0) {
+            exoPlayer.shuffleModeEnabled = false
+            exoPlayer.clearMediaItems()
+            return
+        }
+
+        exoPlayer.shuffleModeEnabled = false
+        val savedMediaId = exoPlayer.currentMediaItem?.mediaId
+        val savedPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
+        val wasPlayWhenReady = exoPlayer.playWhenReady
+        val currentCount = exoPlayer.mediaItemCount
+        val currentById = HashMap<String, MediaItem>(currentCount)
+        var hasDuplicateCurrentId = false
+        for (index in 0 until currentCount) {
+            val mediaItem = exoPlayer.getMediaItemAt(index)
+            if (currentById.put(mediaItem.mediaId, mediaItem) != null) {
+                hasDuplicateCurrentId = true
+            }
+        }
+
+        val desiredIds = HashSet<String>(desiredCount)
+        var hasDuplicateDesiredId = false
+        for (index in 0 until desiredCount) {
+            val queueItem = queueManager.getOrNull(index) ?: return
+            if (!desiredIds.add(queueItem.songId)) hasDuplicateDesiredId = true
+        }
+
+        if (
+            anchoredIndex != null &&
+            currentCount == desiredCount &&
+            !hasDuplicateCurrentId &&
+            !hasDuplicateDesiredId &&
+            anchoredIndex in 0 until desiredCount &&
+            currentById.size == desiredCount &&
+            desiredIds.all { currentById.containsKey(it) } &&
+            (savedMediaId == null || queueManager.getOrNull(anchoredIndex)?.songId == savedMediaId)
+        ) {
+            var prefixMatches = true
+            for (index in 0..anchoredIndex) {
+                val queueItem = queueManager.getOrNull(index)
+                if (queueItem == null || exoPlayer.getMediaItemAt(index).mediaId != queueItem.songId) {
+                    prefixMatches = false
+                    break
+                }
+            }
+            if (prefixMatches) {
+                val suffixStart = anchoredIndex + 1
+                val orderedSuffix = ArrayList<MediaItem>(desiredCount - suffixStart)
+                var suffixChanged = false
+                for (index in suffixStart until desiredCount) {
+                    val queueItem = queueManager.getOrNull(index) ?: return
+                    val mediaItem = currentById[queueItem.songId] ?: return
+                    orderedSuffix.add(mediaItem)
+                    if (exoPlayer.getMediaItemAt(index).mediaId != mediaItem.mediaId) {
+                        suffixChanged = true
+                    }
+                }
+                if (suffixChanged) {
+                    exoPlayer.replaceMediaItems(suffixStart, currentCount, orderedSuffix)
+                }
+                restorePlayWhenReady(wasPlayWhenReady)
+                if (suffixChanged && exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
+                Timber.i(
+                    "syncExoPlayerFromQueueManager: reordered suffix $suffixStart..$currentCount " +
+                        "in one transaction",
+                )
+                return
+            }
+        }
+
+        val orderedExistingItems = ArrayList<MediaItem>(desiredCount)
+        var canReplaceExistingItems =
+            currentCount == desiredCount && !hasDuplicateCurrentId && !hasDuplicateDesiredId
+        var savedItemTargetIndex = -1
+        for (index in 0 until desiredCount) {
+            val queueItem = queueManager.getOrNull(index) ?: return
+            if (queueItem.songId == savedMediaId) savedItemTargetIndex = index
+            if (canReplaceExistingItems) {
+                val mediaItem = currentById[queueItem.songId]
+                if (mediaItem == null) {
+                    canReplaceExistingItems = false
+                } else {
+                    orderedExistingItems.add(mediaItem)
+                }
+            }
+        }
+
+        if (canReplaceExistingItems) {
+            exoPlayer.replaceMediaItems(0, currentCount, orderedExistingItems)
+            if (savedMediaId != null && savedItemTargetIndex >= 0) {
+                exoPlayer.seekTo(savedItemTargetIndex, savedPosition)
+            }
+            restorePlayWhenReady(wasPlayWhenReady)
+            if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
+            Timber.i("syncExoPlayerFromQueueManager: reordered ${currentCount} items in one transaction")
+        } else {
+            val mediaItems = ArrayList<MediaItem>(desiredCount)
+            for (index in 0 until desiredCount) {
+                val queueItem = queueManager.getOrNull(index) ?: return
+                mediaItems.add(
+                    currentById[queueItem.songId]
+                        ?: MediaItemMapper.toMediaItem(queueItem, null),
+                )
+            }
+            val savedItemIndex = savedMediaId?.let { queueManager.indexOf(it) } ?: -1
+            val startIndex = savedItemIndex.coerceAtLeast(0)
+            val startPosition = if (savedItemIndex >= 0) savedPosition else 0L
+            exoPlayer.setMediaItems(mediaItems, startIndex, startPosition)
+            if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
+            restorePlayWhenReady(wasPlayWhenReady)
+            Timber.i("syncExoPlayerFromQueueManager: rebuilt ${mediaItems.size} items, current=$startIndex")
+        }
+    }
+
+    private fun startNextQueueCycle(reshuffle: Boolean) {
+        if (exoPlayer.mediaItemCount == 0) {
+            publishSnapshot()
+            return
+        }
+        val shouldPlay = exoPlayer.playWhenReady
+        isSyncingExoPlayer = true
+        try {
+            if (reshuffle) {
+                queueManager.reshuffle()
+                resequenceExoPlayerFromQueueManager()
+            }
+            exoPlayer.seekTo(0, 0L)
+            if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
+            if (shouldPlay) exoPlayer.play()
+        } finally {
+            isSyncingExoPlayer = false
+        }
+        publishSnapshot()
+    }
+
     /**
      * Advances past a media item that failed to load/decode (corrupt or truncated file).
      *
@@ -648,8 +936,11 @@ class PlayerController private constructor(
         val count = exoPlayer.mediaItemCount
         if (count == 0) return
         val currentIndex = exoPlayer.currentMediaItemIndex
-        val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL
-        val targetIndex = resolveSkipTargetIndex(currentIndex, count, repeatAll)
+        val repeatMode = exoPlayer.repeatMode
+        val loopAtEnd =
+            repeatMode == Player.REPEAT_MODE_ALL ||
+                (repeatMode == Player.REPEAT_MODE_OFF && loopPlaylistsEnabled)
+        val targetIndex = resolveSkipTargetIndex(currentIndex, count, loopAtEnd)
         if (targetIndex < 0) {
             exoPlayer.stop()
             publishSnapshot()
@@ -667,9 +958,9 @@ class PlayerController private constructor(
      *
      * @return the target index, or -1 if there is nothing left to play.
      */
-    private fun resolveSkipTargetIndex(currentIndex: Int, count: Int, repeatAll: Boolean): Int = when {
+    private fun resolveSkipTargetIndex(currentIndex: Int, count: Int, loopAtEnd: Boolean): Int = when {
         currentIndex + 1 < count -> currentIndex + 1
-        repeatAll -> 0
+        loopAtEnd -> 0
         else -> -1
     }
 
@@ -712,6 +1003,7 @@ class PlayerController private constructor(
      * Must run on the main thread.
      */
     private fun publishSnapshot() {
+        if (isSyncingExoPlayer) return
         Timber.d("PlayerController.publishSnapshot: START")
         val snapshot = buildPlayerSnapshot()
         _state.update { current ->
@@ -739,7 +1031,7 @@ class PlayerController private constructor(
             currentDurationMs = exoPlayer.duration,
             itemMetadataDurationMs = exoPlayer.mediaMetadata.durationMs,
             repeatMode = exoPlayer.repeatMode,
-            shuffleEnabled = exoPlayer.shuffleModeEnabled,
+                shuffleEnabled = queueManager.isShuffled,
             volume = exoPlayer.volume,
             currentMediaId = currentItem?.mediaId,
             currentTitle = currentItem?.mediaMetadata?.title?.toString(),
@@ -794,6 +1086,7 @@ class PlayerController private constructor(
             sessionActivityClass: Class<*>? = null,
             scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             persistence: PlayerStatePersistence? = null,
+            loopPlaylists: Flow<Boolean> = flowOf(true),
         ): PlayerController {
             Timber.i("PlayerController.create: START")
             val appCtx = context.applicationContext
@@ -808,6 +1101,7 @@ class PlayerController private constructor(
                 session = sess,
                 scope = scope,
                 persistence = persistence,
+                loopPlaylists = loopPlaylists,
             )
         }
     }

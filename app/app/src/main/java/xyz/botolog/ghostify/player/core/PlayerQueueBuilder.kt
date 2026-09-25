@@ -87,7 +87,7 @@ class PlayerQueueBuilder(
 
         val startIndex = resolveStartIndex(items, startSongId)
         Timber.i("PlayerQueueBuilder.build: returning Ready items=${items.size}, startIndex=$startIndex")
-        return QueueBuildResult.Ready(items = items, startIndex = startIndex)
+        return QueueBuildResult.Ready(items = items, startIndex = startIndex, startSongId = startSongId)
     }
 
     /**

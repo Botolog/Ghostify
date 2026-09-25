@@ -28,24 +28,32 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import kotlinx.coroutines.isActive
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.model.QueueItem
 import xyz.botolog.ghostify.ui.util.DurationFormat
+import kotlin.math.roundToInt
 
 /**
  * Bottom sheet queue editor with three sections: Played, Current, and Up Next.
@@ -65,6 +73,7 @@ fun QueueEditorBottomSheet(
     val state by contract.state.collectAsState()
     val queue = state.queue
     val currentIndex = queue.indexOfFirst { it.isCurrent }.coerceAtLeast(0)
+    val showQueueCovers = state.showQueueCovers
 
     val playedItems = if (currentIndex > 0) queue.subList(0, currentIndex) else emptyList()
     val currentItem = queue.getOrNull(currentIndex)
@@ -82,6 +91,7 @@ fun QueueEditorBottomSheet(
             nextItems = nextItems,
             currentIndex = currentIndex,
             contract = contract,
+            showQueueCovers = showQueueCovers,
         )
     }
 }
@@ -96,8 +106,75 @@ private fun QueueEditorContent(
     nextItems: List<QueueItem>,
     currentIndex: Int,
     contract: PlayerContract,
+    showQueueCovers: Boolean,
 ) {
     val listState = rememberLazyListState()
+
+    // Improvement 1: Auto-scroll to the currently playing song.
+    // The current item is at index = 1 (after the "Played" header) when playedItems is non-empty,
+    // or index = 1 when there are no played items (just header + current).
+    // We use a key-based approach: scroll to find the current item after composition.
+    LaunchedEffect(Unit) {
+        // Wait for the list to be laid out, then scroll to the current item.
+        // The current item index in the LazyColumn depends on whether played section exists.
+        // Layout: [header_played?] [played items...] [header_current] [current item] [header_next?] [next items...] [spacer]
+        val targetIndex = if (playedItems.isNotEmpty()) {
+            1 + playedItems.size + 1 // header_played + playedItems + header_current
+        } else {
+            1 // header_current (no played section, so header_current is at 1)
+        }
+        listState.animateScrollToItem(targetIndex)
+    }
+
+    // Improvement 3: Auto-scroll during drag near edges.
+    var draggedGlobalIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    val itemHeightPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val edgeZonePx = with(LocalDensity.current) { 80.dp.toPx() }
+
+    LaunchedEffect(isDragging) {
+        if (isDragging && draggedGlobalIndex >= 0) {
+            while (isActive) {
+                val visibleItems = listState.layoutInfo.visibleItemsInfo
+                if (visibleItems.isEmpty()) break
+
+                val viewportStart = listState.layoutInfo.viewportStartOffset.toFloat()
+                val viewportEnd = listState.layoutInfo.viewportEndOffset.toFloat()
+                val viewportHeight = viewportEnd - viewportStart
+
+                // Find the dragged item by its LazyColumn key
+                val queue = playedItems + listOfNotNull(currentItem) + nextItems
+                val songId = queue.getOrNull(draggedGlobalIndex)?.songId
+                val key = if (songId != null) {
+                    if (draggedGlobalIndex < playedItems.size) "played_$songId" else "next_$songId"
+                } else null
+
+                val draggedItemInfo = key?.let { k -> visibleItems.find { it.key == k } }
+
+                if (draggedItemInfo != null) {
+                    // Calculate pointer position in viewport coordinates
+                    val itemTop = draggedItemInfo.offset.toFloat()
+                    val pointerY = itemTop + (dragOffsetY % itemHeightPx)
+
+                    when {
+                        pointerY < edgeZonePx -> {
+                            val speed = (1f - pointerY / edgeZonePx).coerceIn(0.1f, 1f) * 12f
+                            listState.scroll { scrollBy(-speed) }
+                            dragOffsetY -= speed
+                        }
+                        pointerY > viewportHeight - edgeZonePx -> {
+                            val speed = (1f - (viewportHeight - pointerY) / edgeZonePx).coerceIn(0.1f, 1f) * 12f
+                            listState.scroll { scrollBy(speed) }
+                            dragOffsetY += speed
+                        }
+                    }
+                }
+                kotlinx.coroutines.delay(16L)
+            }
+        }
+    }
 
     LazyColumn(
         state = listState,
@@ -119,8 +196,32 @@ private fun QueueEditorContent(
                     item = item,
                     globalIndex = globalIndex,
                     totalItems = playedItems.size + 1 + nextItems.size,
-                    allItems = playedItems + listOfNotNull(currentItem) + nextItems,
                     contract = contract,
+                    showQueueCovers = showQueueCovers,
+                    draggedGlobalIndex = draggedGlobalIndex,
+                    dragOffsetY = dragOffsetY,
+                    itemHeightPx = itemHeightPx,
+                    isCurrentItem = false,
+                    onDragStart = { index ->
+                        draggedGlobalIndex = index
+                        isDragging = true
+                    },
+                    onDragUpdate = { offset ->
+                        dragOffsetY = offset
+                    },
+                    onDragEnd = { fromIndex, toIndex ->
+                        isDragging = false
+                        draggedGlobalIndex = -1
+                        dragOffsetY = 0f
+                        if (fromIndex != toIndex) {
+                            contract.reorderQueue(fromIndex, toIndex)
+                        }
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                        draggedGlobalIndex = -1
+                        dragOffsetY = 0f
+                    },
                 )
             }
         }
@@ -149,8 +250,32 @@ private fun QueueEditorContent(
                     item = item,
                     globalIndex = globalIndex,
                     totalItems = playedItems.size + 1 + nextItems.size,
-                    allItems = playedItems + listOfNotNull(currentItem) + nextItems,
                     contract = contract,
+                    showQueueCovers = showQueueCovers,
+                    draggedGlobalIndex = draggedGlobalIndex,
+                    dragOffsetY = dragOffsetY,
+                    itemHeightPx = itemHeightPx,
+                    isCurrentItem = false,
+                    onDragStart = { index ->
+                        draggedGlobalIndex = index
+                        isDragging = true
+                    },
+                    onDragUpdate = { offset ->
+                        dragOffsetY = offset
+                    },
+                    onDragEnd = { fromIndex, toIndex ->
+                        isDragging = false
+                        draggedGlobalIndex = -1
+                        dragOffsetY = 0f
+                        if (fromIndex != toIndex) {
+                            contract.reorderQueue(fromIndex, toIndex)
+                        }
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                        draggedGlobalIndex = -1
+                        dragOffsetY = 0f
+                    },
                 )
             }
         }
@@ -219,87 +344,124 @@ private fun CurrentQueueItem(
 /**
  * A draggable queue item with a drag handle. Supports long-press-then-drag reordering.
  *
+ * During drag the item follows the finger and renders above other items.
+ * Non-dragged items between the original and target positions shift smoothly.
+ *
  * @param item the queue item to display.
  * @param globalIndex the item's index in the full queue (not just the section).
  * @param totalItems total number of items in the full queue.
- * @param allItems the full queue list (for reordering).
  * @param contract the player contract for reorder actions.
+ * @param draggedGlobalIndex the global index of the item currently being dragged, or -1 if none.
+ * @param dragOffsetY the cumulative Y offset of the dragged item.
+ * @param itemHeightPx the height of a single item in pixels.
+ * @param isCurrentItem whether this is the currently playing item (not draggable).
+ * @param onDragStart called when a long-press drag begins with the global index.
+ * @param onDragUpdate called with the updated cumulative Y offset during drag.
+ * @param onDragEnd called with (fromIndex, toIndex) when drag finishes.
+ * @param onDragCancel called when drag is cancelled.
  */
 @Composable
 private fun DraggableQueueItem(
     item: QueueItem,
     globalIndex: Int,
     totalItems: Int,
-    allItems: List<QueueItem>,
     contract: PlayerContract,
+    showQueueCovers: Boolean,
+    draggedGlobalIndex: Int,
+    dragOffsetY: Float,
+    itemHeightPx: Float,
+    isCurrentItem: Boolean,
+    onDragStart: (Int) -> Unit,
+    onDragUpdate: (Float) -> Unit,
+    onDragEnd: (Int, Int) -> Unit,
+    onDragCancel: () -> Unit,
 ) {
-    var isDragging by remember { mutableStateOf(false) }
-    var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    var dragTargetIndex by remember { mutableIntStateOf(globalIndex) }
+    val isThisDragged = draggedGlobalIndex == globalIndex
 
+    // Proportional shift for non-dragged items during drag.
+    val shiftOffset = when {
+        !isThisDragged && draggedGlobalIndex >= 0 && dragOffsetY != 0f -> {
+            if (dragOffsetY > 0 && globalIndex > draggedGlobalIndex) {
+                // Dragging down: shift items above up, proportional to drag distance
+                val dist = globalIndex - draggedGlobalIndex
+                val shift = (dragOffsetY - (dist - 1) * itemHeightPx).coerceIn(0f, itemHeightPx)
+                -shift
+            } else if (dragOffsetY < 0 && globalIndex < draggedGlobalIndex) {
+                // Dragging up: shift items below down, proportional to drag distance
+                val dist = draggedGlobalIndex - globalIndex
+                val shift = (-dragOffsetY - (dist - 1) * itemHeightPx).coerceIn(0f, itemHeightPx)
+                shift
+            } else {
+                0f
+            }
+        }
+        else -> 0f
+    }
+
+    val animatedShift by animateFloatAsState(
+        targetValue = shiftOffset,
+        label = "shift",
+    )
+
+    // Elevation and scale for the dragged item
     val elevation by animateFloatAsState(
-        targetValue = if (isDragging) 8f else 0f,
+        targetValue = if (isThisDragged) 8f else 0f,
         label = "elevation",
     )
-
     val scale by animateFloatAsState(
-        targetValue = if (isDragging) 1.03f else 1f,
+        targetValue = if (isThisDragged) 1.03f else 1f,
         label = "scale",
     )
-
-    val itemHeightPx = with(LocalDensity.current) { 56.dp.toPx() }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .zIndex(if (isThisDragged) 1f else 0f)
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
-                translationX = if (isDragging) dragOffset.x else 0f
-                translationY = if (isDragging) dragOffset.y else 0f
+                translationY = if (isThisDragged) dragOffsetY - itemHeightPx else animatedShift
                 shadowElevation = elevation
+                // Improvement 2: dragged item renders above all others
+                if (isThisDragged) {
+                    translationX = 0f
+                    alpha = 1f
+                }
                 shape = RoundedCornerShape(8.dp)
                 clip = true
             }
             .then(
-                if (isDragging) {
+                if (isThisDragged) {
                     Modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
                 } else {
                     Modifier.background(MaterialTheme.colorScheme.surface)
                 }
             )
             .pointerInput(globalIndex, totalItems) {
+                var localOffset = 0f
                 detectDragGesturesAfterLongPress(
                     onDragStart = {
-                        isDragging = true
-                        dragOffset = Offset.Zero
-                        dragTargetIndex = globalIndex
+                        localOffset = 0f
+                        onDragStart(globalIndex)
                     },
                     onDrag = { change, amount ->
                         change.consume()
-                        dragOffset += amount
-                        // Calculate which position the item is being dragged over.
-                        val rawTarget = globalIndex + (dragOffset.y / itemHeightPx).toInt()
-                        dragTargetIndex = rawTarget.coerceIn(0, totalItems - 1)
+                        localOffset += amount.y
+                        onDragUpdate(localOffset)
                     },
                     onDragEnd = {
-                        isDragging = false
-                        dragOffset = Offset.Zero
-                        if (dragTargetIndex != globalIndex) {
-                            contract.reorderQueue(globalIndex, dragTargetIndex)
-                        }
-                        dragTargetIndex = globalIndex
+                        val finalTarget = (globalIndex + (localOffset / itemHeightPx).roundToInt())
+                            .coerceIn(0, totalItems - 1)
+                        onDragEnd(globalIndex, finalTarget)
                     },
                     onDragCancel = {
-                        isDragging = false
-                        dragOffset = Offset.Zero
-                        dragTargetIndex = globalIndex
+                        onDragCancel()
                     },
                 )
             },
     ) {
-        QueueItemRow(item = item)
+        QueueItemRow(item = item, showCover = showQueueCovers)
     }
 }
 
@@ -307,7 +469,7 @@ private fun DraggableQueueItem(
  * A single row in the queue editor showing track title, artist, and duration.
  */
 @Composable
-private fun QueueItemRow(item: QueueItem) {
+private fun QueueItemRow(item: QueueItem, showCover: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -322,6 +484,18 @@ private fun QueueItemRow(item: QueueItem) {
         )
 
         Spacer(modifier = Modifier.width(12.dp))
+
+        if (showCover && !item.coverUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = item.coverUrl,
+                contentDescription = "Album art",
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Crop,
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+        }
 
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -76,6 +76,8 @@ object SettingsTestTags {
     const val CONCURRENCY_PLUS = "setting_concurrency_plus"
     const val CONCURRENCY_MINUS = "setting_concurrency_minus"
     const val AUTO_DOWNLOAD = "setting_auto_download"
+    const val SHOW_QUEUE_COVERS = "setting_show_queue_covers"
+    const val LOOP_PLAYLISTS = "setting_loop_playlists"
     const val CACHE_COUNT = "setting_cache_count"
     const val CLEAR_CACHE = "setting_clear_cache"
     const val CHECK_UPDATE = "setting_check_update"
@@ -263,6 +265,13 @@ private fun SettingsContent(
         Spacer(modifier = Modifier.height(SECTION_SPACING))
 
         AutoDownloadSetting(state = state, contract = contract)
+        Spacer(modifier = Modifier.height(SECTION_SPACING))
+
+        ShowQueueCoversSetting(state = state, contract = contract)
+        Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
+
+        SectionHeader("Playback")
+        LoopPlaylistsSetting(state = state, contract = contract)
         Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
 
         SectionHeader("UI")
@@ -448,6 +457,53 @@ private fun AutoDownloadSetting(state: SettingsUiState, contract: SettingsContra
             checked = state.autoDownloadOnAdd,
             onCheckedChange = contract::setAutoDownload,
             modifier = Modifier.testTag(SettingsTestTags.AUTO_DOWNLOAD),
+        )
+    }
+}
+
+/**
+ * Toggle for showing album cover art in the queue editor.
+ */
+@Composable
+private fun ShowQueueCoversSetting(state: SettingsUiState, contract: SettingsContract) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Show covers in queue", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Show album art for each song in the queue editor.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = state.showQueueCovers,
+            onCheckedChange = contract::setShowQueueCovers,
+            modifier = Modifier.testTag(SettingsTestTags.SHOW_QUEUE_COVERS),
+        )
+    }
+}
+
+@Composable
+private fun LoopPlaylistsSetting(state: SettingsUiState, contract: SettingsContract) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Loop playlists", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Restart playback from the first song when the queue ends.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = state.loopPlaylists,
+            onCheckedChange = contract::setLoopPlaylists,
+            modifier = Modifier.testTag(SettingsTestTags.LOOP_PLAYLISTS),
         )
     }
 }

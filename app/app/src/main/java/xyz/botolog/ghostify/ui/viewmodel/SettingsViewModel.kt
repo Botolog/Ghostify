@@ -219,6 +219,15 @@ class SettingsViewModel(
         launch { settings.setAutoDownload(enabled) }
     }
 
+    override fun setShowQueueCovers(enabled: Boolean) {
+        Timber.i("SettingsViewModel.setShowQueueCovers: START")
+        launch { settings.setShowQueueCovers(enabled) }
+    }
+
+    override fun setLoopPlaylists(enabled: Boolean) {
+        launch { settings.setLoopPlaylists(enabled) }
+    }
+
     override fun setLandscapeControlsSide(side: String) {
         Timber.i("SettingsViewModel.setLandscapeControlsSide: side=$side")
         launch { settings.setLandscapeControlsSide(side) }
@@ -339,18 +348,22 @@ class SettingsViewModel(
             settings.observeStorageDir(),
             settings.observeLandscapeControlsSide(),
         ) { bitrate, concurrency, autoDownload, storageDir, landscapeControlsSide ->
-            _state.update {
-                it.copy(
-                    bitrate = bitrateFromKbps(bitrate),
-                    storagePath = storageDir,
-                    concurrentDownloads = concurrency,
-                    autoDownloadOnAdd = autoDownload,
-                    landscapeControlsSide = landscapeControlsSide,
-                )
-            }
+            SettingsUiState(
+                bitrate = bitrateFromKbps(bitrate),
+                storagePath = storageDir,
+                concurrentDownloads = concurrency,
+                autoDownloadOnAdd = autoDownload,
+                landscapeControlsSide = landscapeControlsSide,
+            )
         }
+            .combine(settings.observeShowQueueCovers()) { uiState, showQueueCovers ->
+                uiState.copy(showQueueCovers = showQueueCovers)
+            }
+            .combine(settings.observeLoopPlaylists()) { uiState, loopPlaylists ->
+                uiState.copy(loopPlaylists = loopPlaylists)
+            }
             .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
-            .collect { }
+            .collect { uiState -> _state.value = uiState }
     }
 
     /**

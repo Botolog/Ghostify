@@ -104,6 +104,7 @@ data class QueueItem(
     val durationMs: Long,
     val isCurrent: Boolean = false,
     val queuedByUser: Boolean = false,
+    val coverUrl: String? = null,
 )
 
 /**

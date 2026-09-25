@@ -118,5 +118,6 @@ interface PlayerContract {
         val lyrics: String? = null,
         val lyricsSource: String? = null,
         val lyricsEdited: Boolean = false,
+        val showQueueCovers: Boolean = false,
     )
 }

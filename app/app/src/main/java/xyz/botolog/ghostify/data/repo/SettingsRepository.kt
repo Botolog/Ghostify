@@ -35,6 +35,11 @@ class SettingsRepository(private val settingDao: SettingDao) {
         /** Preference key for which side the controls appear on in landscape mode. */
         const val KEY_LANDSCAPE_CONTROLS_SIDE = "landscape_controls_side"
 
+        /** Preference key for showing album covers in the queue editor. */
+        const val KEY_SHOW_QUEUE_COVERS = "show_queue_covers"
+
+        const val KEY_LOOP_PLAYLISTS = "loop_playlists"
+
         // ── Defaults ──────────────────────────────────────────────────
 
         /** Default storage directory name. */
@@ -51,6 +56,11 @@ class SettingsRepository(private val settingDao: SettingDao) {
 
         /** Default landscape controls side ("left" keeps current layout). */
         const val DEFAULT_LANDSCAPE_CONTROLS_SIDE = "left"
+
+        /** Default show-queue-covers flag. */
+        const val DEFAULT_SHOW_QUEUE_COVERS = false
+
+        const val DEFAULT_LOOP_PLAYLISTS = true
 
         /** Strings recognised as truthy when parsing boolean settings. */
         private val TRUTHY_VALUES = setOf("true", "1", "yes")
@@ -258,6 +268,58 @@ class SettingsRepository(private val settingDao: SettingDao) {
     suspend fun setAutoDownload(value: Boolean) {
         Timber.i("SettingsRepository.setAutoDownload: START")
         set(KEY_AUTO_DOWNLOAD, value.toString())
+    }
+
+    // ── show_queue_covers ────────────────────────────────────────────
+
+    /**
+     * Observes whether album covers should be shown in the queue editor.
+     *
+     * @return A [Flow] emitting the boolean flag.
+     */
+    fun observeShowQueueCovers(): Flow<Boolean> {
+        Timber.i("SettingsRepository.observeShowQueueCovers: START")
+        val result = observe(KEY_SHOW_QUEUE_COVERS, DEFAULT_SHOW_QUEUE_COVERS.toString())
+            .map { parseBooleanSetting(it, DEFAULT_SHOW_QUEUE_COVERS) }
+        Timber.i("SettingsRepository.observeShowQueueCovers: returning $result")
+        return result
+    }
+
+    /**
+     * One-shot fetch of the show-queue-covers flag.
+     *
+     * @return `true` if covers should be shown in the queue.
+     */
+    suspend fun getShowQueueCovers(): Boolean {
+        Timber.i("SettingsRepository.getShowQueueCovers: START")
+        val raw = get(KEY_SHOW_QUEUE_COVERS, DEFAULT_SHOW_QUEUE_COVERS.toString())
+        val result = parseBooleanSetting(raw, DEFAULT_SHOW_QUEUE_COVERS)
+        Timber.i("SettingsRepository.getShowQueueCovers: returning $result")
+        return result
+    }
+
+    /**
+     * Persists the show-queue-covers flag.
+     *
+     * @param value `true` to show album covers in the queue editor.
+     */
+    suspend fun setShowQueueCovers(value: Boolean) {
+        Timber.i("SettingsRepository.setShowQueueCovers: START")
+        set(KEY_SHOW_QUEUE_COVERS, value.toString())
+    }
+
+    fun observeLoopPlaylists(): Flow<Boolean> =
+        observe(KEY_LOOP_PLAYLISTS, DEFAULT_LOOP_PLAYLISTS.toString())
+            .map { parseBooleanSetting(it, DEFAULT_LOOP_PLAYLISTS) }
+
+    suspend fun getLoopPlaylists(): Boolean =
+        parseBooleanSetting(
+            get(KEY_LOOP_PLAYLISTS, DEFAULT_LOOP_PLAYLISTS.toString()),
+            DEFAULT_LOOP_PLAYLISTS,
+        )
+
+    suspend fun setLoopPlaylists(value: Boolean) {
+        set(KEY_LOOP_PLAYLISTS, value.toString())
     }
 
     // ── landscape_controls_side ───────────────────────────────────────

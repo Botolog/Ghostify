@@ -397,6 +397,120 @@ class QueueManagementTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
+    fun shuffleAfter_preservesPrefixAndActiveAndKeepsOriginalOrder() {
+        setupQueue(listOf("a", "b", "c", "d", "e"))
+        manager.addToQueueNext("b", mediaItem("b"), 0)
+        val original = manager.queue
+
+        manager.shuffleAfter(2)
+
+        assertTrue(manager.isShuffled)
+        assertEquals(listOf("a", "b", "c"), queueIds().take(3))
+        assertEquals(setOf("d", "e"), queueIds().drop(3).toSet())
+        assertEquals(original.toSet(), manager.queue.toSet())
+        assertTrue(manager.queue.first { it.songId == "b" }.queuedByUser)
+
+        manager.unshuffle()
+
+        assertFalse(manager.isShuffled)
+        assertEquals(original, manager.queue)
+    }
+
+    @Test
+    fun shuffleAfter_keepsFirstItemPinned() {
+        setupQueue(listOf("a", "b", "c", "d", "e"))
+        val original = manager.queue
+
+        manager.shuffleAfter(0)
+
+        assertTrue(manager.isShuffled)
+        assertEquals("a", queueIds().first())
+        assertEquals(setOf("b", "c", "d", "e"), queueIds().drop(1).toSet())
+        assertEquals(original.toSet(), manager.queue.toSet())
+    }
+
+    @Test
+    fun shuffleAfter_handlesSingleAndEmptyQueues() {
+        manager.shuffleAfter(0)
+        assertEquals(0, manager.size)
+        assertFalse(manager.isShuffled)
+
+        setupQueue(listOf("a"))
+        manager.shuffleAfter(0)
+
+        assertEquals(listOf("a"), queueIds())
+        assertTrue(manager.isShuffled)
+
+        manager.unshuffle()
+
+        assertEquals(listOf("a"), queueIds())
+        assertFalse(manager.isShuffled)
+    }
+
+    @Test
+    fun shuffleAfter_invalidAnchorIsNoOp() {
+        setupQueue(listOf("a", "b"))
+        val original = manager.queue
+
+        manager.shuffleAfter(5)
+
+        assertFalse(manager.isShuffled)
+        assertEquals(original, manager.queue)
+    }
+
+    @Test
+    fun reshuffle_preservesItemsMetadataFlagsAndOriginalOrder() {
+        setupQueue(listOf("a", "b", "c", "d", "e", "f"))
+        manager.addToQueueNext("c", mediaItem("c"), 0)
+        manager.addToQueueNext("x", mediaItem("x"), 0)
+        val original = manager.queue
+        manager.shuffle()
+
+        repeat(5) { manager.reshuffle() }
+
+        assertTrue(manager.isShuffled)
+        assertEquals(original.toSet(), manager.queue.toSet())
+        assertEquals(
+            original.associateBy { it.songId },
+            manager.queue.associateBy { it.songId },
+        )
+        assertTrue(manager.queue.first { it.songId == "x" }.queuedByUser)
+        assertTrue(manager.queue.first { it.songId == "c" }.queuedByUser)
+
+        manager.unshuffle()
+
+        assertFalse(manager.isShuffled)
+        assertEquals(original, manager.queue)
+    }
+
+    @Test
+    fun reshuffle_keepsLazilyAppendedItemsInOriginalOrder() {
+        setupQueue(listOf("a", "b"))
+        manager.shuffle()
+        manager.appendItems(listOf(queueItem("c"), queueItem("d")))
+        manager.reshuffle()
+        manager.unshuffle()
+
+        assertEquals(listOf("a", "b", "c", "d"), queueIds())
+    }
+
+    @Test
+    fun reshuffle_handlesEmptyAndSingleItemQueues() {
+        manager.reshuffle()
+        assertEquals(0, manager.size)
+        assertFalse(manager.isShuffled)
+
+        setupQueue(listOf("a"))
+        manager.reshuffle()
+        assertEquals(listOf("a"), queueIds())
+        assertTrue(manager.isShuffled)
+
+        manager.unshuffle()
+        assertEquals(listOf("a"), queueIds())
+        assertFalse(manager.isShuffled)
+    }
+
+    @Test
     fun getOrNull_returnsItem_atValidIndex() {
         setupQueue(listOf("a", "b"))
         assertEquals("a", manager.getOrNull(0)?.songId)

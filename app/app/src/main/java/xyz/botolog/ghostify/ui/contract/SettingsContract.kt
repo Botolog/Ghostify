@@ -61,6 +61,15 @@ interface SettingsContract {
     fun setAutoDownload(enabled: Boolean)
 
     /**
+     * Enable or disable showing album covers in the queue editor.
+     *
+     * @param enabled `true` to show covers in the queue.
+     */
+    fun setShowQueueCovers(enabled: Boolean)
+
+    fun setLoopPlaylists(enabled: Boolean)
+
+    /**
      * Update the landscape controls side preference.
      *
      * @param side "left" or "right".
@@ -122,6 +131,8 @@ interface SettingsContract {
         val concurrentDownloads: Int = 1,
         val autoDownloadOnAdd: Boolean = false,
         val landscapeControlsSide: String = "left",
+        val showQueueCovers: Boolean = false,
+        val loopPlaylists: Boolean = true,
         val cacheStats: CacheStats = CacheStats(0, 0),
         val isClearingCache: Boolean = false,
         val pendingMigrationPath: String? = null,

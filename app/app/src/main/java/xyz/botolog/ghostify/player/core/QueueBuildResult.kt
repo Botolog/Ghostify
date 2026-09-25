@@ -19,6 +19,7 @@ sealed interface QueueBuildResult {
     data class Ready(
         val items: List<QueueItem>,
         val startIndex: Int,
+        val startSongId: String? = null,
     ) : QueueBuildResult {
         init {
             require(items.isNotEmpty()) { "Ready result must contain at least one item" }

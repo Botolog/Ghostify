@@ -163,6 +163,7 @@ class ContractModelsTest {
         assertEquals("", state.storagePath)
         assertEquals(1, state.concurrentDownloads)
         assertFalse(state.autoDownloadOnAdd)
+        assertTrue(state.loopPlaylists)
         assertEquals(CacheStats(0, 0), state.cacheStats)
         assertFalse(state.isClearingCache)
     }
@@ -175,6 +176,7 @@ class ContractModelsTest {
             storagePath = "/storage/emulated/0/music",
             concurrentDownloads = 4,
             autoDownloadOnAdd = true,
+            loopPlaylists = false,
             cacheStats = cache,
             isClearingCache = true,
         )
@@ -182,6 +184,7 @@ class ContractModelsTest {
         assertEquals("/storage/emulated/0/music", state.storagePath)
         assertEquals(4, state.concurrentDownloads)
         assertTrue(state.autoDownloadOnAdd)
+        assertFalse(state.loopPlaylists)
         assertEquals(cache, state.cacheStats)
         assertTrue(state.isClearingCache)
     }
