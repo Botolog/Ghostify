@@ -1,0 +1,132 @@
+name: Auto Tag & Release
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'app/app/build.gradle.kts'
+
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract versionName
+        id: version
+        run: |
+          version=$(grep -oE 'versionName[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' \
+                      app/app/build.gradle.kts \
+                    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+          if [[ -z "$version" ]]; then
+            echo "::error::No versionName found in app/app/build.gradle.kts"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version"     >> "$GITHUB_OUTPUT"
+          echo "Detected version: $version"
+
+      - name: Fetch all tags
+        run: git fetch --tags --force
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null \
+             || git ls-remote --tags origin "refs/tags/$tag" | grep -q .; then
+            echo "exists=true"  >> "$GITHUB_OUTPUT"
+            echo "Tag $tag already exists – skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine bump type
+        if: steps.check.outputs.exists == 'false'
+        id: bump
+        run: |
+          current="${{ steps.version.outputs.version }}"
+
+          prev=$(git tag --sort=-v:refname \
+                  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                  | grep -v "^v${current}$" \
+                  | head -n1 || true)
+
+          IFS='.' read -r cmaj cmin cpat <<< "$current"
+
+          if [[ -z "$prev" ]]; then
+            echo "First release ever → pre-release"
+            echo "prerelease=true"  >> "$GITHUB_OUTPUT"
+            echo "label=alpha"      >> "$GITHUB_OUTPUT"
+            echo "skip_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          prev_v="${prev#v}"
+          IFS='.' read -r pmaj pmin ppat <<< "$prev_v"
+          echo "Previous tag: $prev"
+
+          if [[ "$cmaj" != "$pmaj" ]]; then
+            echo "Major (x) bump → tag only, no release"
+            echo "prerelease=false"   >> "$GITHUB_OUTPUT"
+            echo "label="             >> "$GITHUB_OUTPUT"
+            echo "skip_release=true"  >> "$GITHUB_OUTPUT"
+          elif [[ "$cmin" != "$pmin" ]]; then
+            echo "Minor (y) bump → stable release"
+            echo "prerelease=false"   >> "$GITHUB_OUTPUT"
+            echo "label="             >> "$GITHUB_OUTPUT"
+            echo "skip_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Patch (z) bump → pre-release"
+            echo "prerelease=true"    >> "$GITHUB_OUTPUT"
+            echo "label=alpha"        >> "$GITHUB_OUTPUT"
+            echo "skip_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Version $VERSION"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.exists == 'false' && steps.bump.outputs.skip_release == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.bump.outputs.prerelease }}
+          LABEL: ${{ steps.bump.outputs.label }}
+        run: |
+          if [[ "$PRERELEASE" == "true" ]]; then
+            gh release create "$TAG" \
+              --title "${TAG}-${LABEL:-alpha}" \
+              --notes "Alpha build for ${VERSION}." \
+              --prerelease
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "Release ${VERSION}." \
+              --generate-notes
+          fi
+
+      - name: Notice about skipped release
+        if: steps.check.outputs.exists == 'false' && steps.bump.outputs.skip_release == 'true'
+        run: |
+          echo "::notice::Tag ${{ steps.version.outputs.tag }} created, but no release was made for major bumps. Create it manually when ready."
