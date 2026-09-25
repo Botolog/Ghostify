@@ -175,6 +175,7 @@ fun GhostifyApp(
             visible = fullPlayerOpen,
             onBack = { fullPlayerOpen = false },
             landscapeControlsSide = settingsState.landscapeControlsSide,
+            layout = settingsState.fullPlayerLayout,
         )
     }
 }

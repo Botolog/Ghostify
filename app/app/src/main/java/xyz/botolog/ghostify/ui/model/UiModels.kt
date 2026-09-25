@@ -180,3 +180,48 @@ enum class Bitrate(val kbps: Int, val label: String) {
     MEDIUM(192, "192 kbps"),
     HIGH(320, "320 kbps"),
 }
+
+/**
+ * Layout of the full player overlay.
+ *
+ * Persisted as [storageValue] in the settings key/value store. Older builds stored
+ * a boolean under the same key: `true` meant the super-compact overlay, `false`
+ * (or a missing value) meant the normal layout — [fromStorageValue] keeps those
+ * installations working.
+ *
+ * @property storageValue value written to (and read from) the settings store.
+ * @property label human-readable label for the UI.
+ */
+enum class FullPlayerLayout(val storageValue: String, val label: String) {
+    /** Cover art followed by a full controls section below it. */
+    NORMAL("normal", "Normal"),
+
+    /** Cover art with the transport controls and seek bar drawn on top of it. */
+    COMPACT("compact", "Compact"),
+
+    /** Full-bleed cover art with a dark scrim and controls on top. */
+    SUPER_COMPACT("super_compact", "Super compact"),
+    ;
+
+    companion object {
+
+        /**
+         * Legacy boolean values written before the setting became a three-way choice.
+         */
+        private val LEGACY_TRUTHY = setOf("true", "1", "yes")
+
+        /**
+         * Resolves a stored value to a layout, never throwing on unexpected input.
+         *
+         * @param raw the raw string from the settings store, or `null` when unset.
+         * @return the matching layout, or [NORMAL] for missing/unknown values.
+         */
+        fun fromStorageValue(raw: String?): FullPlayerLayout {
+            val normalized = raw?.trim()?.lowercase() ?: return NORMAL
+            return when {
+                normalized in LEGACY_TRUTHY -> SUPER_COMPACT
+                else -> entries.firstOrNull { it.storageValue == normalized } ?: NORMAL
+            }
+        }
+    }
+}

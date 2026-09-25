@@ -40,6 +40,9 @@ class SettingsRepository(private val settingDao: SettingDao) {
 
         const val KEY_LOOP_PLAYLISTS = "loop_playlists"
 
+        /** Preference key for the full-player layout mode. */
+        const val KEY_FULL_PLAYER_LAYOUT = "full_player_compact"
+
         // ── Defaults ──────────────────────────────────────────────────
 
         /** Default storage directory name. */
@@ -61,6 +64,12 @@ class SettingsRepository(private val settingDao: SettingDao) {
         const val DEFAULT_SHOW_QUEUE_COVERS = false
 
         const val DEFAULT_LOOP_PLAYLISTS = true
+
+        /**
+         * Default full-player layout. Older builds stored a boolean here, where
+         * `false` (or a missing value) means the normal layout.
+         */
+        const val DEFAULT_FULL_PLAYER_LAYOUT = "normal"
 
         /** Strings recognised as truthy when parsing boolean settings. */
         private val TRUTHY_VALUES = setOf("true", "1", "yes")
@@ -320,6 +329,42 @@ class SettingsRepository(private val settingDao: SettingDao) {
 
     suspend fun setLoopPlaylists(value: Boolean) {
         set(KEY_LOOP_PLAYLISTS, value.toString())
+    }
+
+    // ── full_player_compact (full-player layout) ───────────────────────
+
+    /**
+     * Observes the full-player layout mode.
+     *
+     * @return A [Flow] emitting the stored layout string.
+     */
+    fun observeFullPlayerLayout(): Flow<String> {
+        Timber.i("SettingsRepository.observeFullPlayerLayout: START")
+        val result = observe(KEY_FULL_PLAYER_LAYOUT, DEFAULT_FULL_PLAYER_LAYOUT)
+        Timber.i("SettingsRepository.observeFullPlayerLayout: returning $result")
+        return result
+    }
+
+    /**
+     * One-shot fetch of the full-player layout mode.
+     *
+     * @return The stored layout string, or the default when unset.
+     */
+    suspend fun getFullPlayerLayout(): String {
+        Timber.i("SettingsRepository.getFullPlayerLayout: START")
+        val result = get(KEY_FULL_PLAYER_LAYOUT, DEFAULT_FULL_PLAYER_LAYOUT)
+        Timber.i("SettingsRepository.getFullPlayerLayout: returning $result")
+        return result
+    }
+
+    /**
+     * Persists the full-player layout mode.
+     *
+     * @param value the layout storage value (e.g. "normal", "compact", "super_compact").
+     */
+    suspend fun setFullPlayerLayout(value: String) {
+        Timber.i("SettingsRepository.setFullPlayerLayout: value=$value")
+        set(KEY_FULL_PLAYER_LAYOUT, value)
     }
 
     // ── landscape_controls_side ───────────────────────────────────────

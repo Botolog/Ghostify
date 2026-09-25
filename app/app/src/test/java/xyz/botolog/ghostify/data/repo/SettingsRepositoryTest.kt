@@ -7,6 +7,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -51,5 +52,79 @@ class SettingsRepositoryTest {
         repository.setLoopPlaylists(false)
 
         coVerify(exactly = 1) { settingDao.upsert(setting) }
+    }
+
+    @Test
+    fun defaultFullPlayerLayoutIsNormal() {
+        assertEquals("normal", SettingsRepository.DEFAULT_FULL_PLAYER_LAYOUT)
+    }
+
+    @Test
+    fun observeFullPlayerLayout_defaultsToNormalWhenMissing() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_FULL_PLAYER_LAYOUT)
+        } returns flowOf(null)
+
+        assertEquals("normal", repository.observeFullPlayerLayout().first())
+    }
+
+    @Test
+    fun observeFullPlayerLayout_readsStoredValue() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_FULL_PLAYER_LAYOUT)
+        } returns flowOf("super_compact")
+
+        assertEquals("super_compact", repository.observeFullPlayerLayout().first())
+    }
+
+    @Test
+    fun observeFullPlayerLayout_readsLegacyBooleanValue() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_FULL_PLAYER_LAYOUT)
+        } returns flowOf("true")
+
+        assertEquals("true", repository.observeFullPlayerLayout().first())
+    }
+
+    @Test
+    fun getFullPlayerLayout_returnsDefaultWhenMissing() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_FULL_PLAYER_LAYOUT) } returns null
+
+        assertEquals("normal", repository.getFullPlayerLayout())
+    }
+
+    @Test
+    fun getFullPlayerLayout_readsStoredValue() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_FULL_PLAYER_LAYOUT) } returns "compact"
+
+        assertEquals("compact", repository.getFullPlayerLayout())
+    }
+
+    @Test
+    fun setFullPlayerLayout_roundTripsStoredValue() = runTest {
+        val stored = mutableMapOf<String, String?>()
+        coEvery { settingDao.upsert(any()) } answers {
+            stored[firstArg<SettingEntity>().key] = firstArg<SettingEntity>().value
+        }
+        coEvery { settingDao.getValue(any()) } answers { stored[firstArg()] }
+
+        repository.setFullPlayerLayout("super_compact")
+        assertEquals("super_compact", repository.getFullPlayerLayout())
+
+        repository.setFullPlayerLayout("normal")
+        assertEquals("normal", repository.getFullPlayerLayout())
+    }
+
+    @Test
+    fun setFullPlayerLayout_persistsUnderLegacyKey() = runTest {
+        val stored = mutableMapOf<String, String?>()
+        coEvery { settingDao.upsert(any()) } answers {
+            stored[firstArg<SettingEntity>().key] = firstArg<SettingEntity>().value
+        }
+
+        repository.setFullPlayerLayout("compact")
+
+        assertEquals("compact", stored[SettingsRepository.KEY_FULL_PLAYER_LAYOUT])
+        assertEquals("full_player_compact", SettingsRepository.KEY_FULL_PLAYER_LAYOUT)
     }
 }

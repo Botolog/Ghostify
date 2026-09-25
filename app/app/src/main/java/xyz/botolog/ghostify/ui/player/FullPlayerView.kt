@@ -15,6 +15,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -39,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -66,6 +68,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -73,12 +78,15 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.content.res.Configuration
 import coil.compose.AsyncImage
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
+import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.util.DurationFormat
 import kotlin.math.abs
@@ -93,6 +101,31 @@ private val TRANSPORT_ICON_SIZE = 32.dp
 // ── Landscape Dimensions ──────────────────────────────────────────────
 private val LANDSCAPE_ARTWORK_MAX_WIDTH = 400.dp
 private val LANDSCAPE_LEFT_PANEL_MAX_WIDTH = 480.dp
+
+// ── Super Compact Overlay Dimensions ────────────────────────────────────
+private const val SUPER_COMPACT_SCRIM_ALPHA = 0.6f
+private const val SUPER_COMPACT_SEEK_INACTIVE_ALPHA = 0.4f
+private val SUPER_COMPACT_CONTROL_SPACING = 16.dp
+private val SUPER_COMPACT_SEEK_BOTTOM_SPACING = 24.dp
+private val SUPER_COMPACT_SEEK_PADDING = 24.dp
+private val SUPER_COMPACT_TRANSPORT_PADDING = 32.dp
+
+// ── Compact (controls on cover art) Dimensions ────────────────────────
+private const val COMPACT_PLAY_BUTTON_COVER_RATIO = 0.26f
+private const val COMPACT_PLAY_ICON_COVER_RATIO = 0.625f
+private const val COMPACT_TRANSPORT_ICON_COVER_RATIO = 0.13f
+private const val COMPACT_EDGE_INSET_COVER_RATIO = 0.05f
+private const val COMPACT_TRANSPORT_GAP_COVER_RATIO = 0.06f
+private const val COMPACT_SCRIM_ALPHA = 0.5f
+private val COMPACT_PLAY_BUTTON_MIN = 40.dp
+private val COMPACT_PLAY_BUTTON_MAX = PLAY_BUTTON_SIZE
+private val COMPACT_TRANSPORT_ICON_MIN = 24.dp
+private val COMPACT_TRANSPORT_ICON_MAX = TRANSPORT_ICON_SIZE
+private val COMPACT_TRANSPORT_GAP_MIN = 12.dp
+private val COMPACT_TRANSPORT_GAP_MAX = 32.dp
+private val COMPACT_SEEK_MAX_HORIZONTAL_PADDING = 20.dp
+private val COMPACT_SEEK_MAX_BOTTOM_PADDING = 12.dp
+private val COMPACT_LYRICS_TOP_SPACING = 12.dp
 
 /** Minimum horizontal drag distance (px) to count as a swipe. */
 private const val SWIPE_THRESHOLD = 50f
@@ -117,6 +150,7 @@ fun FullPlayerOverlay(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     landscapeControlsSide: String = "left",
+    layout: FullPlayerLayout = FullPlayerLayout.NORMAL,
 ) {
     val state by contract.state.collectAsState()
 
@@ -174,6 +208,7 @@ fun FullPlayerOverlay(
                     onInfoTap = { showSongInfo = true },
                     onQueueClick = { queueEditorOpen = true },
                     landscapeControlsSide = landscapeControlsSide,
+                    layout = layout,
                 )
             }
         }
@@ -198,28 +233,301 @@ private fun FullPlayerContent(
     onInfoTap: () -> Unit,
     onQueueClick: () -> Unit,
     landscapeControlsSide: String = "left",
+    layout: FullPlayerLayout = FullPlayerLayout.NORMAL,
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val controlsOnCover = layout == FullPlayerLayout.COMPACT
 
-    if (isLandscape) {
-        LandscapePlayerContent(
+    when (layout) {
+        FullPlayerLayout.SUPER_COMPACT -> SuperCompactPlayerContent(
             state = state,
             contract = contract,
             onBack = onBack,
             onLyricsTap = onLyricsTap,
             onInfoTap = onInfoTap,
             onQueueClick = onQueueClick,
-            controlsSide = landscapeControlsSide,
         )
-    } else {
-        PortraitPlayerContent(
+
+        FullPlayerLayout.NORMAL, FullPlayerLayout.COMPACT -> if (isLandscape) {
+            LandscapePlayerContent(
+                state = state,
+                contract = contract,
+                onBack = onBack,
+                onLyricsTap = onLyricsTap,
+                onInfoTap = onInfoTap,
+                onQueueClick = onQueueClick,
+                controlsSide = landscapeControlsSide,
+                controlsOnCover = controlsOnCover,
+            )
+        } else {
+            PortraitPlayerContent(
+                state = state,
+                contract = contract,
+                onBack = onBack,
+                onLyricsTap = onLyricsTap,
+                onInfoTap = onInfoTap,
+                onQueueClick = onQueueClick,
+                controlsOnCover = controlsOnCover,
+            )
+        }
+    }
+}
+
+// ── Super Compact Player Content (full-bleed cover art overlay) ───────
+
+@Composable
+private fun SuperCompactPlayerContent(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    onBack: () -> Unit,
+    onLyricsTap: () -> Unit,
+    onInfoTap: () -> Unit,
+    onQueueClick: () -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        SwipeableCoverArt(
+            coverUrl = state.nowPlaying?.coverUrl,
+            onSwipeLeft = contract::next,
+            onSwipeRight = contract::previousTrack,
+            onSwipeDown = onBack,
+            modifier = Modifier.fillMaxSize(),
+            square = false,
+            shape = RectangleShape,
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    MaterialTheme.colorScheme.scrim.copy(alpha = SUPER_COMPACT_SCRIM_ALPHA),
+                ),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
+            SuperCompactTopBar(
+                onBack = onBack,
+                onLyricsTap = onLyricsTap,
+                onQueueClick = onQueueClick,
+                onInfoTap = onInfoTap,
+            )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            SuperCompactTransportRow(state = state, contract = contract)
+
+            Spacer(modifier = Modifier.height(SUPER_COMPACT_CONTROL_SPACING))
+
+            FullPlayerSeekBar(
+                state = state,
+                contract = contract,
+                horizontalPadding = 0.dp,
+                activeTrackColor = Color.White,
+                inactiveTrackColor = Color.White.copy(alpha = SUPER_COMPACT_SEEK_INACTIVE_ALPHA),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = SUPER_COMPACT_SEEK_PADDING),
+            )
+
+            Spacer(modifier = Modifier.height(SUPER_COMPACT_SEEK_BOTTOM_SPACING))
+        }
+    }
+}
+
+/**
+ * Top overlay bar of the super-compact player: collapse on the left, lyrics, queue and
+ * info on the right. All icons stay white so they read against the cover art.
+ */
+@Composable
+private fun SuperCompactTopBar(
+    onBack: () -> Unit,
+    onLyricsTap: () -> Unit,
+    onQueueClick: () -> Unit,
+    onInfoTap: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Collapse player",
+                modifier = Modifier.size(32.dp),
+                tint = Color.White,
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        IconButton(onClick = onLyricsTap) {
+            Icon(
+                imageVector = Icons.Filled.Lyrics,
+                contentDescription = "Lyrics",
+                modifier = Modifier.size(24.dp),
+                tint = Color.White,
+            )
+        }
+        IconButton(onClick = onQueueClick) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                contentDescription = "Queue",
+                modifier = Modifier.size(24.dp),
+                tint = Color.White,
+            )
+        }
+        IconButton(onClick = onInfoTap) {
+            Icon(
+                imageVector = Icons.Filled.Info,
+                contentDescription = "Song info",
+                modifier = Modifier.size(24.dp),
+                tint = Color.White,
+            )
+        }
+    }
+}
+
+/**
+ * Transport controls laid over the cover art: previous on the left, play/pause dead
+ * center, next on the right. Buttons keep their default (transparent) container.
+ */
+@Composable
+private fun SuperCompactTransportRow(
+    state: PlayerUiState,
+    contract: PlayerContract,
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = SUPER_COMPACT_TRANSPORT_PADDING),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = contract::previous) {
+                Icon(
+                    Icons.Filled.SkipPrevious,
+                    contentDescription = "Previous",
+                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                    tint = Color.White,
+                )
+            }
+            Spacer(modifier = Modifier.size(PLAY_BUTTON_SIZE))
+            IconButton(onClick = contract::next) {
+                Icon(
+                    Icons.Filled.SkipNext,
+                    contentDescription = "Next",
+                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                    tint = Color.White,
+                )
+            }
+        }
+
+        IconButton(
+            onClick = contract::togglePlay,
+            modifier = Modifier.size(PLAY_BUTTON_SIZE),
+        ) {
+            Icon(
+                imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (state.isPlaying) "Pause" else "Play",
+                modifier = Modifier.size(PLAY_ICON_SIZE),
+                tint = Color.White,
+            )
+        }
+    }
+}
+
+// ── Compact Player Content (controls on the cover art) ─────────────────
+
+/**
+ * Playback controls drawn on top of the cover art: play/pause exactly centered,
+ * previous and next tucked close to it, and the seek bar hugging the bottom edge
+ * of the cover. A theme-derived [MaterialTheme.colorScheme.scrim] at
+ * [COMPACT_SCRIM_ALPHA] is laid over the cover bounds only, to keep the overlaid
+ * controls legible. Sizes scale with the cover so the controls stay centered and
+ * tappable in both orientations. The scrim does not consume pointer events, so
+ * swipe gestures on the cover art underneath still work, while the buttons and
+ * the seek bar consume their own touches.
+ */
+@Composable
+private fun CompactCoverControls(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
+    ) {
+        val coverExtent = minOf(maxWidth, maxHeight)
+        val playButtonSize = (coverExtent * COMPACT_PLAY_BUTTON_COVER_RATIO)
+            .coerceIn(COMPACT_PLAY_BUTTON_MIN, COMPACT_PLAY_BUTTON_MAX)
+        val playIconSize = (coverExtent * COMPACT_PLAY_ICON_COVER_RATIO)
+            .coerceIn(COMPACT_TRANSPORT_ICON_MIN, playButtonSize)
+        val transportIconSize = (coverExtent * COMPACT_TRANSPORT_ICON_COVER_RATIO)
+            .coerceIn(COMPACT_TRANSPORT_ICON_MIN, COMPACT_TRANSPORT_ICON_MAX)
+        val transportGap = (coverExtent * COMPACT_TRANSPORT_GAP_COVER_RATIO)
+            .coerceIn(COMPACT_TRANSPORT_GAP_MIN, COMPACT_TRANSPORT_GAP_MAX)
+        val sidePadding = (coverExtent * COMPACT_EDGE_INSET_COVER_RATIO)
+            .coerceAtMost(COMPACT_SEEK_MAX_HORIZONTAL_PADDING)
+        val bottomPadding = (coverExtent * COMPACT_EDGE_INSET_COVER_RATIO)
+            .coerceAtMost(COMPACT_SEEK_MAX_BOTTOM_PADDING)
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    MaterialTheme.colorScheme.scrim.copy(alpha = COMPACT_SCRIM_ALPHA),
+                ),
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(transportGap, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = contract::previous) {
+                Icon(
+                    Icons.Filled.SkipPrevious,
+                    contentDescription = "Previous",
+                    modifier = Modifier.size(transportIconSize),
+                )
+            }
+            IconButton(
+                onClick = contract::togglePlay,
+                modifier = Modifier.size(playButtonSize),
+            ) {
+                Icon(
+                    imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (state.isPlaying) "Pause" else "Play",
+                    modifier = Modifier.size(playIconSize),
+                )
+            }
+            IconButton(onClick = contract::next) {
+                Icon(
+                    Icons.Filled.SkipNext,
+                    contentDescription = "Next",
+                    modifier = Modifier.size(transportIconSize),
+                )
+            }
+        }
+
+        FullPlayerSeekBar(
             state = state,
             contract = contract,
-            onBack = onBack,
-            onLyricsTap = onLyricsTap,
-            onInfoTap = onInfoTap,
-            onQueueClick = onQueueClick,
+            horizontalPadding = sidePadding,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(bottom = bottomPadding),
         )
     }
 }
@@ -234,6 +542,7 @@ private fun PortraitPlayerContent(
     onLyricsTap: () -> Unit,
     onInfoTap: () -> Unit,
     onQueueClick: () -> Unit,
+    controlsOnCover: Boolean = false,
 ) {
     Column(
         modifier = Modifier
@@ -287,6 +596,16 @@ private fun PortraitPlayerContent(
                 onSwipeRight = contract::previousTrack,
                 onSwipeDown = onBack,
             )
+
+            if (controlsOnCover) {
+                CompactCoverControls(
+                    state = state,
+                    contract = contract,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f),
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -316,61 +635,69 @@ private fun PortraitPlayerContent(
                 .padding(horizontal = HORIZONTAL_PADDING),
         )
 
-        // Seek bar (only seeks on release)
-        FullPlayerSeekBar(state = state, contract = contract)
+        // Seek bar, time labels and transport controls — omitted in compact mode,
+        // where they are drawn on top of the cover art instead.
+        if (!controlsOnCover) {
+            // Seek bar (only seeks on release)
+            FullPlayerSeekBar(state = state, contract = contract)
 
-        // Time labels
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = HORIZONTAL_PADDING),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = DurationFormat.format(state.positionMs),
-                style = MaterialTheme.typography.labelMedium,
-            )
-            Text(
-                text = DurationFormat.format(state.durationMs),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // Time labels
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = HORIZONTAL_PADDING),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = DurationFormat.format(state.positionMs),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Text(
+                    text = DurationFormat.format(state.durationMs),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            // Transport controls
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = (-24).dp),
+                horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = contract::previous) {
+                    Icon(
+                        Icons.Filled.SkipPrevious,
+                        contentDescription = "Previous",
+                        modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                    )
+                }
+
+                IconButton(
+                    onClick = contract::togglePlay,
+                    modifier = Modifier.size(PLAY_BUTTON_SIZE),
+                ) {
+                    Icon(
+                        imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (state.isPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(PLAY_ICON_SIZE),
+                    )
+                }
+
+                IconButton(onClick = contract::next) {
+                    Icon(
+                        Icons.Filled.SkipNext,
+                        contentDescription = "Next",
+                        modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                    )
+                }
+            }
         }
 
-        // Transport controls
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .offset(y = (-24).dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = contract::previous) {
-                Icon(
-                    Icons.Filled.SkipPrevious,
-                    contentDescription = "Previous",
-                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
-                )
-            }
-
-            IconButton(
-                onClick = contract::togglePlay,
-                modifier = Modifier.size(PLAY_BUTTON_SIZE),
-            ) {
-                Icon(
-                    imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (state.isPlaying) "Pause" else "Play",
-                    modifier = Modifier.size(PLAY_ICON_SIZE),
-                )
-            }
-
-            IconButton(onClick = contract::next) {
-                Icon(
-                    Icons.Filled.SkipNext,
-                    contentDescription = "Next",
-                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
-                )
-            }
+        if (controlsOnCover) {
+            Spacer(modifier = Modifier.height(COMPACT_LYRICS_TOP_SPACING))
         }
 
         // Lyrics mini-view (fills remaining space)
@@ -398,6 +725,7 @@ private fun LandscapePlayerContent(
     onInfoTap: () -> Unit,
     onQueueClick: () -> Unit,
     controlsSide: String = "left",
+    controlsOnCover: Boolean = false,
 ) {
     val controlsOnLeft = controlsSide == "left"
 
@@ -413,6 +741,7 @@ private fun LandscapePlayerContent(
             ControlsPanel(
                 state = state,
                 contract = contract,
+                controlsOnCover = controlsOnCover,
                 modifier = Modifier
                     .widthIn(max = LANDSCAPE_LEFT_PANEL_MAX_WIDTH)
                     .weight(0.45f),
@@ -444,6 +773,7 @@ private fun LandscapePlayerContent(
             ControlsPanel(
                 state = state,
                 contract = contract,
+                controlsOnCover = controlsOnCover,
                 modifier = Modifier
                     .widthIn(max = LANDSCAPE_LEFT_PANEL_MAX_WIDTH)
                     .weight(0.45f),
@@ -459,6 +789,7 @@ private fun ControlsPanel(
     state: PlayerUiState,
     contract: PlayerContract,
     modifier: Modifier = Modifier,
+    controlsOnCover: Boolean = false,
 ) {
     Column(
         modifier = modifier,
@@ -477,6 +808,16 @@ private fun ControlsPanel(
                 onSwipeRight = contract::previousTrack,
                 onSwipeDown = { },
             )
+
+            if (controlsOnCover) {
+                CompactCoverControls(
+                    state = state,
+                    contract = contract,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f),
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -504,57 +845,61 @@ private fun ControlsPanel(
                 .padding(horizontal = 8.dp),
         )
 
-        Spacer(modifier = Modifier.height(4.dp))
+        // Seek bar, time labels and transport controls — omitted in compact mode,
+        // where they are drawn on top of the cover art instead.
+        if (!controlsOnCover) {
+            Spacer(modifier = Modifier.height(4.dp))
 
-        FullPlayerSeekBar(state = state, contract = contract)
+            FullPlayerSeekBar(state = state, contract = contract)
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = HORIZONTAL_PADDING),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = DurationFormat.format(state.positionMs),
-                style = MaterialTheme.typography.labelSmall,
-            )
-            Text(
-                text = DurationFormat.format(state.durationMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = contract::previous) {
-                Icon(
-                    Icons.Filled.SkipPrevious,
-                    contentDescription = "Previous",
-                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
-                )
-            }
-
-            IconButton(
-                onClick = contract::togglePlay,
-                modifier = Modifier.size(PLAY_BUTTON_SIZE),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = HORIZONTAL_PADDING),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Icon(
-                    imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (state.isPlaying) "Pause" else "Play",
-                    modifier = Modifier.size(PLAY_ICON_SIZE),
+                Text(
+                    text = DurationFormat.format(state.positionMs),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text(
+                    text = DurationFormat.format(state.durationMs),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            IconButton(onClick = contract::next) {
-                Icon(
-                    Icons.Filled.SkipNext,
-                    contentDescription = "Next",
-                    modifier = Modifier.size(TRANSPORT_ICON_SIZE),
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = contract::previous) {
+                    Icon(
+                        Icons.Filled.SkipPrevious,
+                        contentDescription = "Previous",
+                        modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                    )
+                }
+
+                IconButton(
+                    onClick = contract::togglePlay,
+                    modifier = Modifier.size(PLAY_BUTTON_SIZE),
+                ) {
+                    Icon(
+                        imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (state.isPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(PLAY_ICON_SIZE),
+                    )
+                }
+
+                IconButton(onClick = contract::next) {
+                    Icon(
+                        Icons.Filled.SkipNext,
+                        contentDescription = "Next",
+                        modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                    )
+                }
             }
         }
     }
@@ -627,45 +972,59 @@ private fun SwipeableCoverArt(
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit,
     onSwipeDown: () -> Unit,
+    modifier: Modifier = Modifier,
+    gesturesEnabled: Boolean = true,
+    square: Boolean = true,
+    shape: Shape = RoundedCornerShape(20.dp),
 ) {
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
 
+    val gestureModifier = if (gesturesEnabled) {
+        Modifier.pointerInput(Unit) {
+            detectDragGestures(
+                onDragEnd = {
+                    val absX = kotlin.math.abs(dragOffsetX)
+                    val absY = kotlin.math.abs(dragOffsetY)
+                    if (absX > SWIPE_THRESHOLD || absY > SWIPE_THRESHOLD) {
+                        if (absX > absY) {
+                            // Horizontal swipe dominates
+                            if (dragOffsetX > 0) onSwipeRight() else onSwipeLeft()
+                        } else {
+                            // Vertical swipe dominates
+                            onSwipeDown()
+                        }
+                    }
+                    dragOffsetX = 0f
+                    dragOffsetY = 0f
+                },
+                onDragCancel = {
+                    dragOffsetX = 0f
+                    dragOffsetY = 0f
+                },
+                onDrag = { change, amount ->
+                    change.consume()
+                    dragOffsetX += amount.x
+                    dragOffsetY += amount.y
+                },
+            )
+        }
+    } else {
+        Modifier
+    }
+
+    val sizeModifier = if (square) {
+        modifier.fillMaxWidth().aspectRatio(1f)
+    } else {
+        modifier
+    }
+
     AsyncImage(
         model = coverUrl,
         contentDescription = "Album art",
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(20.dp))
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragEnd = {
-                        val absX = kotlin.math.abs(dragOffsetX)
-                        val absY = kotlin.math.abs(dragOffsetY)
-                        if (absX > SWIPE_THRESHOLD || absY > SWIPE_THRESHOLD) {
-                            if (absX > absY) {
-                                // Horizontal swipe dominates
-                                if (dragOffsetX > 0) onSwipeRight() else onSwipeLeft()
-                            } else {
-                                // Vertical swipe dominates
-                                onSwipeDown()
-                            }
-                        }
-                        dragOffsetX = 0f
-                        dragOffsetY = 0f
-                    },
-                    onDragCancel = {
-                        dragOffsetX = 0f
-                        dragOffsetY = 0f
-                    },
-                    onDrag = { change, amount ->
-                        change.consume()
-                        dragOffsetX += amount.x
-                        dragOffsetY += amount.y
-                    },
-                )
-            },
+        modifier = sizeModifier
+            .clip(shape)
+            .then(gestureModifier),
         contentScale = ContentScale.Crop,
     )
 }
@@ -673,7 +1032,16 @@ private fun SwipeableCoverArt(
 // ── Seek Bar (seeks on release only) ──────────────────────────────────
 
 @Composable
-private fun FullPlayerSeekBar(state: PlayerUiState, contract: PlayerContract) {
+private fun FullPlayerSeekBar(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    modifier: Modifier = Modifier,
+    horizontalPadding: Dp = HORIZONTAL_PADDING,
+    trackHeight: Dp = 4.dp,
+    thumbSize: Dp = 12.dp,
+    activeTrackColor: Color = MaterialTheme.colorScheme.primary,
+    inactiveTrackColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+) {
     val maxMs = if (state.durationMs > 0) state.durationMs else 1L
     val interactionSource = remember { MutableInteractionSource() }
 
@@ -714,25 +1082,25 @@ private fun FullPlayerSeekBar(state: PlayerUiState, contract: PlayerContract) {
             isDragging = false
         },
         valueRange = 0f..maxMs.toFloat(),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = HORIZONTAL_PADDING),
+            .padding(horizontal = horizontalPadding),
         interactionSource = interactionSource,
         track = { sliderState ->
             SliderDefaults.Track(
                 sliderState = sliderState,
-                modifier = Modifier.height(4.dp),
+                modifier = Modifier.height(trackHeight),
                 thumbTrackGapSize = 0.dp,
                 colors = SliderDefaults.colors(
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                    inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    activeTrackColor = activeTrackColor,
+                    inactiveTrackColor = inactiveTrackColor,
                 ),
             )
         },
         thumb = {
             SliderDefaults.Thumb(
                 interactionSource = interactionSource,
-                thumbSize = androidx.compose.ui.unit.DpSize(12.dp, 12.dp),
+                thumbSize = DpSize(thumbSize, thumbSize),
             )
         },
     )

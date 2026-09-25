@@ -11,6 +11,7 @@ import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
+import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -228,6 +229,11 @@ class SettingsViewModel(
         launch { settings.setLoopPlaylists(enabled) }
     }
 
+    override fun setFullPlayerLayout(layout: FullPlayerLayout) {
+        Timber.i("SettingsViewModel.setFullPlayerLayout: layout=$layout")
+        launch { settings.setFullPlayerLayout(layout.storageValue) }
+    }
+
     override fun setLandscapeControlsSide(side: String) {
         Timber.i("SettingsViewModel.setLandscapeControlsSide: side=$side")
         launch { settings.setLandscapeControlsSide(side) }
@@ -361,6 +367,9 @@ class SettingsViewModel(
             }
             .combine(settings.observeLoopPlaylists()) { uiState, loopPlaylists ->
                 uiState.copy(loopPlaylists = loopPlaylists)
+            }
+            .combine(settings.observeFullPlayerLayout()) { uiState, fullPlayerLayout ->
+                uiState.copy(fullPlayerLayout = FullPlayerLayout.fromStorageValue(fullPlayerLayout))
             }
             .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
             .collect { uiState -> _state.value = uiState }

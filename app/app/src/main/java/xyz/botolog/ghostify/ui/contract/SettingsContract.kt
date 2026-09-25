@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.ui.contract
 
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
+import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.update.DownloadState
 import xyz.botolog.ghostify.update.UpdateInfo
 import kotlinx.coroutines.flow.SharedFlow
@@ -70,6 +71,13 @@ interface SettingsContract {
     fun setLoopPlaylists(enabled: Boolean)
 
     /**
+     * Update the full-player layout preference.
+     *
+     * @param layout the layout to render the full player with.
+     */
+    fun setFullPlayerLayout(layout: FullPlayerLayout)
+
+    /**
      * Update the landscape controls side preference.
      *
      * @param side "left" or "right".
@@ -124,6 +132,7 @@ interface SettingsContract {
      *   songs exist at the old path — the UI should show a migration dialog.
      * @property isMigrating `true` while a migration is in progress.
      * @property migrationResult summary after migration finishes (e.g. "12 moved, 2 failed").
+     * @property fullPlayerLayout layout the full player overlay renders with.
      */
     data class SettingsUiState(
         val bitrate: Bitrate = Bitrate.MEDIUM,
@@ -143,5 +152,6 @@ interface SettingsContract {
         val showUpdateDialog: Boolean = false,
         val downloadState: DownloadState = DownloadState.Idle,
         val updateError: String? = null,
+        val fullPlayerLayout: FullPlayerLayout = FullPlayerLayout.NORMAL,
     )
 }

@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -10,6 +11,7 @@ import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract.PlaylistDetailUiS
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
+import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.model.QueueItem
 import xyz.botolog.ghostify.ui.model.SongStatus
@@ -164,6 +166,7 @@ class ContractModelsTest {
         assertEquals(1, state.concurrentDownloads)
         assertFalse(state.autoDownloadOnAdd)
         assertTrue(state.loopPlaylists)
+        assertEquals(FullPlayerLayout.NORMAL, state.fullPlayerLayout)
         assertEquals(CacheStats(0, 0), state.cacheStats)
         assertFalse(state.isClearingCache)
     }
@@ -204,6 +207,28 @@ class ContractModelsTest {
         assertEquals(3, copied.concurrentDownloads)
         assertEquals("", copied.storagePath)
         assertFalse(copied.autoDownloadOnAdd)
+    }
+
+    @Test
+    fun settingsUiStateFullPlayerLayoutRoundTrip() {
+        val superCompact = SettingsUiState().copy(fullPlayerLayout = FullPlayerLayout.SUPER_COMPACT)
+        assertEquals(FullPlayerLayout.SUPER_COMPACT, superCompact.fullPlayerLayout)
+        assertEquals(
+            FullPlayerLayout.COMPACT,
+            superCompact.copy(fullPlayerLayout = FullPlayerLayout.COMPACT).fullPlayerLayout,
+        )
+        assertEquals(
+            FullPlayerLayout.NORMAL,
+            superCompact.copy(fullPlayerLayout = FullPlayerLayout.NORMAL).fullPlayerLayout,
+        )
+    }
+
+    @Test
+    fun settingsUiStateEqualityDistinguishesLayouts() {
+        assertNotEquals(
+            SettingsUiState(fullPlayerLayout = FullPlayerLayout.NORMAL),
+            SettingsUiState(fullPlayerLayout = FullPlayerLayout.COMPACT),
+        )
     }
 
     @Test

@@ -61,6 +61,7 @@ import xyz.botolog.ghostify.GhostifyApplication
 import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
+import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.ui.viewmodel.SettingsViewModel
 import xyz.botolog.ghostify.update.DownloadState
 
@@ -78,6 +79,7 @@ object SettingsTestTags {
     const val AUTO_DOWNLOAD = "setting_auto_download"
     const val SHOW_QUEUE_COVERS = "setting_show_queue_covers"
     const val LOOP_PLAYLISTS = "setting_loop_playlists"
+    const val FULL_PLAYER_LAYOUT = "setting_full_player_layout"
     const val CACHE_COUNT = "setting_cache_count"
     const val CLEAR_CACHE = "setting_clear_cache"
     const val CHECK_UPDATE = "setting_check_update"
@@ -88,6 +90,13 @@ object SettingsTestTags {
      * @param kbps the bitrate value in kilobits per second.
      */
     fun bitrateOption(kbps: Int) = "setting_bitrate_$kbps"
+
+    /**
+     * Returns the test tag for a specific full-player layout option.
+     *
+     * @param storageValue the layout storage value (e.g. "normal", "super_compact").
+     */
+    fun fullPlayerLayoutOption(storageValue: String) = "setting_full_player_layout_$storageValue"
 }
 
 private val SECTION_SPACING = 16.dp
@@ -276,6 +285,9 @@ private fun SettingsContent(
 
         SectionHeader("UI")
         LandscapeControlsSideSetting(state = state, contract = contract)
+        Spacer(modifier = Modifier.height(SECTION_SPACING))
+
+        FullPlayerLayoutSetting(state = state, contract = contract)
         Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
 
         SectionHeader("Storage")
@@ -535,6 +547,36 @@ private fun LandscapeControlsSideSetting(state: SettingsUiState, contract: Setti
             onClick = { contract.setLandscapeControlsSide("right") },
             label = { Text("Right") },
         )
+    }
+}
+
+/**
+ * Full-player layout selection: Normal, Compact (controls on the cover art) or
+ * Super compact (full-bleed cover with a dark scrim and controls on top).
+ */
+@Composable
+private fun FullPlayerLayoutSetting(state: SettingsUiState, contract: SettingsContract) {
+    Text("Full player layout", style = MaterialTheme.typography.bodyLarge)
+    Text(
+        "Compact draws the controls on the cover art. Super compact fills the screen with the cover.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = INNER_SPACING)
+            .testTag(SettingsTestTags.FULL_PLAYER_LAYOUT),
+        horizontalArrangement = Arrangement.spacedBy(INNER_SPACING),
+    ) {
+        FullPlayerLayout.entries.forEach { layout ->
+            FilterChip(
+                selected = state.fullPlayerLayout == layout,
+                onClick = { contract.setFullPlayerLayout(layout) },
+                label = { Text(layout.label) },
+                modifier = Modifier.testTag(SettingsTestTags.fullPlayerLayoutOption(layout.storageValue)),
+            )
+        }
     }
 }
 
