@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,6 +61,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
@@ -101,6 +103,11 @@ object PlaylistDetailTestTags {
     const val DOWNLOAD_PROGRESS = "download_all_progress"
     const val LOADING = "detail_loading"
     const val ERROR = "detail_error"
+    const val SORT = "detail_sort"
+    const val SORT_SHEET = "detail_sort_sheet"
+    const val SORT_SHEET_CONTENT = "detail_sort_sheet_content"
+    const val SORT_DIRECTION = "detail_sort_direction"
+    const val SORT_DIRECTION_SWITCH = "detail_sort_direction_switch"
 
     /**
      * Returns the test tag for a specific track row.
@@ -115,6 +122,8 @@ object PlaylistDetailTestTags {
      * @param status the [SongStatus] to render a tag for.
      */
     fun trackStatus(status: SongStatus) = "track_status_$status"
+
+    fun sortOption(option: PlaylistSortOption) = "detail_sort_${option.name.lowercase()}"
 }
 
 private val COVER_SIZE = 72.dp
@@ -146,6 +155,26 @@ fun PlaylistDetailScreen(
     var showInfoDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showSortSheet by remember { mutableStateOf(false) }
+    var activeSortOptionName by rememberSaveable {
+        mutableStateOf(PlaylistSortOption.PLAYLIST_ORDER.name)
+    }
+    var activeSortDescending by rememberSaveable { mutableStateOf(false) }
+    var draftSortOptionName by rememberSaveable {
+        mutableStateOf(PlaylistSortOption.PLAYLIST_ORDER.name)
+    }
+    var draftSortDescending by rememberSaveable { mutableStateOf(false) }
+    val sortOption = remember(activeSortOptionName) {
+        PlaylistSortOption.entries.firstOrNull { it.name == activeSortOptionName }
+            ?: PlaylistSortOption.PLAYLIST_ORDER
+    }
+    val draftSortOption = remember(draftSortOptionName) {
+        PlaylistSortOption.entries.firstOrNull { it.name == draftSortOptionName }
+            ?: PlaylistSortOption.PLAYLIST_ORDER
+    }
+    val sortSpecification = remember(sortOption, activeSortDescending) {
+        PlaylistSortSpec(option = sortOption, descending = activeSortDescending)
+    }
 
     LaunchedEffect(Unit) {
         contract.deleted.collect {
@@ -179,6 +208,20 @@ fun PlaylistDetailScreen(
                 showDeleteDialog = false
             },
             onDismiss = { showDeleteDialog = false },
+        )
+    }
+
+    if (showSortSheet) {
+        PlaylistSortBottomSheet(
+            selectedOption = draftSortOption,
+            descending = draftSortDescending,
+            onOptionSelected = { draftSortOptionName = it.name },
+            onDescendingChanged = { draftSortDescending = it },
+            onDismiss = {
+                activeSortOptionName = draftSortOption.name
+                activeSortDescending = draftSortDescending
+                showSortSheet = false
+            },
         )
     }
 
@@ -221,6 +264,19 @@ fun PlaylistDetailScreen(
                             },
                         )
                         DropdownMenuItem(
+                            text = { Text("Sort") },
+                            onClick = {
+                                showMenu = false
+                                draftSortOptionName = sortOption.name
+                                draftSortDescending = activeSortDescending
+                                showSortSheet = true
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Filled.SwapVert, contentDescription = null)
+                            },
+                            modifier = Modifier.testTag(PlaylistDetailTestTags.SORT),
+                        )
+                        DropdownMenuItem(
                             text = { Text("Share") },
                             onClick = {
                                 showMenu = false
@@ -260,6 +316,7 @@ fun PlaylistDetailScreen(
             contract = contract,
             padding = padding,
             highlightSongId = highlightSongId,
+            sortSpecification = sortSpecification,
         )
     }
 }
@@ -409,6 +466,7 @@ private fun PlaylistDetailContent(
     contract: PlaylistDetailContract,
     padding: PaddingValues,
     highlightSongId: String? = null,
+    sortSpecification: PlaylistSortSpec = PlaylistSortSpec(),
 ) {
     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
         when {
@@ -423,7 +481,12 @@ private fun PlaylistDetailContent(
                 message = state.error,
                 onRetry = contract::sync,
             )
-            else -> PlaylistContent(state = state, contract = contract, highlightSongId = highlightSongId)
+            else -> PlaylistContent(
+                state = state,
+                contract = contract,
+                highlightSongId = highlightSongId,
+                sortSpecification = sortSpecification,
+            )
         }
     }
 }
@@ -455,8 +518,17 @@ private fun PlaylistContent(
     state: PlaylistDetailUiState,
     contract: PlaylistDetailContract,
     highlightSongId: String? = null,
+    sortSpecification: PlaylistSortSpec = PlaylistSortSpec(),
 ) {
     val listState = rememberLazyListState()
+    val sortedTracks = remember(
+        state.tracks,
+        sortSpecification,
+        state.isSyncing,
+        state.lastSyncedAt,
+    ) {
+        sortPlaylistTracks(state.tracks, sortSpecification)
+    }
 
     val collapseProgress by remember {
         derivedStateOf {
@@ -506,7 +578,7 @@ private fun PlaylistContent(
                 SyncingIndicator(isSyncing = state.isSyncing)
             }
             items(
-                state.tracks,
+                sortedTracks,
                 key = { it.id },
                 contentType = { "track_${it.status}" },
             ) { track ->

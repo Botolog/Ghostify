@@ -130,6 +130,7 @@ class MappersTest {
         assertEquals(210000L, track.durationMs)
         assertEquals(UiSongStatus.PENDING, track.status)
         assertEquals(0, track.position)
+        assertEquals(1000L, track.addedAt)
     }
 
     @Test

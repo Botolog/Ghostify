@@ -72,6 +72,7 @@ data class TrackUi(
     val position: Int,
     val coverUrl: String? = null,
     val coverArtLocalPath: String? = null,
+    val addedAt: Long? = null,
 )
 
 /**

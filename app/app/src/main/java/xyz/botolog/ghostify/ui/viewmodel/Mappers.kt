@@ -59,6 +59,7 @@ internal fun SongEntity.toTrackUi(): TrackUi = TrackUi(
     position = position,
     coverUrl = coverUrl,
     coverArtLocalPath = coverArtLocalPath,
+    addedAt = addedAt,
 )
 
 /**
