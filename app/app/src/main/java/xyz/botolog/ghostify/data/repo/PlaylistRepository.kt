@@ -166,10 +166,17 @@ class PlaylistRepository(
     }
 
     /**
-     * Deletes the playlist; tracks are removed via the FK ON DELETE CASCADE.
+     * Deletes the playlist row only; tracks are removed via the FK ON DELETE CASCADE.
+     *
+     * Rows only — this leaves the downloaded media files, the cached cover art and any player
+     * state behind. User-facing deletion goes through [DeletePlaylistUseCase], which owns that
+     * whole sequence.
      *
      * @param playlistId The playlist row id to delete.
      */
+    @Deprecated(
+        message = "Deletes rows only; use DeletePlaylistUseCase to also remove media and player state.",
+    )
     suspend fun deletePlaylist(playlistId: String) {
         Timber.i("PlaylistRepository.deletePlaylist: START")
         playlistDao.deleteById(playlistId)

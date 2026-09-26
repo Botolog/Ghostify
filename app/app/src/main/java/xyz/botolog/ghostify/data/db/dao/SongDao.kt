@@ -211,6 +211,18 @@ interface SongDao {
     // ── Aggregate ─────────────────────────────────────────────────────
 
     /**
+     * One-shot fetch of every recorded `file_path` in the table.
+     *
+     * Read *after* a playlist's rows are gone, the result is exactly the set of media files
+     * still owned by a surviving song row. Playlist deletion uses it so a file shared with a
+     * track of another playlist is never removed.
+     *
+     * @return The distinct non-blank file paths currently recorded.
+     */
+    @Query("SELECT DISTINCT file_path FROM songs WHERE file_path IS NOT NULL AND file_path != ''")
+    suspend fun allFilePaths(): List<String>
+
+    /**
      * Counts all songs in a playlist.
      *
      * @param playlistId The playlist to count.

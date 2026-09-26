@@ -229,6 +229,7 @@ class PlaylistDetailSortPersistenceTest {
         downloads = downloads,
         syncer = syncer,
         player = player,
+        deletion = mockk(relaxed = true),
     )
 
     private fun playlist() = PlaylistEntity(

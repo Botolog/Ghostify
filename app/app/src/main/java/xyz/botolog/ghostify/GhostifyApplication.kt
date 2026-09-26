@@ -156,6 +156,24 @@ class GhostifyContainer(private val context: Application) {
         SongRepository(database.songDao(), database.transactionRunner())
     }
 
+    val deletePlaylist: xyz.botolog.ghostify.data.repo.DeletePlaylistUseCase by lazy {
+        xyz.botolog.ghostify.data.repo.DeletePlaylistUseCase(
+            playlistDao = database.playlistDao(),
+            songDao = database.songDao(),
+            transactions = database.transactionRunner(),
+            files = xyz.botolog.ghostify.di.MusicStorePlaylistMediaFiles(
+                store = musicStore,
+                artwork = artworkPersistence,
+            ),
+            playback = xyz.botolog.ghostify.di.PlayerControllerPlaybackReset(playerController),
+        )
+    }
+
+    /** Extracted cover art cache; also cleaned up when a playlist is deleted. */
+    private val artworkPersistence: xyz.botolog.ghostify.player.ArtworkPersistence by lazy {
+        xyz.botolog.ghostify.player.ArtworkPersistence(context)
+    }
+
     val playerStatePersistence: PlayerStatePersistence by lazy {
         PlayerStatePersistence(
             settings = settingsRepository,
@@ -223,6 +241,7 @@ class GhostifyContainer(private val context: Application) {
             syncer = syncUseCase,
             player = playerController,
             musicStore = musicStore,
+            deletePlaylist = deletePlaylist,
         )
 
     /** Tears down activity-scoped ViewModels when the activity is destroyed. */

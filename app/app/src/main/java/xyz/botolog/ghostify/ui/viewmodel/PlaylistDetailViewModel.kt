@@ -1,6 +1,7 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
 import xyz.botolog.ghostify.data.model.SongStatus as DataSongStatus
+import xyz.botolog.ghostify.data.repo.DeletePlaylistUseCase
 import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.data.repo.SongRepository
 import xyz.botolog.ghostify.download.DownloadManager
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.update
  * @property downloads download orchestration layer.
  * @property syncer re-sync use case for playlists.
  * @property player media playback controller.
+ * @property deletion full playlist deletion (rows, media files, artwork, player state).
  */
 class PlaylistDetailViewModel(
     private val playlistId: String,
@@ -65,6 +67,7 @@ class PlaylistDetailViewModel(
     private val downloads: DownloadManager,
     private val syncer: SyncUseCase,
     private val player: PlayerController,
+    private val deletion: DeletePlaylistUseCase,
 ) : ContractViewModel(), PlaylistDetailContract {
 
     private val _state = MutableStateFlow(PlaylistDetailUiState(playlistId = playlistId))
@@ -299,7 +302,7 @@ class PlaylistDetailViewModel(
     override fun deletePlaylist() {
         Timber.i("PlaylistDetailViewModel.deletePlaylist: START $playlistId")
         launch {
-            repo.deletePlaylist(playlistId)
+            deletion.delete(playlistId)
             _deleted.emit(Unit)
         }
     }

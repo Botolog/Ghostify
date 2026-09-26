@@ -63,7 +63,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,6 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
@@ -140,7 +143,18 @@ private val COLLAPSE_THRESHOLD = 200
 private val STATUS_ICON_SIZE = 20.dp
 private val TRACK_STATUS_BOX_SIZE = 24.dp
 private val SYNC_INDICATOR_SIZE = 16.dp
-private val HIGHLIGHT_DURATION_MS = 1500L
+
+/** Height of the collapsed bar that covers the top of the list once the header is scrolled away. */
+private val COLLAPSED_BAR_HEIGHT = COVER_SIZE_COLLAPSED + 16.dp
+
+/** Breathing room left above a scrolled-to track so the collapsed bar does not cover it. */
+private val HIGHLIGHT_SCROLL_GAP = 8.dp
+
+/** How long a search-target track stays highlighted before the highlight drops again. */
+internal const val HIGHLIGHT_DURATION_MS = 1500L
+
+/** Items the track list renders before its first track: the expanded header and the syncing row. */
+private const val TRACK_LIST_LEADING_ITEM_COUNT = 2
 
 /**
  * Full screen showing playlist details including cover art, track list, and action buttons.
@@ -518,6 +532,10 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
 
 /**
  * Full playlist content: collapsing header with cover art and buttons, optional syncing indicator, and track list.
+ *
+ * When [highlightSongId] names a track in the list — the song a search result led to — the list
+ * scrolls that track into view below the collapsed bar and highlights it briefly, so the row is
+ * found without hunting for it and without a highlight that outlives the search.
  */
 @Composable
 private fun PlaylistContent(
@@ -530,6 +548,24 @@ private fun PlaylistContent(
     // Tracks render in the order stored in the database: a committed sort rewrites
     // `songs.position`, so the list is never re-ordered locally.
     val tracks = state.tracks
+    val trackIds = remember(tracks) { tracks.map { it.id } }
+    val highlightIndex = trackListIndexOfSong(trackIds, highlightSongId)
+    var highlightedTrackId by remember { mutableStateOf<String?>(null) }
+    val highlightScrollOffsetPx = with(LocalDensity.current) {
+        -(COLLAPSED_BAR_HEIGHT + HIGHLIGHT_SCROLL_GAP).roundToPx()
+    }
+
+    LaunchedEffect(highlightSongId, highlightIndex) {
+        if (highlightIndex == null) {
+            highlightedTrackId = null
+            return@LaunchedEffect
+        }
+        // A scroll asked for before the list has placed its items would have nowhere to land, so
+        // the highlight waits for the first measured list, as the lyrics autoscroll does.
+        snapshotFlow { listState.layoutInfo.totalItemsCount > 0 }.first { it }
+        listState.animateScrollToItem(highlightIndex, highlightScrollOffsetPx)
+        highlightSongWhileVisible(highlightSongId) { highlightedTrackId = it }
+    }
 
     val collapseProgress by remember {
         derivedStateOf {
@@ -599,7 +635,7 @@ private fun PlaylistContent(
                 ) {
                     TrackRow(
                         track = track,
-                        isHighlighted = track.id == highlightSongId,
+                        isHighlighted = track.id == highlightedTrackId,
                     )
                 }
             }
@@ -613,6 +649,38 @@ private fun PlaylistContent(
             )
         }
     }
+}
+
+/**
+ * Index of the track-list item that renders [songId], or `null` when the list must stay put:
+ * no song was requested, the playlist holds no tracks yet, or the requested song is not among
+ * them — a result whose playlist has since lost the track never scrolls the list off to an
+ * unrelated place.
+ *
+ * The header and the syncing row are rendered before the first track, so a track's position in
+ * [trackIds] is shifted by [TRACK_LIST_LEADING_ITEM_COUNT] to reach its list index. Ids are
+ * unique — they are the list's item keys — so the first match is the only match.
+ */
+internal fun trackListIndexOfSong(trackIds: List<String>, songId: String?): Int? {
+    if (songId.isNullOrEmpty() || trackIds.isEmpty()) return null
+    val trackIndex = trackIds.indexOfFirst { it == songId }
+    return if (trackIndex < 0) null else trackIndex + TRACK_LIST_LEADING_ITEM_COUNT
+}
+
+/**
+ * Runs the search-target highlight: reports [songId] as highlighted, holds it for [durationMs],
+ * then reports `null` so the row fades back out. The highlight therefore always expires instead
+ * of marking the track forever, and a blank [songId] never highlights anything.
+ */
+internal suspend fun highlightSongWhileVisible(
+    songId: String?,
+    durationMs: Long = HIGHLIGHT_DURATION_MS,
+    onHighlightChanged: (String?) -> Unit,
+) {
+    if (songId.isNullOrEmpty()) return
+    onHighlightChanged(songId)
+    delay(durationMs)
+    onHighlightChanged(null)
 }
 
 /**

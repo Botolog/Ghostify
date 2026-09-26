@@ -1,5 +1,6 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
+import xyz.botolog.ghostify.data.repo.DeletePlaylistUseCase
 import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.data.repo.SettingsRepository
 import xyz.botolog.ghostify.data.repo.SongRepository
@@ -34,6 +35,7 @@ import java.util.UUID
  * @property syncer re-sync use case for playlists.
  * @property player media playback controller.
  * @property musicStore local file storage manager.
+ * @property deletePlaylist full playlist deletion (rows, media files, artwork, player state).
  * @property newId function that generates a new unique id.
  */
 class GhostifyViewModels(
@@ -46,10 +48,11 @@ class GhostifyViewModels(
     private val syncer: SyncUseCase,
     private val player: PlayerController,
     private val musicStore: MusicStore,
+    private val deletePlaylist: DeletePlaylistUseCase,
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
-    private val library = LibraryViewModel(repo, downloads)
+    private val library = LibraryViewModel(repo, downloads, deletePlaylist)
 
     private val addPlaylist = AddPlaylistViewModel(
         validator = { PlaylistUrlValidator.validate(it) },
@@ -131,6 +134,7 @@ class GhostifyViewModels(
                 downloads = downloads,
                 syncer = syncer,
                 player = player,
+                deletion = deletePlaylist,
             )
         }
     }

@@ -1,6 +1,7 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
 import xyz.botolog.ghostify.data.db.entity.PlaylistEntity
+import xyz.botolog.ghostify.data.repo.DeletePlaylistUseCase
 import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.download.DownloadProgress
@@ -31,11 +32,13 @@ import timber.log.Timber
  *
  * @property repo playlist persistence layer.
  * @property downloads download orchestration layer.
+ * @property deletion full playlist deletion (rows, media files, artwork, player state).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModel(
     private val repo: PlaylistRepository,
     private val downloads: DownloadManager,
+    private val deletion: DeletePlaylistUseCase,
 ) : ContractViewModel(), LibraryContract {
 
     private val _state = MutableStateFlow(LibraryUiState())
@@ -82,7 +85,7 @@ class LibraryViewModel(
 
     override fun deletePlaylist(playlistId: String) {
         Timber.i("LibraryViewModel.deletePlaylist: START $playlistId")
-        launch { repo.deletePlaylist(playlistId) }
+        launch { deletion.delete(playlistId) }
     }
 
     override fun shutdownApp() {

@@ -86,6 +86,17 @@ class PlayerController private constructor(
     private var artworkBackfillJob: Job? = null
     private var saveJob: Job? = null
     val queueManager = PlayerQueueManager()
+
+    /**
+     * Incremented every time a queue is (re)built or torn down.
+     *
+     * Queue building — and the lazy backfill that keeps extending it — runs off the main
+     * thread, so a stale result can land after the queue was replaced. Each builder captures
+     * the generation it was started for and drops its result once the generation moved on,
+     * which is what stops a deleted playlist's tracks (or a lazy backfill) from resurrecting a
+     * queue that was just cleared.
+     */
+    private var queueGeneration = 0
     private var isSyncingExoPlayer = false
     private var loopPlaylistsEnabled = true
     private var endOfQueueHandled = false
@@ -132,14 +143,15 @@ class PlayerController private constructor(
     fun playPlaylist(songs: List<Song>, startSongId: String? = null, playlistId: String? = null) {
         Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId, playlistId=$playlistId")
         currentPlaylistId = playlistId
+        val generation = ++queueGeneration
         // A new playlist supersedes any in-flight artwork backfill from the previous queue.
         cancelArtworkBackfill("superseded by new playPlaylist")
         backfillJob?.cancel()
         backfillJob = null
         scope.launch(Dispatchers.IO) {
             when (val result = queueBuilder.build(songs, startSongId)) {
-                is QueueBuildResult.NothingToPlay -> handleNothingToPlay()
-                is QueueBuildResult.Ready -> handleQueueReady(result)
+                is QueueBuildResult.NothingToPlay -> handleNothingToPlay(generation)
+                is QueueBuildResult.Ready -> handleQueueReady(result, generation)
             }
         }
     }
@@ -164,6 +176,7 @@ class PlayerController private constructor(
     ) {
         Timber.i("playPlaylistLazy: initialBatch=${initialBatch.size}, startSongId=$startSongId, playlistId=$playlistId")
         currentPlaylistId = playlistId
+        val generation = ++queueGeneration
         cancelArtworkBackfill("superseded by new playPlaylistLazy")
         backfillJob?.cancel()
         scope.launch(Dispatchers.IO) {
@@ -173,20 +186,20 @@ class PlayerController private constructor(
                     // Initial batch had nothing — try loading more
                     val nextBatch = loadMore(initialBatch.size)
                     if (nextBatch.isNullOrEmpty()) {
-                        handleNothingToPlay()
+                        handleNothingToPlay(generation)
                         return@launch
                     }
                     when (val retry = lazyBuilder.buildInitial(nextBatch, startSongId)) {
-                        is QueueBuildResult.NothingToPlay -> handleNothingToPlay()
+                        is QueueBuildResult.NothingToPlay -> handleNothingToPlay(generation)
                         is QueueBuildResult.Ready -> {
-                            handleQueueReady(retry)
-                            launchBackfill(lazyBuilder, retry.items.size + initialBatch.size, loadMore)
+                            handleQueueReady(retry, generation)
+                            launchBackfill(lazyBuilder, retry.items.size + initialBatch.size, loadMore, generation)
                         }
                     }
                 }
                 is QueueBuildResult.Ready -> {
-                    handleQueueReady(result)
-                    launchBackfill(lazyBuilder, initialBatch.size, loadMore)
+                    handleQueueReady(result, generation)
+                    launchBackfill(lazyBuilder, initialBatch.size, loadMore, generation)
                 }
             }
         }
@@ -194,15 +207,24 @@ class PlayerController private constructor(
 
     /**
      * Loads remaining songs in the background and appends them to the ExoPlayer queue.
+     *
+     * Aborts as soon as the queue generation moves on (a new playlist was started, or the
+     * playlist was deleted), so a deleted playlist's remaining pages can never be appended to a
+     * queue that no longer belongs to it.
      */
     private fun launchBackfill(
         lazyBuilder: LazyPlayerQueueBuilder,
         offset: Int,
         loadMore: suspend (offset: Int) -> List<Song>?,
+        generation: Int = queueGeneration,
     ) {
         backfillJob = scope.launch(Dispatchers.IO) {
             var currentOffset = offset
             while (isActive) {
+                if (generation != queueGeneration) {
+                    Timber.i("playPlaylistLazy: backfill superseded, aborting")
+                    return@launch
+                }
                 val batch = loadMore(currentOffset) ?: break
                 if (batch.isEmpty()) break
                 val newItems = lazyBuilder.loadMore(batch)
@@ -210,9 +232,18 @@ class PlayerController private constructor(
                     val mediaItems = newItems.map { item ->
                         MediaItemMapper.toMediaItem(item, null)
                     }
-                    withContext(Dispatchers.Main.immediate) {
-                        queueManager.appendItems(newItems)
-                        exoPlayer.addMediaItems(mediaItems)
+                    val appended = withContext(Dispatchers.Main.immediate) {
+                        if (generation != queueGeneration) {
+                            false
+                        } else {
+                            queueManager.appendItems(newItems)
+                            exoPlayer.addMediaItems(mediaItems)
+                            true
+                        }
+                    }
+                    if (!appended) {
+                        Timber.i("playPlaylistLazy: queue replaced while loading, dropping batch")
+                        return@launch
                     }
                     Timber.d("playPlaylistLazy: appended ${newItems.size} items, total=${lazyBuilder.totalItems}")
                 }
@@ -223,27 +254,45 @@ class PlayerController private constructor(
         }
     }
 
-    /** Applies the idle state when no songs are downloadable / queueable. */
-    private suspend fun handleNothingToPlay() = withContext(Dispatchers.Main.immediate) {
-        Timber.w("playPlaylist: nothing to play")
-        nothingToPlay = true
-        lastError = null
-        // The artwork map is cleared here, so a stale backfill must not keep writing into it.
-        cancelArtworkBackfill("nothing to play")
-        artworkByMediaId.clear()
-        queueManager.clear()
-        exoPlayer.clearMediaItems()
-        _state.update {
-            PlayerUiState(
-                nothingToPlay = true,
-                shuffleEnabled = queueManager.isShuffled,
-                repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode),
-                volume = exoPlayer.volume,
-            )
+    /**
+     * Applies the idle state when no songs are downloadable / queueable.
+     *
+     * @param generation the queue generation this build was started for; a stale result is
+     *   dropped instead of clobbering whatever replaced the queue in the meantime.
+     */
+    private suspend fun handleNothingToPlay(generation: Int = queueGeneration) {
+        if (generation != queueGeneration) {
+            Timber.i("handleNothingToPlay: stale build (gen=$generation), ignoring")
+            return
+        }
+        withContext(Dispatchers.Main.immediate) {
+            Timber.w("playPlaylist: nothing to play")
+            nothingToPlay = true
+            lastError = null
+            // The artwork map is cleared here, so a stale backfill must not keep writing into it.
+            cancelArtworkBackfill("nothing to play")
+            artworkByMediaId.clear()
+            queueManager.clear()
+            exoPlayer.clearMediaItems()
+            _state.update {
+                PlayerUiState(
+                    nothingToPlay = true,
+                    shuffleEnabled = queueManager.isShuffled,
+                    repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode),
+                    volume = exoPlayer.volume,
+                )
+            }
         }
     }
 
-    private suspend fun handleQueueReady(result: QueueBuildResult.Ready) {
+    private suspend fun handleQueueReady(
+        result: QueueBuildResult.Ready,
+        generation: Int = queueGeneration,
+    ) {
+        if (generation != queueGeneration) {
+            Timber.i("handleQueueReady: stale build (gen=$generation), ignoring")
+            return
+        }
         val clickedSongId = result.startSongId
         val (currentItems, startIndex) = withContext(Dispatchers.Main.immediate) {
             val shouldShuffle = queueManager.isShuffled
@@ -280,7 +329,11 @@ class PlayerController private constructor(
 
         val mediaItems = buildMediaItems(currentItems, startIndex)
 
-        withContext(Dispatchers.Main.immediate) {
+        val applied = withContext(Dispatchers.Main.immediate) {
+            if (generation != queueGeneration) {
+                Timber.i("handleQueueReady: queue replaced while building, discarding result")
+                return@withContext false
+            }
             nothingToPlay = false
             lastError = null
             artworkByMediaId.clear()
@@ -291,8 +344,9 @@ class PlayerController private constructor(
             exoPlayer.play()
             publishSnapshot()
             startPlaybackService()
+            true
         }
-        launchArtworkBackfill(currentItems, startIndex)
+        if (applied) launchArtworkBackfill(currentItems, startIndex)
     }
 
     /** Holds a batch of built [MediaItem]s together with their extracted artwork bytes. */
@@ -380,9 +434,12 @@ class PlayerController private constructor(
         if (persistence == null) return
         val saved = persistence.load() ?: return
         Timber.i("PlayerController.restoreSavedState: restoring songId=${saved.currentSongId}")
+        val generation = ++queueGeneration
+        currentPlaylistId = saved.playlistId
         val songs = persistence.restoreSongs(saved.queueSongIds)
         if (songs.isEmpty()) {
             Timber.w("PlayerController.restoreSavedState: no playable songs, clearing state")
+            currentPlaylistId = null
             persistence.clear()
             return
         }
@@ -418,7 +475,11 @@ class PlayerController private constructor(
                     saved.currentSongId?.let { queueManager.indexOf(it) }?.coerceAtLeast(0) ?: 0
                 }
                 val mediaItems = buildMediaItems(currentItems, startIndex)
-                withContext(Dispatchers.Main.immediate) {
+                val applied = withContext(Dispatchers.Main.immediate) {
+                    if (generation != queueGeneration) {
+                        Timber.i("restoreSavedState: queue replaced while restoring, discarding result")
+                        return@withContext false
+                    }
                     nothingToPlay = false
                     lastError = null
                     artworkByMediaId.clear()
@@ -436,8 +497,9 @@ class PlayerController private constructor(
                     }
                     publishSnapshot()
                     startPlaybackService()
+                    true
                 }
-                launchArtworkBackfill(currentItems, startIndex)
+                if (applied) launchArtworkBackfill(currentItems, startIndex)
                 Timber.i("PlayerController.restoreSavedState: restored successfully")
             }
         }
@@ -690,6 +752,55 @@ class PlayerController private constructor(
         mediaController?.release()
         mediaController = null
         scope.cancel()
+    }
+
+    /**
+     * Stops playback and removes every trace of [playlistId] from the player.
+     *
+     * Called when a playlist is deleted: the queue, the ExoPlayer timeline, the artwork cache
+     * and the persisted state all point at rows that no longer exist, so leaving any of them
+     * behind would keep a deleted song on the mini player, in the media notification, and in
+     * the next session's restore.
+     *
+     * Scoped by playlist id, so deleting one playlist can never interrupt another: a playlist
+     * that is not the loaded one is a no-op. Passing `null` clears unconditionally.
+     *
+     * Everything a background job could still write is cancelled or invalidated first — the
+     * pending state save (which would otherwise re-persist the deleted playlist two seconds
+     * later), the lazy queue backfill and the artwork backfill — and the queue generation is
+     * bumped so an in-flight build result is discarded instead of re-populating the queue.
+     * `stop()` also drops the player to `STATE_IDLE`, which is what makes `PlaybackService`
+     * tear down its foreground notification.
+     *
+     * Must run on the main thread.
+     *
+     * @param playlistId the deleted playlist's id, or `null` to clear unconditionally.
+     * @return `true` when this playlist was the loaded one and the player was reset.
+     */
+    fun stopPlaylist(playlistId: String?): Boolean {
+        if (playlistId != null && currentPlaylistId != playlistId) {
+            Timber.i("PlayerController.stopPlaylist: $playlistId is not loaded (current=$currentPlaylistId), nothing to do")
+            return false
+        }
+        Timber.i("PlayerController.stopPlaylist: clearing playlist=$playlistId")
+        queueGeneration++
+        currentPlaylistId = null
+        saveJob?.cancel()
+        saveJob = null
+        backfillJob?.cancel()
+        backfillJob = null
+        cancelArtworkBackfill("playlist deleted")
+        nothingToPlay = false
+        lastError = null
+        endOfQueueHandled = false
+        artworkByMediaId.clear()
+        queueManager.clear()
+        exoPlayer.shuffleModeEnabled = false
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+        publishSnapshot()
+        persistence?.let { store -> scope.launch { store.clear() } }
+        return true
     }
 
     // --- Player.Listener -------------------------------------------------------------
