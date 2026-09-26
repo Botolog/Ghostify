@@ -35,6 +35,7 @@ class ContractModelsTest {
         assertEquals(0.8f, state.volume, 0.001f)
         assertEquals(emptyList<QueueItem>(), state.queue)
         assertFalse(state.queueOpen)
+        assertTrue(state.showQueueCovers)
     }
 
     @Test
@@ -166,6 +167,7 @@ class ContractModelsTest {
         assertEquals(1, state.concurrentDownloads)
         assertFalse(state.autoDownloadOnAdd)
         assertTrue(state.loopPlaylists)
+        assertTrue(state.showQueueCovers)
         assertEquals(FullPlayerLayout.NORMAL, state.fullPlayerLayout)
         assertEquals(CacheStats(0, 0), state.cacheStats)
         assertFalse(state.isClearingCache)

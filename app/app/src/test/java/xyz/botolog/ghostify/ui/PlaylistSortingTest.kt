@@ -1,12 +1,17 @@
 package xyz.botolog.ghostify.ui
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import xyz.botolog.ghostify.ui.model.SongStatus
 import xyz.botolog.ghostify.ui.model.TrackUi
 import xyz.botolog.ghostify.ui.playlist.PlaylistSortOption
 import xyz.botolog.ghostify.ui.playlist.PlaylistSortSpec
+import xyz.botolog.ghostify.ui.playlist.isStoredOrder
+import xyz.botolog.ghostify.ui.playlist.orderedBy
 import xyz.botolog.ghostify.ui.playlist.sortPlaylistTracks
+import xyz.botolog.ghostify.ui.playlist.sortedTrackIds
 
 class PlaylistSortingTest {
     @Test
@@ -119,6 +124,53 @@ class PlaylistSortingTest {
         )
 
         assertEquals(listOf("failed", "pending", "downloaded"), sorted.map { it.id })
+    }
+
+    @Test
+    fun sortedTrackIdsResolvesTheOrderToPersist() {
+        val tracks = listOf(
+            track(id = "c", title = "Charlie", position = 0),
+            track(id = "b", title = "Bravo", position = 1),
+            track(id = "a", title = "Alpha", position = 2),
+        )
+
+        assertEquals(
+            listOf("a", "b", "c"),
+            sortedTrackIds(tracks, PlaylistSortSpec(option = PlaylistSortOption.TITLE)),
+        )
+    }
+
+    @Test
+    fun sortedTrackIdsIsStableAcrossRepeatedRuns() {
+        val tracks = listOf(
+            track(id = "b", title = "same", position = 0),
+            track(id = "a", title = "same", position = 1),
+        )
+        val spec = PlaylistSortSpec(option = PlaylistSortOption.TITLE)
+
+        assertEquals(sortedTrackIds(tracks, spec), sortedTrackIds(tracks, spec))
+    }
+
+    @Test
+    fun storedOrderSpecNeedsNoWrite() {
+        assertTrue(PlaylistSortSpec().isStoredOrder())
+        assertTrue(PlaylistSortSpec(option = PlaylistSortOption.PLAYLIST_ORDER).isStoredOrder())
+        assertFalse(PlaylistSortSpec(option = PlaylistSortOption.PLAYLIST_ORDER, descending = true).isStoredOrder())
+        assertFalse(PlaylistSortSpec(option = PlaylistSortOption.TITLE).isStoredOrder())
+    }
+
+    @Test
+    fun orderedByRenumbersPositionsAndKeepsUnknownTracks() {
+        val tracks = listOf(
+            track(id = "c", title = "Charlie", position = 0),
+            track(id = "b", title = "Bravo", position = 1),
+            track(id = "a", title = "Alpha", position = 2),
+        )
+
+        val reordered = tracks.orderedBy(listOf("a", "b"))
+
+        assertEquals(listOf("a", "b", "c"), reordered.map { it.id })
+        assertEquals(listOf(0, 1, 2), reordered.map { it.position })
     }
 
     private fun track(

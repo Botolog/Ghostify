@@ -12,13 +12,20 @@ import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract.PlaylistDetailUiState
 import xyz.botolog.ghostify.ui.model.SongStatus as UiSongStatus
 import xyz.botolog.ghostify.ui.model.TrackUi
+import xyz.botolog.ghostify.ui.playlist.PlaylistSortSpec
+import xyz.botolog.ghostify.ui.playlist.isStoredOrder
+import xyz.botolog.ghostify.ui.playlist.orderedBy
+import xyz.botolog.ghostify.ui.playlist.sortedTrackIds
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -36,6 +43,13 @@ import kotlinx.coroutines.flow.update
  * (a duplicate press is a benign no-op); "re-sync" is guarded by an in-VM flag and
  * is safe to run while a download is active (the SyncUseCase only enqueues PENDING
  * tracks); "play" only builds a queue from DOWNLOADED tracks.
+ *
+ * Sorting is persisted, not cosmetic: a committed sort rewrites the `songs.position`
+ * values so the database — not the composable — is the source of the track order.
+ * Writes to that column are serialised by [orderMutex] and coalesced through
+ * [sortRequests], so a sort, a manual drag and a sort-after-sync can never
+ * interleave. The playback queue is intentionally never reordered: it keeps the
+ * order it was built with until the playlist is started again.
  *
  * @property playlistId the database id of the playlist to display.
  * @property repo playlist persistence layer.
@@ -58,6 +72,30 @@ class PlaylistDetailViewModel(
 
     private val _deleted = MutableSharedFlow<Unit>()
     override val deleted: SharedFlow<Unit> = _deleted.asSharedFlow()
+
+    /**
+     * The committed sort (field + direction). Held here rather than in the
+     * composable so a sort survives configuration changes and so a sync
+     * completion knows which order to re-apply.
+     */
+    private val _sortMode = MutableStateFlow(PlaylistSortSpec())
+    override val sortMode: StateFlow<PlaylistSortSpec> = _sortMode.asStateFlow()
+
+    /**
+     * Serialises every write to `songs.position` (sort persistence vs. a manual
+     * drag) so a reorder can never be lost to a concurrent sort batch.
+     */
+    private val orderMutex = Mutex()
+
+    /**
+     * Conflated sort-persistence requests.
+     *
+     * A single consumer drains this channel, so exactly one sort batch runs at a
+     * time and any request that arrives while one is in flight replaces the
+     * pending one — repeated sync completions coalesce into one job for the
+     * latest track list instead of queueing stale work.
+     */
+    private val sortRequests = Channel<PlaylistSortSpec>(Channel.CONFLATED)
 
     /** Tracks whether a sync operation is currently in progress. */
     private val syncing = MutableStateFlow(false)
@@ -116,6 +154,17 @@ class PlaylistDetailViewModel(
                 }
                 .collect { _state.value = it }
         }
+        launch {
+            for (specification in sortRequests) {
+                persistSort(specification)
+            }
+        }
+    }
+
+    override fun commitSort(specification: PlaylistSortSpec) {
+        Timber.i("PlaylistDetailViewModel.commitSort: $specification")
+        _sortMode.value = specification
+        sortRequests.trySend(specification)
     }
 
     override fun downloadAll() {
@@ -134,6 +183,7 @@ class PlaylistDetailViewModel(
                     downloads.downloadAll(playlistId)
                 }
                 error.value = null
+                sortRequests.trySend(_sortMode.value)
             } catch (e: SyncException) {
                 Timber.e(e, "PlaylistDetailViewModel.sync: FAILED")
                 error.value = e.message ?: SYNC_FAILED_ERROR
@@ -234,7 +284,7 @@ class PlaylistDetailViewModel(
 
     override fun reorderSong(songId: String, newPosition: Int) {
         Timber.i("PlaylistDetailViewModel.reorderSong: START $songId -> $newPosition")
-        launch { repo.reorderSong(songId, newPosition) }
+        launch { orderMutex.withLock { repo.reorderSong(songId, newPosition) } }
     }
 
     override fun deleteSong(trackId: String) {
@@ -259,6 +309,36 @@ class PlaylistDetailViewModel(
         launch {
             val playlist = repo.getPlaylist(playlistId) ?: return@launch
             repo.updatePlaylist(playlist.copy(name = newName))
+        }
+    }
+
+    /**
+     * Rewrites the playlist's stored `position` values so the database reflects
+     * [specification] — the database is the source of truth from here on.
+     *
+     * Runs on the single [sortRequests] consumer, serialised against manual
+     * reorders by [orderMutex]. The order is always computed from a *fresh* read
+     * of the complete track set (not the cached UI list) so a sync that landed
+     * moments ago is fully covered, and the write is skipped when the stored
+     * order already matches, so a repeated sort does no work.
+     *
+     * The playback queue is never touched here: it keeps whatever order it was
+     * built with until the playlist is started again.
+     */
+    private suspend fun persistSort(specification: PlaylistSortSpec) {
+        if (specification.isStoredOrder()) {
+            Timber.i("PlaylistDetailViewModel.persistSort: stored order, nothing to write")
+            return
+        }
+        orderMutex.withLock {
+            val songs = songRepo.getSongs(playlistId)
+            if (songs.size < 2) return@withLock
+            val orderedIds = sortedTrackIds(songs.map { it.toTrackUi() }, specification)
+            val changed = repo.applySongOrder(playlistId, orderedIds)
+            Timber.i("PlaylistDetailViewModel.persistSort: $specification changed=$changed")
+            if (changed) {
+                _state.update { current -> current.copy(tracks = current.tracks.orderedBy(orderedIds)) }
+            }
         }
     }
 

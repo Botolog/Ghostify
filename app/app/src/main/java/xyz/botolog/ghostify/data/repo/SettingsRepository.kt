@@ -61,7 +61,7 @@ class SettingsRepository(private val settingDao: SettingDao) {
         const val DEFAULT_LANDSCAPE_CONTROLS_SIDE = "left"
 
         /** Default show-queue-covers flag. */
-        const val DEFAULT_SHOW_QUEUE_COVERS = false
+        const val DEFAULT_SHOW_QUEUE_COVERS = true
 
         const val DEFAULT_LOOP_PLAYLISTS = true
 

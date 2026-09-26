@@ -70,10 +70,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.widget.Toast
@@ -85,6 +87,11 @@ import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract.PlaylistDetailUiS
 import xyz.botolog.ghostify.ui.model.SongStatus
 import xyz.botolog.ghostify.ui.model.TrackUi
 import xyz.botolog.ghostify.ui.util.DurationFormat
+import xyz.botolog.ghostify.ui.util.InAppSnackbarHost
+import xyz.botolog.ghostify.ui.util.InAppSnackbarState
+import xyz.botolog.ghostify.ui.util.InAppSnackbarTestTags
+import xyz.botolog.ghostify.ui.util.coverImageModel
+import xyz.botolog.ghostify.ui.util.rememberInAppSnackbarState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,6 +115,7 @@ object PlaylistDetailTestTags {
     const val SORT_SHEET_CONTENT = "detail_sort_sheet_content"
     const val SORT_DIRECTION = "detail_sort_direction"
     const val SORT_DIRECTION_SWITCH = "detail_sort_direction_switch"
+    const val QUEUE_FEEDBACK = InAppSnackbarTestTags.MESSAGE
 
     /**
      * Returns the test tag for a specific track row.
@@ -150,30 +158,21 @@ fun PlaylistDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by contract.state.collectAsState()
+    val sortMode by contract.sortMode.collectAsState()
     val context = LocalContext.current
+    val snackbarState = rememberInAppSnackbarState()
     var showMenu by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showSortSheet by remember { mutableStateOf(false) }
-    var activeSortOptionName by rememberSaveable {
-        mutableStateOf(PlaylistSortOption.PLAYLIST_ORDER.name)
-    }
-    var activeSortDescending by rememberSaveable { mutableStateOf(false) }
     var draftSortOptionName by rememberSaveable {
-        mutableStateOf(PlaylistSortOption.PLAYLIST_ORDER.name)
+        mutableStateOf(sortMode.option.name)
     }
-    var draftSortDescending by rememberSaveable { mutableStateOf(false) }
-    val sortOption = remember(activeSortOptionName) {
-        PlaylistSortOption.entries.firstOrNull { it.name == activeSortOptionName }
-            ?: PlaylistSortOption.PLAYLIST_ORDER
-    }
+    var draftSortDescending by rememberSaveable { mutableStateOf(sortMode.descending) }
     val draftSortOption = remember(draftSortOptionName) {
         PlaylistSortOption.entries.firstOrNull { it.name == draftSortOptionName }
-            ?: PlaylistSortOption.PLAYLIST_ORDER
-    }
-    val sortSpecification = remember(sortOption, activeSortDescending) {
-        PlaylistSortSpec(option = sortOption, descending = activeSortDescending)
+            ?: sortMode.option
     }
 
     LaunchedEffect(Unit) {
@@ -218,8 +217,9 @@ fun PlaylistDetailScreen(
             onOptionSelected = { draftSortOptionName = it.name },
             onDescendingChanged = { draftSortDescending = it },
             onDismiss = {
-                activeSortOptionName = draftSortOption.name
-                activeSortDescending = draftSortDescending
+                contract.commitSort(
+                    PlaylistSortSpec(option = draftSortOption, descending = draftSortDescending),
+                )
                 showSortSheet = false
             },
         )
@@ -267,8 +267,8 @@ fun PlaylistDetailScreen(
                             text = { Text("Sort") },
                             onClick = {
                                 showMenu = false
-                                draftSortOptionName = sortOption.name
-                                draftSortDescending = activeSortDescending
+                                draftSortOptionName = sortMode.option.name
+                                draftSortDescending = sortMode.descending
                                 showSortSheet = true
                             },
                             leadingIcon = {
@@ -311,13 +311,19 @@ fun PlaylistDetailScreen(
             )
         },
     ) { padding ->
-        PlaylistDetailContent(
-            state = state,
-            contract = contract,
-            padding = padding,
-            highlightSongId = highlightSongId,
-            sortSpecification = sortSpecification,
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            PlaylistDetailContent(
+                state = state,
+                contract = contract,
+                padding = padding,
+                highlightSongId = highlightSongId,
+                snackbarState = snackbarState,
+            )
+            InAppSnackbarHost(
+                state = snackbarState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
     }
 }
 
@@ -466,7 +472,7 @@ private fun PlaylistDetailContent(
     contract: PlaylistDetailContract,
     padding: PaddingValues,
     highlightSongId: String? = null,
-    sortSpecification: PlaylistSortSpec = PlaylistSortSpec(),
+    snackbarState: InAppSnackbarState? = null,
 ) {
     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
         when {
@@ -485,7 +491,7 @@ private fun PlaylistDetailContent(
                 state = state,
                 contract = contract,
                 highlightSongId = highlightSongId,
-                sortSpecification = sortSpecification,
+                snackbarState = snackbarState,
             )
         }
     }
@@ -518,17 +524,12 @@ private fun PlaylistContent(
     state: PlaylistDetailUiState,
     contract: PlaylistDetailContract,
     highlightSongId: String? = null,
-    sortSpecification: PlaylistSortSpec = PlaylistSortSpec(),
+    snackbarState: InAppSnackbarState? = null,
 ) {
     val listState = rememberLazyListState()
-    val sortedTracks = remember(
-        state.tracks,
-        sortSpecification,
-        state.isSyncing,
-        state.lastSyncedAt,
-    ) {
-        sortPlaylistTracks(state.tracks, sortSpecification)
-    }
+    // Tracks render in the order stored in the database: a committed sort rewrites
+    // `songs.position`, so the list is never re-ordered locally.
+    val tracks = state.tracks
 
     val collapseProgress by remember {
         derivedStateOf {
@@ -578,12 +579,15 @@ private fun PlaylistContent(
                 SyncingIndicator(isSyncing = state.isSyncing)
             }
             items(
-                sortedTracks,
+                tracks,
                 key = { it.id },
                 contentType = { "track_${it.status}" },
             ) { track ->
                 SwipeToAddTrackRow(
-                    onAddToQueue = { contract.addToQueue(track.id) },
+                    onAddToQueue = {
+                        contract.addToQueue(track.id)
+                        snackbarState?.showAddedToQueue(track.title)
+                    },
                     onClick = {
                         when {
                             track.status == SongStatus.DOWNLOADED -> contract.playFromSong(track.id)
@@ -612,6 +616,45 @@ private fun PlaylistContent(
 }
 
 /**
+ * The playlist artwork, used by both the expanded header and the collapsed bar.
+ *
+ * The model is resolved by [coverImageModel], so an extracted local cover is preferred
+ * but never shadows the remote URL when the local file is gone, and the resolution is
+ * remembered because this composable recomposes on every frame while the header collapses.
+ * A neutral placeholder keeps the artwork slot visible when neither source is usable.
+ *
+ * @param state the playlist state carrying the cover sources.
+ * @param coverSize the rendered edge length of the square artwork.
+ * @param cornerRadius the artwork corner radius.
+ * @param contentDescription accessibility label, or `null` for a decorative image.
+ * @param modifier optional modifier applied to the artwork.
+ */
+@Composable
+private fun PlaylistCoverImage(
+    state: PlaylistDetailUiState,
+    coverSize: Dp,
+    cornerRadius: Dp,
+    contentDescription: String? = null,
+    modifier: Modifier = Modifier,
+) {
+    val model = remember(state.coverArtLocalPath, state.coverUrl) {
+        coverImageModel(state.coverArtLocalPath, state.coverUrl)
+    }
+    val empty = ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
+    AsyncImage(
+        model = model,
+        contentDescription = contentDescription,
+        modifier = modifier
+            .size(coverSize)
+            .clip(RoundedCornerShape(cornerRadius)),
+        contentScale = ContentScale.Crop,
+        placeholder = empty,
+        error = empty,
+        fallback = empty,
+    )
+}
+
+/**
  * Expanded header shown when scrolled to top: cover art, title, subtitle, and horizontal buttons.
  */
 @Composable
@@ -631,14 +674,12 @@ private fun ExpandedHeader(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = state.coverArtLocalPath?.let { java.io.File(it) } ?: state.coverUrl,
+            PlaylistCoverImage(
+                state = state,
+                coverSize = coverSize,
+                cornerRadius = 8.dp,
                 contentDescription = "Playlist cover",
-                modifier = Modifier
-                    .size(coverSize)
-                    .clip(RoundedCornerShape(8.dp))
-                    .testTag(PlaylistDetailTestTags.COVER),
-                contentScale = ContentScale.Crop,
+                modifier = Modifier.testTag(PlaylistDetailTestTags.COVER),
             )
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -809,13 +850,10 @@ private fun CollapsedBar(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = state.coverArtLocalPath?.let { java.io.File(it) } ?: state.coverUrl,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(COVER_SIZE_COLLAPSED)
-                    .clip(RoundedCornerShape(4.dp)),
-                contentScale = ContentScale.Crop,
+            PlaylistCoverImage(
+                state = state,
+                coverSize = COVER_SIZE_COLLAPSED,
+                cornerRadius = 4.dp,
             )
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -925,7 +963,6 @@ private fun TrackRow(
     isHighlighted: Boolean = false,
 ) {
     val isFailed = track.status == SongStatus.FAILED
-    val isDownloaded = track.status == SongStatus.DOWNLOADED
     val highlightColor = MaterialTheme.colorScheme.primaryContainer
     val animatedBackground by animateColorAsState(
         targetValue = if (isHighlighted) highlightColor else Color.Transparent,
@@ -944,7 +981,9 @@ private fun TrackRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = track.coverArtLocalPath?.let { java.io.File(it) } ?: track.coverUrl,
+            model = remember(track.coverArtLocalPath, track.coverUrl) {
+                coverImageModel(track.coverArtLocalPath, track.coverUrl)
+            },
             contentDescription = null,
             modifier = Modifier
                 .size(40.dp)
@@ -954,7 +993,7 @@ private fun TrackRow(
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        TrackInfoColumn(track = track, isFailed = isFailed, isDownloaded = isDownloaded, modifier = Modifier.weight(1f))
+        TrackInfoColumn(track = track, isFailed = isFailed, modifier = Modifier.weight(1f))
 
         Text(
             text = DurationFormat.format(track.durationMs),
@@ -969,16 +1008,26 @@ private fun TrackRow(
 }
 
 /**
- * Track title, artists, and contextual status hint (failed / tap to download / tap to play).
+ * Track title, artists, and a contextual status hint.
+ *
+ * Downloaded rows show no hint at all — the check icon and the row tap already say the
+ * track is ready — which leaves the remaining text vertically centred against the
+ * artwork, the duration and the status icon.
+ *
+ * @param track the track to describe.
+ * @param isFailed whether the track's last download attempt failed.
+ * @param modifier optional modifier applied to the text column.
  */
 @Composable
 private fun TrackInfoColumn(
     track: TrackUi,
     isFailed: Boolean,
-    isDownloaded: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.Center,
+    ) {
         Text(
             text = track.title,
             style = MaterialTheme.typography.bodyLarge,
@@ -998,13 +1047,8 @@ private fun TrackInfoColumn(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.error,
             )
-            !isDownloaded -> Text(
+            track.status != SongStatus.DOWNLOADED -> Text(
                 text = "Tap to download",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            else -> Text(
-                text = "Tap to play from here",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
             )

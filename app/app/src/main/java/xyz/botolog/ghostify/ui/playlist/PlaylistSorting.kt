@@ -25,6 +25,47 @@ fun sortPlaylistTracks(
     specification: PlaylistSortSpec = PlaylistSortSpec(),
 ): List<TrackUi> = tracks.sortedWith(playlistTrackComparator(specification))
 
+/**
+ * Resolves a [PlaylistSortSpec] into the resulting playlist order, as song ids.
+ *
+ * This is the order the sort persists into the database (`songs.position`); the
+ * id tie-breaker inside [playlistTrackComparator] keeps it stable, so
+ * re-running the same sort is a no-op.
+ *
+ * @param tracks the playlist's current track set (in any order).
+ * @param specification the sort to apply.
+ * @return the track ids in the order they should be stored in.
+ */
+fun sortedTrackIds(
+    tracks: List<TrackUi>,
+    specification: PlaylistSortSpec = PlaylistSortSpec(),
+): List<String> = tracks.sortedWith(playlistTrackComparator(specification)).map { it.id }
+
+/**
+ * `true` when [this] asks for the order already stored in the database, i.e.
+ * "playlist order" ascending. Persisting it would rewrite every position with the
+ * value it already has, so callers skip the write entirely.
+ */
+fun PlaylistSortSpec.isStoredOrder(): Boolean =
+    option == PlaylistSortOption.PLAYLIST_ORDER && !descending
+
+/**
+ * Rewrites [this] list of tracks into the order [order] describes, with
+ * `position` renumbered to match its index in that order.
+ *
+ * Tracks missing from [order] are kept (appended after the ordered ones) so a
+ * stale order can never hide a track.
+ */
+fun List<TrackUi>.orderedBy(order: List<String>): List<TrackUi> {
+    if (isEmpty()) return this
+    val rank = HashMap<String, Int>(order.size * 2)
+    order.forEachIndexed { index, id -> rank.putIfAbsent(id, index) }
+    return sortedBy { rank[it.id] ?: Int.MAX_VALUE }
+        .mapIndexed { index, track ->
+            if (track.position == index) track else track.copy(position = index)
+        }
+}
+
 fun playlistTrackComparator(specification: PlaylistSortSpec): Comparator<TrackUi> {
     val collator = Collator.getInstance(Locale.getDefault()).apply {
         strength = Collator.PRIMARY

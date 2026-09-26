@@ -127,4 +127,60 @@ class SettingsRepositoryTest {
         assertEquals("compact", stored[SettingsRepository.KEY_FULL_PLAYER_LAYOUT])
         assertEquals("full_player_compact", SettingsRepository.KEY_FULL_PLAYER_LAYOUT)
     }
+
+    @Test
+    fun defaultShowQueueCoversIsTrue() {
+        assertTrue(SettingsRepository.DEFAULT_SHOW_QUEUE_COVERS)
+    }
+
+    @Test
+    fun observeShowQueueCovers_defaultsToTrueWhenMissing() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_SHOW_QUEUE_COVERS)
+        } returns flowOf(null)
+
+        assertTrue(repository.observeShowQueueCovers().first())
+    }
+
+    @Test
+    fun observeShowQueueCovers_keepsExplicitlyStoredFalse() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_SHOW_QUEUE_COVERS)
+        } returns flowOf("false")
+
+        assertFalse(repository.observeShowQueueCovers().first())
+    }
+
+    @Test
+    fun observeShowQueueCovers_readsStoredTrue() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_SHOW_QUEUE_COVERS)
+        } returns flowOf("true")
+
+        assertTrue(repository.observeShowQueueCovers().first())
+    }
+
+    @Test
+    fun getShowQueueCovers_returnsTrueWhenMissing() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_SHOW_QUEUE_COVERS) } returns null
+
+        assertTrue(repository.getShowQueueCovers())
+    }
+
+    @Test
+    fun getShowQueueCovers_keepsExplicitlyStoredFalse() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_SHOW_QUEUE_COVERS) } returns "false"
+
+        assertFalse(repository.getShowQueueCovers())
+    }
+
+    @Test
+    fun setShowQueueCovers_persistsBooleanValue() = runTest {
+        val setting = SettingEntity(SettingsRepository.KEY_SHOW_QUEUE_COVERS, "false")
+        coEvery { settingDao.upsert(setting) } returns Unit
+
+        repository.setShowQueueCovers(false)
+
+        coVerify(exactly = 1) { settingDao.upsert(setting) }
+    }
 }

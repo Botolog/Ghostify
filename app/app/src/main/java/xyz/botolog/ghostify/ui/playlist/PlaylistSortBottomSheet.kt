@@ -78,7 +78,8 @@ fun PlaylistSortBottomSheet(
                 }
             }
             Text(
-                text = "Change the order shown here. Your saved playlist, playback, and downloads stay unchanged.",
+                text = "Saves this order to the playlist when you close the sheet. The track " +
+                    "currently playing and the downloads stay as they are.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

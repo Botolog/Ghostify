@@ -69,6 +69,7 @@ import xyz.botolog.ghostify.ui.model.PlaylistStatus
 import xyz.botolog.ghostify.ui.model.PlaylistUi
 import xyz.botolog.ghostify.ui.util.ProgressBadge
 import xyz.botolog.ghostify.ui.util.TimeFormat
+import xyz.botolog.ghostify.ui.util.coverImageModel
 
 /**
  * Test tag constants for the library screen. Used by Compose UI tests to locate elements.
@@ -364,7 +365,9 @@ private fun PlaylistRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = playlist.coverArtLocalPath?.let { java.io.File(it) } ?: playlist.coverUrl,
+            model = remember(playlist.coverArtLocalPath, playlist.coverUrl) {
+                coverImageModel(playlist.coverArtLocalPath, playlist.coverUrl)
+            },
             contentDescription = "Cover of ${playlist.name}",
             modifier = Modifier
                 .size(COVER_SIZE)

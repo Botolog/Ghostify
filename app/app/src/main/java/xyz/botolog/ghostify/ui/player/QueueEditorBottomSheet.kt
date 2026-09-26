@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -232,7 +233,11 @@ private fun QueueEditorContent(
                 SectionHeader(title = "Current")
             }
             item(key = "current_${currentItem.songId}") {
-                CurrentQueueItem(item = currentItem, onClick = { contract.jumpToQueueIndex(currentIndex) })
+                CurrentQueueItem(
+                    item = currentItem,
+                    showCover = showQueueCovers,
+                    onClick = { contract.jumpToQueueIndex(currentIndex) },
+                )
             }
         }
 
@@ -301,10 +306,18 @@ private fun SectionHeader(title: String) {
 
 /**
  * The currently playing queue item — highlighted, not draggable.
+ *
+ * Leads with a playing indicator instead of a drag handle so its content lines up
+ * with the draggable rows, and shows the same cover thumbnail when covers are enabled.
+ *
+ * @param item the currently playing queue item.
+ * @param showCover whether album covers should be rendered.
+ * @param onClick invoked when the row is activated.
  */
 @Composable
 private fun CurrentQueueItem(
     item: QueueItem,
+    showCover: Boolean,
     onClick: () -> Unit,
 ) {
     Row(
@@ -317,6 +330,17 @@ private fun CurrentQueueItem(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(
+            imageVector = Icons.Filled.PlayArrow,
+            contentDescription = "Now playing",
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        QueueItemCover(item = item, showCover = showCover)
+
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = item.title,
@@ -485,17 +509,7 @@ private fun QueueItemRow(item: QueueItem, showCover: Boolean = false) {
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        if (showCover && !item.coverUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = item.coverUrl,
-                contentDescription = "Album art",
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-                contentScale = ContentScale.Crop,
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-        }
+        QueueItemCover(item = item, showCover = showCover)
 
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -536,3 +550,39 @@ private fun QueueItemRow(item: QueueItem, showCover: Boolean = false) {
         )
     }
 }
+
+/**
+ * The album cover thumbnail shared by every queue row, followed by its trailing spacer.
+ *
+ * Renders nothing when covers are disabled or the item has no artwork, so all rows
+ * (including the highlighted current one) stay aligned.
+ *
+ * @param item the queue item whose artwork should be rendered.
+ * @param showCover whether the covers-in-queue setting is enabled.
+ */
+@Composable
+private fun QueueItemCover(item: QueueItem, showCover: Boolean) {
+    if (!shouldShowQueueItemCover(showCover, item.coverUrl)) return
+
+    AsyncImage(
+        model = item.coverUrl,
+        contentDescription = "Album art",
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(4.dp)),
+        contentScale = ContentScale.Crop,
+    )
+    Spacer(modifier = Modifier.width(12.dp))
+}
+
+/**
+ * Whether a queue row should render its album cover thumbnail.
+ *
+ * Applies to every row, including the currently playing one.
+ *
+ * @param showCover the value of the covers-in-queue setting.
+ * @param coverUrl the item's artwork URL, which may be absent.
+ * @return `true` when covers are enabled and artwork is available.
+ */
+internal fun shouldShowQueueItemCover(showCover: Boolean, coverUrl: String?): Boolean =
+    showCover && !coverUrl.isNullOrBlank()

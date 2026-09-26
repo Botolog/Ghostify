@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.ui.contract
 
 import androidx.compose.runtime.Immutable
 import xyz.botolog.ghostify.ui.model.TrackUi
+import xyz.botolog.ghostify.ui.playlist.PlaylistSortSpec
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -18,6 +19,29 @@ interface PlaylistDetailContract {
 
     /** One-shot event emitted when the playlist is deleted and the UI should navigate back. */
     val deleted: SharedFlow<Unit>
+
+    /**
+     * The committed playlist sort (field + direction) that is currently persisted.
+     *
+     * Starts as [PlaylistSortSpec]'s default (playlist order, ascending), which
+     * matches the order already stored in the database. Selecting an option in
+     * the sort sheet only drafts a new value — it is published here (and written
+     * to the database) by [commitSort].
+     */
+    val sortMode: StateFlow<PlaylistSortSpec>
+
+    /**
+     * Commits a drafted sort: persists the resulting order into the database by
+     * rewriting the playlist songs' `position` values.
+     *
+     * The playback queue is deliberately left untouched — the active queue keeps
+     * the order it was built with until the playlist is started again. The sort
+     * is also reapplied to the complete track set whenever a sync finishes, so
+     * newly added tracks land in the selected order too.
+     *
+     * @param specification the sort selected in the sort sheet.
+     */
+    fun commitSort(specification: PlaylistSortSpec)
 
     /** Download every track that is missing (PENDING / FAILED). */
     fun downloadAll()

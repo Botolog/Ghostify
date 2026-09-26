@@ -4,6 +4,10 @@ package xyz.botolog.ghostify.ui.player
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateTo
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -33,6 +37,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -90,6 +95,7 @@ import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.util.DurationFormat
 import kotlin.math.abs
+import kotlin.math.floor
 
 // ── Dimensions ────────────────────────────────────────────────────────
 private val ARTWORK_HEIGHT = 280.dp
@@ -97,6 +103,7 @@ private val HORIZONTAL_PADDING = 24.dp
 private val PLAY_BUTTON_SIZE = 64.dp
 private val PLAY_ICON_SIZE = 40.dp
 private val TRANSPORT_ICON_SIZE = 32.dp
+private val SLIDER_MIN_TRACK_HEIGHT = 16.dp
 
 // ── Landscape Dimensions ──────────────────────────────────────────────
 private val LANDSCAPE_ARTWORK_MAX_WIDTH = 400.dp
@@ -127,18 +134,94 @@ private val COMPACT_SEEK_MAX_HORIZONTAL_PADDING = 20.dp
 private val COMPACT_SEEK_MAX_BOTTOM_PADDING = 12.dp
 private val COMPACT_LYRICS_TOP_SPACING = 12.dp
 
+// ── Normal (portrait) Lyrics Spacing ─────────────────────────────────
+private val NORMAL_TRANSPORT_UP_OFFSET = 12.dp
+private val NORMAL_LYRICS_BOTTOM_SPACING = 12.dp
+
+// ── Full Lyrics Autoscroll ───────────────────────────────────────────
+private const val LYRICS_SCROLL_MIN_DURATION_MS = 400
+private const val LYRICS_SCROLL_DURATION_PER_LINE_MS = 120
+private const val LYRICS_SCROLL_MAX_DURATION_MS = 1000
+private const val FULL_LYRICS_ACTIVE_LINE_OFFSET_PX = -200
+
 /** Minimum horizontal drag distance (px) to count as a swipe. */
 private const val SWIPE_THRESHOLD = 50f
 
 // ── LRC helpers ───────────────────────────────────────────────────────
 
-private fun currentLineIndex(lines: List<LrcLine>, positionMs: Long): Int {
+internal fun currentLineIndex(lines: List<LrcLine>, positionMs: Long): Int {
     if (lines.isEmpty()) return -1
     var idx = -1
     for (i in lines.indices) {
         if (lines[i].timeMs <= positionMs) idx = i else break
     }
     return idx
+}
+
+internal data class LyricsScrollTarget(val index: Int, val offsetPx: Int)
+
+/**
+ * Autoscroll destination for the full lyrics list, or `null` when the list must stay put.
+ * A negative [currentIndex] means playback is still before the first timestamp, so the list
+ * is asked to rest at the very top; otherwise the active line is kept near the top edge.
+ */
+internal fun lyricsAutoScrollTarget(currentIndex: Int, lineCount: Int): LyricsScrollTarget? = when {
+    lineCount <= 0 -> null
+    currentIndex < 0 -> LyricsScrollTarget(index = 0, offsetPx = 0)
+    currentIndex < lineCount -> LyricsScrollTarget(
+        index = currentIndex,
+        offsetPx = FULL_LYRICS_ACTIVE_LINE_OFFSET_PX,
+    )
+    else -> null
+}
+
+/** Longer travel between distant lines takes longer, but never longer than the cap. */
+internal fun lyricsScrollDurationMillis(lineDistance: Int): Int =
+    (LYRICS_SCROLL_MIN_DURATION_MS + LYRICS_SCROLL_DURATION_PER_LINE_MS * lineDistance)
+        .coerceIn(0, LYRICS_SCROLL_MAX_DURATION_MS)
+
+/** Mean height of the currently visible lines, or `0f` before the first measure pass. */
+private fun LazyListState.visibleLineSizePx(): Float {
+    val visible = layoutInfo.visibleItemsInfo
+    if (visible.isEmpty()) return 0f
+    return visible.sumOf { it.size.toDouble() }.div(visible.size).toFloat()
+}
+
+/**
+ * Eases the list towards [LyricsScrollTarget] with a fixed-length tween instead of the
+ * default spring fling, so advancing a line glides instead of snapping. Each frame asks
+ * for an absolute position, which keeps the motion monotonic and lands exactly on the
+ * target; a user drag cancels it through the scroll mutation, as with any autoscroll.
+ */
+private suspend fun LazyListState.animateToLyricsTarget(target: LyricsScrollTarget) {
+    val startIndex = firstVisibleItemIndex
+    val startOffset = firstVisibleItemScrollOffset
+    if (startIndex == target.index && startOffset == -target.offsetPx) return
+
+    scroll {
+        val lineSize = visibleLineSizePx()
+        if (lineSize <= 0f) {
+            requestScrollToItem(target.index, target.offsetPx)
+            return@scroll
+        }
+
+        val lastIndex = (layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        val startPosition = startIndex * lineSize - startOffset
+        val targetPosition = target.index * lineSize + -target.offsetPx
+        val durationMillis = lyricsScrollDurationMillis(abs(target.index - startIndex))
+
+        val progress = Animatable(0f)
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = durationMillis, easing = FastOutSlowInEasing),
+        ) {
+            val position = startPosition + (targetPosition - startPosition) * progress.value
+            val index = floor(position / lineSize).toInt().coerceIn(0, lastIndex)
+            val offset = (index * lineSize - position).toInt().coerceAtMost(0)
+            requestScrollToItem(index, offset)
+        }
+        requestScrollToItem(target.index, target.offsetPx)
+    }
 }
 
 // ── Full Player Overlay ───────────────────────────────────────────────
@@ -663,7 +746,7 @@ private fun PortraitPlayerContent(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = (-24).dp),
+                    .offset(y = -NORMAL_TRANSPORT_UP_OFFSET),
                 horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -711,6 +794,10 @@ private fun PortraitPlayerContent(
                 .weight(1f)
                 .padding(horizontal = HORIZONTAL_PADDING),
         )
+
+        if (!controlsOnCover) {
+            Spacer(modifier = Modifier.height(NORMAL_LYRICS_BOTTOM_SPACING))
+        }
     }
 }
 
@@ -1100,6 +1187,7 @@ private fun FullPlayerSeekBar(
         thumb = {
             SliderDefaults.Thumb(
                 interactionSource = interactionSource,
+                modifier = Modifier.offset(y = (SLIDER_MIN_TRACK_HEIGHT - thumbSize) / 2),
                 thumbSize = DpSize(thumbSize, thumbSize),
             )
         },
@@ -1208,13 +1296,12 @@ private fun LyricsFullScreen(
     val currentIndex = remember(parsed, positionMs) { currentLineIndex(parsed, positionMs) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(currentIndex) {
-        if (currentIndex >= 0 && currentIndex < parsed.size) {
-            listState.animateScrollToItem(
-                index = currentIndex,
-                scrollOffset = -200,
-            )
-        }
+    // Keyed on the active line so the scroll is issued once per line change instead of on
+    // every position update: playback before the first timestamp rests at the top, later
+    // lines keep the active line near the top edge.
+    LaunchedEffect(parsed, currentIndex) {
+        val target = lyricsAutoScrollTarget(currentIndex, parsed.size) ?: return@LaunchedEffect
+        listState.animateToLyricsTarget(target)
     }
 
     Column(

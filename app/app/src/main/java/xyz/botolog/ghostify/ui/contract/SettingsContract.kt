@@ -140,7 +140,7 @@ interface SettingsContract {
         val concurrentDownloads: Int = 1,
         val autoDownloadOnAdd: Boolean = false,
         val landscapeControlsSide: String = "left",
-        val showQueueCovers: Boolean = false,
+        val showQueueCovers: Boolean = true,
         val loopPlaylists: Boolean = true,
         val cacheStats: CacheStats = CacheStats(0, 0),
         val isClearingCache: Boolean = false,

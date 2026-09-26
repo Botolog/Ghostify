@@ -5,6 +5,7 @@ import xyz.botolog.ghostify.data.db.dao.PlaylistDao
 import xyz.botolog.ghostify.data.db.dao.SongDao
 import xyz.botolog.ghostify.data.db.entity.PlaylistEntity
 import xyz.botolog.ghostify.data.db.entity.SongEntity
+import xyz.botolog.ghostify.data.db.entity.SongPositionUpdate
 import xyz.botolog.ghostify.data.model.PlaylistOrigin
 import kotlinx.coroutines.flow.Flow
 import timber.log.Timber
@@ -207,6 +208,65 @@ class PlaylistRepository(
     suspend fun reorderSong(songId: String, newPosition: Int) {
         Timber.i("PlaylistRepository.reorderSong: START $songId -> $newPosition")
         songDao.setPosition(songId, newPosition)
+    }
+
+    /**
+     * Persists a new playlist order by rewriting the stored `position` of every song.
+     *
+     * The read, the ordering decision and the writes all happen inside one
+     * transaction, so observers never see a half-applied order and a concurrent
+     * writer cannot interleave. Songs missing from [orderedSongIds] (a stale
+     * order, a track added by a sync that has not landed yet) are never dropped:
+     * they keep their relative order and are appended after the requested ones.
+     *
+     * This only touches the `songs.position` column — the playback queue, the
+     * download state and every other column are left alone, and the queue is
+     * rebuilt from the database the next time the playlist is started.
+     *
+     * @param playlistId The playlist whose order is being rewritten.
+     * @param orderedSongIds The desired song ids, in display order.
+     * @return `true` when at least one position actually changed, `false` when the
+     *   stored order already matched (in which case nothing was written).
+     */
+    suspend fun applySongOrder(playlistId: String, orderedSongIds: List<String>): Boolean {
+        Timber.i("PlaylistRepository.applySongOrder: START $playlistId (${orderedSongIds.size} ids)")
+        val changed = transactions.withinTransaction {
+            val stored = songDao.getSongsForPlaylist(playlistId)
+            if (stored.size < 2) return@withinTransaction false
+            val updates = positionUpdates(stored, orderedSongIds)
+            if (updates.isEmpty()) {
+                false
+            } else {
+                songDao.updatePositions(updates)
+                true
+            }
+        }
+        Timber.i("PlaylistRepository.applySongOrder: returning $changed")
+        return changed
+    }
+
+    /**
+     * Computes the minimal set of `(id, position)` writes that turn the stored
+     * order into [orderedSongIds].
+     *
+     * Ids that are unknown to the playlist are ignored, and songs missing from
+     * [orderedSongIds] keep their stored relative order after the requested ones.
+     */
+    private fun positionUpdates(
+        stored: List<SongEntity>,
+        orderedSongIds: List<String>,
+    ): List<SongPositionUpdate> {
+        val requestedRank = HashMap<String, Int>(orderedSongIds.size * 2)
+        orderedSongIds.forEachIndexed { index, id -> requestedRank.putIfAbsent(id, index) }
+        if (requestedRank.isEmpty()) return emptyList()
+        val ordered = stored.sortedBy { requestedRank[it.id] ?: Int.MAX_VALUE }
+        val updates = ArrayList<SongPositionUpdate>(ordered.size)
+        ordered.forEachIndexed { index, song ->
+            if (song.position != index) {
+                updates.add(SongPositionUpdate(id = song.id, position = index))
+            }
+        }
+        return updates
     }
 
     // ── Private helpers ───────────────────────────────────────────────

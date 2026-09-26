@@ -104,6 +104,11 @@ class SyncUseCase(
     /**
      * Reads current songs, computes the diff, and applies inserts/updates/deletes
      * atomically. Any DAO failure rolls the whole batch back (T-067).
+     *
+     * The playlist cover is only overwritten when the fetch actually returned one: a
+     * fetch that comes back without artwork (an anonymous payload that omits images, a
+     * partial response) must not wipe a cover URL that is already stored, otherwise the
+     * detail and library screens lose their artwork until a lucky sync.
      */
     private suspend fun applyDiffWithinTransaction(
         playlistId: String,
@@ -124,7 +129,7 @@ class SyncUseCase(
                 playlist.copy(
                     name = remote.name,
                     owner = remote.owner,
-                    coverUrl = remote.coverUrl,
+                    coverUrl = remote.coverUrl?.takeIf { it.isNotBlank() } ?: playlist.coverUrl,
                     trackCount = plan.finalTrackCount,
                     lastSyncedAt = now(),
                 ),

@@ -5,10 +5,13 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import xyz.botolog.ghostify.data.db.entity.SongEntity
+import xyz.botolog.ghostify.data.db.entity.SongPositionUpdate
 import xyz.botolog.ghostify.data.model.SongStatus
 import kotlinx.coroutines.flow.Flow
+import timber.log.Timber
 
 /**
  * Data-access object for the `songs` table.
@@ -234,6 +237,24 @@ interface SongDao {
      */
     @Query("UPDATE songs SET position = :position WHERE id = :id")
     suspend fun setPosition(id: String, position: Int)
+
+    /**
+     * Applies a whole playlist ordering in one atomic batch.
+     *
+     * Wraps the per-row position writes in a single transaction so no observer
+     * can ever read a half-applied order, and touches only the `position`
+     * column (via [SongPositionUpdate]) so a sort can never clobber a
+     * concurrent download-status write.
+     *
+     * @param positions the `(id, position)` pairs to write, in playlist order.
+     */
+    @Transaction
+    suspend fun updatePositions(positions: List<SongPositionUpdate>) {
+        Timber.i("SongDao.updatePositions: ${positions.size} rows")
+        for (position in positions) {
+            setPosition(position.id, position.position)
+        }
+    }
 
     /**
      * Updates only the file_path column for a song (used by storage migration).
