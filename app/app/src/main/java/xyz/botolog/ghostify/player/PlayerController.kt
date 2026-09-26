@@ -89,6 +89,14 @@ class PlayerController private constructor(
     private var isSyncingExoPlayer = false
     private var loopPlaylistsEnabled = true
     private var endOfQueueHandled = false
+    private var mediaController: MediaController? = null
+
+    /**
+     * Starts the foreground [PlaybackService] and connects the notification
+     * [MediaController]. Replaced in unit tests, which have no Android framework.
+     */
+    internal var startPlaybackService: () -> Unit = ::startForegroundPlayback
+
     var currentPlaylistId: String? = null
         private set
 
@@ -469,10 +477,22 @@ class PlayerController private constructor(
 
     // --- Transport controls ----------------------------------------------------------
 
-    /** Resumes playback. */
+    /**
+     * Resumes playback.
+     *
+     * A paused player can be left in [Player.STATE_IDLE] when its media notification is
+     * dismissed: the foreground teardown stops the player, and `play()` alone only flips
+     * `playWhenReady` on an idle player, so playback would never restart. Re-prepare first
+     * and re-assert the foreground service so the queue, position and notification survive.
+     */
     fun play() {
         Timber.i("PlayerController.play: START")
+        val resumedFromIdle = ensurePrepared()
         exoPlayer.play()
+        if (resumedFromIdle) {
+            Timber.i("PlayerController.play: resumed from idle, re-asserting PlaybackService")
+            startPlaybackService()
+        }
     }
 
     /** Pauses playback. */
@@ -484,7 +504,7 @@ class PlayerController private constructor(
     /** Toggles between play and pause. */
     fun togglePlayPause() {
         Timber.i("PlayerController.togglePlayPause: START")
-        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+        if (exoPlayer.isPlaying) pause() else play()
     }
 
     /** Skips to the next song (restarts the current one when it is the last with repeat off). */
@@ -667,6 +687,8 @@ class PlayerController private constructor(
         backfillJob?.cancel()
         cancelArtworkBackfill("controller released")
         exoPlayer.removeListener(this)
+        mediaController?.release()
+        mediaController = null
         scope.cancel()
     }
 
@@ -964,22 +986,33 @@ class PlayerController private constructor(
         else -> -1
     }
 
-    /** Ensures the player is prepared when idle but has media items queued. */
-    private fun ensurePrepared() {
+    /**
+     * Ensures the player is prepared when idle but has media items queued.
+     *
+     * @return true when the player was idle and has just been prepared, false otherwise.
+     */
+    private fun ensurePrepared(): Boolean {
         Timber.d("PlayerController.ensurePrepared: START")
-        if (exoPlayer.playbackState == Player.STATE_IDLE && exoPlayer.mediaItemCount > 0) {
-            exoPlayer.prepare()
-        }
+        if (exoPlayer.playbackState != Player.STATE_IDLE || exoPlayer.mediaItemCount <= 0) return false
+        exoPlayer.prepare()
+        return true
     }
 
     /**
      * Starts the foreground [PlaybackService] and creates a [MediaController] that
      * binds to it so the notification appears.
+     *
+     * Idempotent: the controller is built once and reused, so re-asserting the
+     * foreground service after a resume does not pile up connected controllers.
      */
-    private fun startPlaybackService() {
+    private fun startForegroundPlayback() {
         Timber.i("startPlaybackService: starting PlaybackService")
         val intent = Intent(context, PlaybackService::class.java)
         ContextCompat.startForegroundService(context, intent)
+        if (mediaController != null) {
+            Timber.i("startPlaybackService: reusing existing MediaController")
+            return
+        }
         val sessionToken = SessionToken(
             context,
             android.content.ComponentName(context, PlaybackService::class.java),
@@ -988,8 +1021,8 @@ class PlayerController private constructor(
         val future = MediaController.Builder(context, sessionToken).buildAsync()
         future.addListener({
             try {
-                val controller = future.get()
-                Timber.i("startPlaybackService: MediaController connected OK, controller=${controller.javaClass.simpleName}")
+                mediaController = future.get()
+                Timber.i("startPlaybackService: MediaController connected OK, controller=${mediaController?.javaClass?.simpleName}")
             } catch (t: Throwable) {
                 Timber.e(t, "startPlaybackService: MediaController FAILED to connect")
             }

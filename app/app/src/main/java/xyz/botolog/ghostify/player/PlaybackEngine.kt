@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import timber.log.Timber
+import xyz.botolog.ghostify.OpenPlayerRequests
 
 /**
  * Process-wide holder of THE single [ExoPlayer] and [MediaSession].
@@ -83,14 +84,24 @@ object PlaybackEngine {
         }
     }
 
-    /** Creates the [PendingIntent] that launches [sessionActivityClass] on notification tap. */
+    /**
+     * Creates the [PendingIntent] that launches [sessionActivityClass] on notification tap.
+     *
+     * The intent stays an explicit component and carries the private open-player action, so
+     * the activity can tell a notification tap from a plain launch without any intent filter.
+     * [Intent.FLAG_ACTIVITY_SINGLE_TOP] plus [Intent.FLAG_ACTIVITY_CLEAR_TOP] keep the existing
+     * activity instance: a warm tap is delivered to its `onNewIntent` instead of stacking a
+     * second copy of the app.
+     */
     private fun initSessionActivity(appContext: Context, sessionActivityClass: Class<*>?) {
         if (sessionActivityClass == null || sessionActivity != null) return
         Timber.i("PlaybackEngine.session: creating PendingIntent for activity")
         sessionActivity = PendingIntent.getActivity(
             appContext,
             /* requestCode = */ 0,
-            Intent(appContext, sessionActivityClass),
+            Intent(appContext, sessionActivityClass)
+                .setAction(OpenPlayerRequests.ACTION_OPEN_PLAYER)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PENDING_INTENT_FLAGS,
         )
     }

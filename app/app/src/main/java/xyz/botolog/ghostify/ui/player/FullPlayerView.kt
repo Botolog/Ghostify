@@ -4,9 +4,8 @@ package xyz.botolog.ghostify.ui.player
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateTo
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -66,36 +67,46 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.lerp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import android.content.res.Configuration
 import coil.compose.AsyncImage
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
 import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.util.DurationFormat
-import kotlin.math.abs
-import kotlin.math.floor
 
 // ── Dimensions ────────────────────────────────────────────────────────
 private val ARTWORK_HEIGHT = 280.dp
@@ -138,11 +149,23 @@ private val COMPACT_LYRICS_TOP_SPACING = 12.dp
 private val NORMAL_TRANSPORT_UP_OFFSET = 12.dp
 private val NORMAL_LYRICS_BOTTOM_SPACING = 12.dp
 
-// ── Full Lyrics Autoscroll ───────────────────────────────────────────
-private const val LYRICS_SCROLL_MIN_DURATION_MS = 400
-private const val LYRICS_SCROLL_DURATION_PER_LINE_MS = 120
-private const val LYRICS_SCROLL_MAX_DURATION_MS = 1000
+// ── Lyrics Autoscroll ────────────────────────────────────────────────
 private const val FULL_LYRICS_ACTIVE_LINE_OFFSET_PX = -200
+private const val MINI_LYRICS_ACTIVE_LINE_OFFSET_PX = -100
+
+/** How many times one autoscroll may re-measure its destination before it settles for. */
+internal const val LYRICS_SCROLL_MAX_AIMS = 5
+private const val LYRICS_SCROLL_MS_PER_100PX = 90
+private const val LYRICS_SCROLL_MIN_DURATION_MS = 90
+private const val LYRICS_SCROLL_MAX_DURATION_MS = 420
+
+// ── Full Lyrics Active Line Emphasis ─────────────────────────────────
+private const val LYRICS_EMPHASIS_ANIMATION_MS = 220
+private const val LYRICS_IDLE_FONT_SIZE_SP = 18f
+private const val LYRICS_ACTIVE_FONT_SIZE_SP = 24f
+private const val LYRICS_LINE_WRAP_HEADROOM = 0.95f
+private const val LYRICS_LINE_HEIGHT_FACTOR = 1.2f
+private const val LYRICS_BOLD_SPREAD_FACTOR = 0.02f
 
 /** Minimum horizontal drag distance (px) to count as a swipe. */
 private const val SWIPE_THRESHOLD = 50f
@@ -160,68 +183,174 @@ internal fun currentLineIndex(lines: List<LrcLine>, positionMs: Long): Int {
 
 internal data class LyricsScrollTarget(val index: Int, val offsetPx: Int)
 
+/** A lyric line as the list has placed it: where its top sits and how tall it turned out. */
+internal data class LyricsMeasuredLine(
+    val index: Int,
+    val offsetInViewportPx: Int,
+    val heightPx: Int,
+)
+
 /**
- * Autoscroll destination for the full lyrics list, or `null` when the list must stay put.
- * A negative [currentIndex] means playback is still before the first timestamp, so the list
- * is asked to rest at the very top; otherwise the active line is kept near the top edge.
+ * Autoscroll destination for a lyrics list, or `null` when the list must stay put: an unmeasured
+ * viewport has no item offsets to aim at, a negative [currentIndex] means playback is still before
+ * the first timestamp, so the list is asked to rest at the very top, and an index outside the list
+ * cannot be scrolled to. Otherwise the active line is kept near the top edge, its top edge landing
+ * [activeLineOffsetPx] inside the viewport.
  */
-internal fun lyricsAutoScrollTarget(currentIndex: Int, lineCount: Int): LyricsScrollTarget? = when {
+internal fun lyricsAutoScrollTarget(
+    currentIndex: Int,
+    lineCount: Int,
+    viewportMeasured: Boolean,
+    activeLineOffsetPx: Int = FULL_LYRICS_ACTIVE_LINE_OFFSET_PX,
+): LyricsScrollTarget? = when {
+    !viewportMeasured -> null
     lineCount <= 0 -> null
     currentIndex < 0 -> LyricsScrollTarget(index = 0, offsetPx = 0)
     currentIndex < lineCount -> LyricsScrollTarget(
         index = currentIndex,
-        offsetPx = FULL_LYRICS_ACTIVE_LINE_OFFSET_PX,
+        offsetPx = activeLineOffsetPx,
     )
     else -> null
 }
 
-/** Longer travel between distant lines takes longer, but never longer than the cap. */
-internal fun lyricsScrollDurationMillis(lineDistance: Int): Int =
-    (LYRICS_SCROLL_MIN_DURATION_MS + LYRICS_SCROLL_DURATION_PER_LINE_MS * lineDistance)
-        .coerceIn(0, LYRICS_SCROLL_MAX_DURATION_MS)
+/** The mini box aims the same way as the full list, only closer to the top of its smaller box. */
+internal fun miniLyricsAutoScrollTarget(
+    currentIndex: Int,
+    lineCount: Int,
+    viewportMeasured: Boolean,
+): LyricsScrollTarget? = lyricsAutoScrollTarget(
+    currentIndex = currentIndex,
+    lineCount = lineCount,
+    viewportMeasured = viewportMeasured,
+    activeLineOffsetPx = MINI_LYRICS_ACTIVE_LINE_OFFSET_PX,
+)
 
-/** Mean height of the currently visible lines, or `0f` before the first measure pass. */
-private fun LazyListState.visibleLineSizePx(): Float {
-    val visible = layoutInfo.visibleItemsInfo
-    if (visible.isEmpty()) return 0f
-    return visible.sumOf { it.size.toDouble() }.div(visible.size).toFloat()
+/**
+ * Where the top of [targetIndex] sits in the viewport: the offset the list measured for that line
+ * when it has placed it, otherwise the offset carried on from the nearest placed line at the
+ * average measured line height, and `null` while the list has placed nothing to measure.
+ */
+internal fun lyricsLineOffsetInViewportPx(
+    targetIndex: Int,
+    measuredLines: List<LyricsMeasuredLine>,
+): Int? {
+    if (measuredLines.isEmpty()) return null
+    measuredLines.firstOrNull { line -> line.index == targetIndex }
+        ?.let { line -> return line.offsetInViewportPx }
+    val measuredHeights = measuredLines.map { line -> line.heightPx }.filter { heightPx -> heightPx > 0 }
+    if (measuredHeights.isEmpty()) return null
+    val averageHeightPx = measuredHeights.sum() / measuredHeights.size
+    val anchor = measuredLines.minByOrNull { line -> abs(line.index - targetIndex) } ?: return null
+    return anchor.offsetInViewportPx + (targetIndex - anchor.index) * averageHeightPx
 }
 
 /**
- * Eases the list towards [LyricsScrollTarget] with a fixed-length tween instead of the
- * default spring fling, so advancing a line glides instead of snapping. Each frame asks
- * for an absolute position, which keeps the motion monotonic and lands exactly on the
- * target; a user drag cancels it through the scroll mutation, as with any autoscroll.
+ * Pixels the list still has to move to put [target]'s line where its [LyricsScrollTarget.offsetPx]
+ * asks for, and zero once the line is there — which is how an autoscroll knows it has landed and
+ * needs no corrective scroll for the last pixels. `null` while the list has measured nothing.
+ */
+internal fun lyricsScrollDeltaPx(
+    target: LyricsScrollTarget,
+    measuredLines: List<LyricsMeasuredLine>,
+): Int? {
+    val offsetInViewportPx = lyricsLineOffsetInViewportPx(target.index, measuredLines) ?: return null
+    return offsetInViewportPx + target.offsetPx
+}
+
+/** A move of this many pixels is given this many milliseconds, so short corrections stay short. */
+internal fun lyricsScrollDurationMs(distancePx: Int): Int =
+    (LYRICS_SCROLL_MS_PER_100PX * abs(distancePx) / 100f)
+        .roundToInt()
+        .coerceIn(LYRICS_SCROLL_MIN_DURATION_MS, LYRICS_SCROLL_MAX_DURATION_MS)
+
+private fun LazyListLayoutInfo.measuredLyricsLines(): List<LyricsMeasuredLine> =
+    visibleItemsInfo.map { item -> LyricsMeasuredLine(item.index, item.offset, item.size) }
+
+/**
+ * Autoscrolls the list onto [target] and leaves it there.
+ *
+ * Each pass measures the line where the list currently has it and animates exactly the pixel
+ * distance that measurement asks for, then waits a frame for the list to re-measure and aim
+ * again: a destination the list has not placed yet moves as it places more of itself, and the next
+ * pass follows it there. The animation therefore lands on the measured target by itself — measured
+ * zero ends it — so no corrective scroll snaps the last pixels of the move, which is exactly what
+ * the item-based animation used to do at the end of every scroll. A list that will not move any
+ * further has run out of content and is left where it is, and a user drag takes the list over
+ * through the scroll mutation, as with any autoscroll.
  */
 private suspend fun LazyListState.animateToLyricsTarget(target: LyricsScrollTarget) {
-    val startIndex = firstVisibleItemIndex
-    val startOffset = firstVisibleItemScrollOffset
-    if (startIndex == target.index && startOffset == -target.offsetPx) return
+    var measuredLines = layoutInfo.measuredLyricsLines()
+    var aimsLeft = LYRICS_SCROLL_MAX_AIMS
 
-    scroll {
-        val lineSize = visibleLineSizePx()
-        if (lineSize <= 0f) {
-            requestScrollToItem(target.index, target.offsetPx)
-            return@scroll
-        }
-
-        val lastIndex = (layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-        val startPosition = startIndex * lineSize - startOffset
-        val targetPosition = target.index * lineSize + -target.offsetPx
-        val durationMillis = lyricsScrollDurationMillis(abs(target.index - startIndex))
-
-        val progress = Animatable(0f)
-        progress.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = durationMillis, easing = FastOutSlowInEasing),
-        ) {
-            val position = startPosition + (targetPosition - startPosition) * progress.value
-            val index = floor(position / lineSize).toInt().coerceIn(0, lastIndex)
-            val offset = (index * lineSize - position).toInt().coerceAtMost(0)
-            requestScrollToItem(index, offset)
-        }
-        requestScrollToItem(target.index, target.offsetPx)
+    while (aimsLeft-- > 0) {
+        val deltaPx = lyricsScrollDeltaPx(target, measuredLines) ?: return
+        if (deltaPx == 0) return
+        val movedPx = animateScrollBy(
+            value = deltaPx.toFloat(),
+            animationSpec = tween(
+                durationMillis = lyricsScrollDurationMs(deltaPx),
+                easing = FastOutSlowInEasing,
+            ),
+        )
+        if (movedPx == 0f) return
+        withFrameNanos { }
+        if (isScrollInProgress) return
+        measuredLines = layoutInfo.measuredLyricsLines()
     }
+}
+
+/** Emphasis a line is animated towards: fully emphasised while it is the active one. */
+internal fun lyricsEmphasisTarget(isCurrent: Boolean): Float = if (isCurrent) 1f else 0f
+
+internal fun lyricsLineFontSizeSp(emphasis: Float): TextUnit =
+    lerp(LYRICS_IDLE_FONT_SIZE_SP.sp, LYRICS_ACTIVE_FONT_SIZE_SP.sp, emphasis.coerceIn(0f, 1f))
+
+internal fun lyricsLineFontWeight(emphasis: Float): FontWeight =
+    lerp(FontWeight.Normal, FontWeight.Bold, emphasis.coerceIn(0f, 1f))
+
+internal fun lyricsLineColor(idle: Color, active: Color, emphasis: Float): Color =
+    lerp(idle, active, emphasis.coerceIn(0f, 1f))
+
+/**
+ * How far a line's text is scaled inside the box the line is measured in: down to the idle size
+ * while the line rests, up to the measured size while it is active. The scale is paint only, so the
+ * box the line occupies in the list, its tap target and its baseline stay where the measurement
+ * put them whatever the emphasis is doing.
+ */
+internal fun lyricsLineVisualScale(emphasis: Float): Float {
+    val idleScale = LYRICS_IDLE_FONT_SIZE_SP / LYRICS_ACTIVE_FONT_SIZE_SP
+    return idleScale + emphasis.coerceIn(0f, 1f) * (1f - idleScale)
+}
+
+/**
+ * Ems that fit on one line of the full lyrics list, i.e. the [availableWidth] measured in the
+ * largest font the list ever uses, with a little [LYRICS_LINE_WRAP_HEADROOM] left for the bolder
+ * active weight. Font size and budget are both read in dp, so a larger system font shrinks the
+ * number of ems per line instead of widening the line past the viewport.
+ */
+internal fun lyricsLineEmBudget(availableWidth: Dp, fontScale: Float): Float {
+    if (!availableWidth.value.isFinite() || !fontScale.isFinite() || fontScale <= 0f) return 0f
+    val activeFontSizeDp = LYRICS_ACTIVE_FONT_SIZE_SP * fontScale
+    if (activeFontSizeDp <= 0f) return 0f
+    return availableWidth.value * LYRICS_LINE_WRAP_HEADROOM / activeFontSizeDp
+}
+
+/**
+ * Width one line of the full lyrics list may use at [emphasis], or `null` when [availableWidth]
+ * is not a real width yet and the caller should fill the available space instead.
+ *
+ * The width grows with the line's font scale, so a line keeps the same [lyricsLineEmBudget] —
+ * and therefore the same line breaks — at every emphasis: emphasising it re-uses the wrapping it
+ * already had instead of pushing a word onto a new line, which would change the item's height
+ * and shift everything below it.
+ */
+internal fun lyricsLineWidthDp(availableWidth: Dp, fontScale: Float, emphasis: Float): Dp? {
+    if (!availableWidth.value.isFinite() || !fontScale.isFinite() || fontScale <= 0f) return null
+    if (availableWidth <= 0.dp) return null
+    val fontSizeDp = lyricsLineFontSizeSp(emphasis).value * fontScale
+    if (fontSizeDp <= 0f) return null
+    val width = (lyricsLineEmBudget(availableWidth, fontScale) * fontSizeDp).dp
+    return width.coerceIn(0.dp, availableWidth)
 }
 
 // ── Full Player Overlay ───────────────────────────────────────────────
@@ -1235,19 +1364,27 @@ private fun LyricsMiniView(
             )
         } else {
             val listState = rememberLazyListState()
+            var viewportSize by remember { mutableStateOf(IntSize.Zero) }
 
-            LaunchedEffect(currentIndex) {
-                if (currentIndex >= 0 && currentIndex < parsed.size) {
-                    listState.animateScrollToItem(
-                        index = currentIndex,
-                        scrollOffset = -100,
-                    )
-                }
+            // Keyed on the parsed lyrics, the active line and the viewport, so the scroll is
+            // issued once per track or line change instead of on every position update, and is
+            // re-aimed when the box has been measured again after a resize. Playback before the
+            // first timestamp asks for the same top every time, so it settles there once instead of
+            // resetting the box on every position update.
+            LaunchedEffect(parsed, currentIndex, viewportSize) {
+                val target = miniLyricsAutoScrollTarget(
+                    currentIndex = currentIndex,
+                    lineCount = parsed.size,
+                    viewportMeasured = viewportSize.width > 0 && viewportSize.height > 0,
+                ) ?: return@LaunchedEffect
+                listState.animateToLyricsTarget(target)
             }
 
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { viewportSize = it },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 userScrollEnabled = false,
             ) {
@@ -1294,108 +1431,190 @@ private fun LyricsFullScreen(
 ) {
     val parsed = remember(lyrics) { lyrics?.let { parseLrc(it) } ?: emptyList() }
     val currentIndex = remember(parsed, positionMs) { currentLineIndex(parsed, positionMs) }
-    val listState = rememberLazyListState()
 
-    // Keyed on the active line so the scroll is issued once per line change instead of on
-    // every position update: playback before the first timestamp rests at the top, later
-    // lines keep the active line near the top edge.
-    LaunchedEffect(parsed, currentIndex) {
-        val target = lyricsAutoScrollTarget(currentIndex, parsed.size) ?: return@LaunchedEffect
-        listState.animateToLyricsTarget(target)
-    }
+    // Scoping on the parsed lyrics gives every track its own list, scroll position and
+    // autoscroll, so a new song starts at its own top instead of inheriting the old one.
+    key(parsed) {
+        val listState = rememberLazyListState()
+        var viewportSize by remember { mutableStateOf(IntSize.Zero) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-    ) {
-        // Header with back button
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Close lyrics",
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-            Text(
-                text = "Lyrics",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            IconButton(onClick = onEdit, modifier = Modifier.padding(end = 8.dp)) {
-                Icon(
-                    imageVector = Icons.Rounded.Edit,
-                    contentDescription = "Edit lyrics",
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                )
-            }
+        // Keyed on the active line and on the viewport, so the scroll is issued once per
+        // line change instead of on every position update, and is re-aimed when the list is
+        // measured again after a resize. Nothing is scrolled before the list has been measured,
+        // because the item offsets that the autoscroll aims at are not known until then. Playback
+        // before the first timestamp rests at the top, later lines keep the active line near the
+        // top edge.
+        LaunchedEffect(currentIndex, viewportSize) {
+            val target = lyricsAutoScrollTarget(
+                currentIndex = currentIndex,
+                lineCount = parsed.size,
+                viewportMeasured = viewportSize.width > 0 && viewportSize.height > 0,
+            ) ?: return@LaunchedEffect
+            listState.animateToLyricsTarget(target)
         }
 
-        if (lyrics == null || parsed.isEmpty()) {
-            Box(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
+            // Header with back button
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .clickable { onRetryLyrics() },
-                contentAlignment = Alignment.Center,
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "No lyrics available",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Close lyrics",
+                        modifier = Modifier.size(28.dp),
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Tap to retry",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                }
+                Text(
+                    text = "Lyrics",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = onEdit, modifier = Modifier.padding(end = 8.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Edit,
+                        contentDescription = "Edit lyrics",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
                 }
             }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                itemsIndexed(
-                    items = parsed,
-                    key = { index, line -> "${line.timeMs}_$index" },
-                    contentType = { _, _ -> "lyrics_line" },
-                ) { index, line ->
-                    val isCurrent = index == currentIndex
-                    Text(
-                        text = line.text,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = if (isCurrent) 24.sp else 18.sp,
-                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                        ),
-                        color = if (isCurrent) {
-                            MaterialTheme.colorScheme.onSurface
-                        } else {
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                        },
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) { onSeekTo((line.timeMs).coerceAtLeast(0L)) },
-                    )
+
+            if (lyrics == null || parsed.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable { onRetryLyrics() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "No lyrics available",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Tap to retry",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 24.dp)
+                        .onSizeChanged { viewportSize = it },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    itemsIndexed(
+                        items = parsed,
+                        key = { index, line -> "${line.timeMs}_$index" },
+                        contentType = { _, _ -> "lyrics_line" },
+                    ) { index, line ->
+                        LyricsFullLine(
+                            line = line,
+                            isCurrent = index == currentIndex,
+                            onSeek = { onSeekTo(line.timeMs.coerceAtLeast(0L)) },
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A single line of the full lyrics list.
+ *
+ * The emphasis of the active line is animated instead of snapped, driven by one value that only
+ * changes when this very line gains or loses focus, so an idle line never animates. Every line is
+ * measured and laid out once, in the largest typography the list ever uses, and keeps that box for
+ * good: the wrapping, the line height, the tap target and the space the line takes in the list all
+ * come from that one measurement, so emphasising a line can never add or drop a line of text or
+ * resize the item, and nothing below it moves.
+ *
+ * The emphasis is therefore paint only. The text is scaled inside its fixed box between the idle
+ * and the active size, a second copy of the same text is smeared sideways by a fraction of the
+ * font size to read as bold, and both are tinted from the idle to the active colour. The smear
+ * shares the text's style, width and wrap points exactly — it is the same layout painted twice —
+ * and it is drawn without semantics so the line is still announced once.
+ */
+@Composable
+private fun LyricsFullLine(
+    line: LrcLine,
+    isCurrent: Boolean,
+    onSeek: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val idleColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    val activeColor = MaterialTheme.colorScheme.onSurface
+    val emphasis by animateFloatAsState(
+        targetValue = lyricsEmphasisTarget(isCurrent),
+        animationSpec = tween(
+            durationMillis = LYRICS_EMPHASIS_ANIMATION_MS,
+            easing = FastOutSlowInEasing,
+        ),
+        label = "lyricsLineEmphasis",
+    )
+    val color = lyricsLineColor(idle = idleColor, active = activeColor, emphasis = emphasis)
+    val visualScale = lyricsLineVisualScale(emphasis)
+    val boldSpreadPx = with(LocalDensity.current) {
+        (lyricsLineFontSizeSp(1f).toDp() * LYRICS_BOLD_SPREAD_FACTOR).toPx()
+    } * emphasis
+    val measuredStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = lyricsLineFontSizeSp(1f),
+        lineHeight = (LYRICS_ACTIVE_FONT_SIZE_SP * LYRICS_LINE_HEIGHT_FACTOR).sp,
+    )
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { onSeek() }
+            .padding(vertical = 6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = visualScale
+                    scaleY = visualScale
+                },
+        ) {
+            Text(
+                text = line.text,
+                style = measuredStyle,
+                color = color,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                text = line.text,
+                style = measuredStyle,
+                color = color,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        alpha = emphasis
+                        translationX = boldSpreadPx
+                    }
+                    .clearAndSetSemantics { },
+            )
         }
     }
 }

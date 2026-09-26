@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,6 +24,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.StateFlow
 import xyz.botolog.ghostify.ui.add.AddPlaylistDialog
 import xyz.botolog.ghostify.ui.contract.AddPlaylistContract
 import xyz.botolog.ghostify.ui.contract.LibraryContract
@@ -72,25 +74,32 @@ object Routes {
  * fully unit-testable without an app backend.
  *
  * @param deps the bundle of ViewModel contracts that drive every screen.
- * @param initialRoute route the NavHost should start on. The app root maps a "launched from
- *   notification" intent to [Routes.PLAYER] so the player renders on cold start (T-143).
+ * @param openPlayerRequest open-player request counter fed by the launcher intent (media
+ *   notification tap). A state flow is required rather than a bare flow so a request raised
+ *   before this tree was collected is still delivered; every value it emits — including its
+ *   current one on subscription — latches the full player overlay open. Passing null (the
+ *   default) leaves the overlay to the mini player tap only.
  * @param modifier optional modifier applied to the root layout.
  */
 @Composable
 fun GhostifyApp(
     deps: GhostifyDependencies,
-    initialRoute: String? = null,
+    openPlayerRequest: StateFlow<Long>? = null,
     modifier: Modifier = Modifier,
 ) {
     GhostifyTheme {
         val navController = rememberNavController()
-        val startDestination = initialRoute ?: Routes.LIBRARY
+        val startDestination = Routes.LIBRARY
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = backStackEntry?.destination?.route
         val playerState by deps.player.state.collectAsState()
 
         var fullPlayerOpen by rememberSaveable { mutableStateOf(false) }
         val settingsState by deps.settings.state.collectAsState()
+
+        LaunchedEffect(openPlayerRequest) {
+            openPlayerRequest?.collect { fullPlayerOpen = true }
+        }
 
         Column(modifier = modifier.fillMaxSize()) {
             NavHost(
