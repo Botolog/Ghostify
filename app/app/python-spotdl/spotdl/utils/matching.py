@@ -23,6 +23,7 @@ __all__ = [
     "SET_STOPWORDS",
     "FORBIDDEN_WORD_PENALTY",
     "YTM_SOURCE_BONUS",
+    "VEVO_BONUS",
     "ENABLE_UNRELATED_WORDS_PENALTY",
     "normalize_to_words",
     "build_spotify_set",
@@ -70,14 +71,46 @@ FORBIDDEN_WORDS = [
 
 # Simpler set-based scoring (replaces steps 1+2: name + artist fuzzy match).
 #
-# Chosen stoplist (documented): filler feat/join tokens only —
+# Chosen stoplist (documented): filler feat/join tokens —
 #   ft, feat, featuring, with, x, vs
+# plus music-video descriptor tokens (subset of _STANDARD_TITLE_WORDS
+# plus vevo/footnotes):
+#   vevo, footnotes, official, video, audio, lyrics, lyric, visualizer,
+#   music, mv, hd, hq, 4k
 # "ft." normalizes to "ft" via punctuation stripping so it is covered.
+# Applied consistently on BOTH sides (build_spotify_set + build_result_set
+# via normalize_to_words) so e.g. "OneRepublic - I Ain't Worried (Official
+# Music Video)" on a VEVO channel collapses to the exact query set (=100)
+# instead of being diluted by descriptor tokens. Raw-name checks (VEVO
+# bonus, official detection) still use result.name/author directly, so
+# filtering the set does not break them.
 # Deliberately NOT dropping "and"/"the": they are kept when present in the
 # title so "the" in a title still counts; dropping them would inflate
 # unrelated matches. "pres"/"presents"/"versus" are not in the default set
 # (rare, keep signal) — add them here if they cause false positives.
-SET_STOPWORDS = frozenset({"ft", "feat", "featuring", "with", "x", "vs"})
+SET_STOPWORDS = frozenset(
+    {
+        "ft",
+        "feat",
+        "featuring",
+        "with",
+        "x",
+        "vs",
+        "vevo",
+        "footnotes",
+        "official",
+        "video",
+        "audio",
+        "lyrics",
+        "lyric",
+        "visualizer",
+        "music",
+        "mv",
+        "hd",
+        "hq",
+        "4k",
+    }
+)
 
 # Step 3 (forbidden words): softened penalty per matched word.
 FORBIDDEN_WORD_PENALTY = 5
@@ -99,6 +132,15 @@ ENABLE_UNRELATED_WORDS_PENALTY = False
 # Final scores are open-ended (not a 0-100 %): sub-scores stay 0-100 but
 # channel/YTM/duration bonuses stack additively on top and may exceed 100.
 YTM_SOURCE_BONUS = 5
+
+# Vevo-official bonus: +3 when the raw result title carries "vevo" and the
+# uploader is trusted (verified) or the channel already matched a song
+# artist (+10 above). The set scorer strips "vevo" (see SET_STOPWORDS) so
+# it cannot dilute the set score; this bonus restores the official signal
+# on top of the open-ended total (no cap). Checked against raw
+# result.name.lower() (not the filtered word set) so set filtering does
+# not break official detection.
+VEVO_BONUS = 3
 
 
 def normalize_to_words(text: Optional[str]) -> Set[str]:
@@ -270,7 +312,10 @@ def debug(song_id: str, result_id: str, message: str) -> None:
 
 
 # Words that appear in music video titles as standard descriptors and
-# should NOT be penalized
+# should NOT be penalized. vevo/footnotes are included here as well so a
+# future step-4 re-enable treats them as standard descriptors (not
+# clickbait), consistent with SET_STOPWORDS which strips the same subset
+# for set scoring.
 _STANDARD_TITLE_WORDS = frozenset(
     {
         "official",
@@ -300,6 +345,8 @@ _STANDARD_TITLE_WORDS = frozenset(
         "4k",
         "8k",
         "cover",
+        "vevo",
+        "footnotes",
     }
 )
 
@@ -979,7 +1026,12 @@ def order_results(
     additive bonuses on top and may exceed 100:
       base = (artists_match + name_match) / 2  (after -5/forbidden-word)
       +10 channel match / -15 non-official channel (additive, no cap)
-      album blend for verified + low-album case (as before)
+      +3 vevo-official bonus when raw title has "vevo" and
+        (verified or channel-hit) (additive, no cap)
+      album blend for verified + low-album case, guarded: only when
+        0 < album_match <= 80 and set_score < 85 (skip on 0 to avoid
+        halving a correct single-vs-deluxe match; skip on strong
+        title/artist >= 85 which is an edition mismatch, not wrong song)
       explicit mismatch -5 (additive)
       duration bonus = 10 - abs(video_secs - song_secs) (additive;
         missing/0 duration => 0, not a penalty)
@@ -1095,6 +1147,7 @@ def order_results(
         # Channel/author bonus: if the uploader matches a song artist,
         # boost the score; if not, penalize to deprioritize random uploads.
         # Additive on the open-ended total (no 100 cap, no floor).
+        channel_hit = False
         if result.author and song.artists:
             slug_author = slugify(result.author).replace("-", "")
             for artist in song.artists:
@@ -1103,6 +1156,7 @@ def order_results(
                     slug_artist in slug_author or slug_author in slug_artist
                 ):
                     average_match += 10
+                    channel_hit = True
                     debug(
                         song.song_id,
                         result.result_id,
@@ -1118,12 +1172,36 @@ def order_results(
                     f"Non-official channel penalty: -15 (author={result.author})",
                 )
 
+        # Vevo-official bonus: +3 when the raw title carries "vevo" and the
+        # uploader is trusted (verified or channel-hit above). Uses the raw
+        # name (not the filtered set) so SET_STOPWORDS filtering cannot
+        # break official detection.
+        if "vevo" in (result.name or "").lower() and (
+            result.verified or channel_hit
+        ):
+            average_match += VEVO_BONUS
+            debug(
+                song.song_id,
+                result.result_id,
+                f"Vevo-official bonus: +{VEVO_BONUS} ({result.name})",
+            )
+
         if (
             result.verified
             and not result.isrc_search
             and result.album
-            and album_match <= 80
+            and 0 < album_match <= 80
+            and set_score < 85
         ):
+            # Album blend (verified + low-album case, as before) with two
+            # guards:
+            # - skip when album_match == 0 (missing/mismatch): halving on 0
+            #   would bury a correct single-vs-deluxe match.
+            # - skip when set_score >= 85 (strong title/artist): the track is
+            #   already identified; a low album score is a deluxe/edition
+            #   mismatch, not a wrong song.
+            # Goal: correct I Ain't Worried keeps 110 +9 +5 = 124 and beats
+            # the acoustic variant (~113.8) instead of being halved.
             # we are almost certain that this is the correct result
             # so we add the album match to the average match
             average_match = (average_match + album_match) / 2
