@@ -373,7 +373,9 @@ class AudioProvider:
                 views_score = (
                     (result_views - lowest_views) / (highest_views - lowest_views)
                 ) * 15
-                score = min(best_result[1] + views_score, 100)
+                # Open-ended score (no 100 cap): view weighting stacks
+                # additively so a high-view + high-match result may exceed 100.
+                score = best_result[1] + views_score
                 weighted_results.append((best_result[0], score))
 
             # Return the result with the highest score

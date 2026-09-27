@@ -46,6 +46,7 @@ __all__ = [
     "artists_match_fixup3",
     "calc_name_match",
     "calc_time_match",
+    "calc_duration_bonus",
     "calc_album_match",
 ]
 
@@ -86,7 +87,7 @@ FORBIDDEN_WORD_PENALTY = 5
 ENABLE_UNRELATED_WORDS_PENALTY = False
 
 # YouTube Music source bonus: +5 for candidates that come from YouTube Music
-# (vs plain YouTube), applied once in order_results (capped at 100).
+# (vs plain YouTube), applied once in order_results (open-ended score, no cap).
 # Detection is via Result.source == "YouTubeMusic" (primary; set from the
 # provider class name) with a music.youtube.com URL fallback, so both YTM
 # songs (music.youtube.com, verified) and YTM videos (www.youtube.com,
@@ -95,6 +96,8 @@ ENABLE_UNRELATED_WORDS_PENALTY = False
 # and ghostify_dl._score_candidates all score via order_results exactly once,
 # so the bonus applies to the pooled ranking without double-applying.
 # get_best_result intentionally does NOT re-apply it (view-weighting only).
+# Final scores are open-ended (not a 0-100 %): sub-scores stay 0-100 but
+# channel/YTM/duration bonuses stack additively on top and may exceed 100.
 YTM_SOURCE_BONUS = 5
 
 
@@ -194,7 +197,8 @@ def calc_set_score(spotify_set: Set[str], result_set: Set[str]) -> float:
     (no extra/missing words), capped at 100. Official uploads (exact or
     near-exact, high Jaccard) therefore strictly outrank covers/sped-up
     versions (same recall but lower Jaccard from extra "cover"/"sped"/"up"
-    tokens) even after the +10 channel bonus capping in order_results.
+    tokens). The final order_results total is open-ended (bonuses stack
+    past 100), but this individual sub-score stays 0-100.
 
     ### Arguments
     - spotify_set: query word set
@@ -869,19 +873,56 @@ def calc_name_match(
 
 def calc_time_match(song: Song, result: Result) -> float:
     """
-    Calculate time difference between song and result
+    Calculate time difference between song and result (legacy 0-100 scorer).
+
+    Kept for compatibility (external callers e.g. score_tuner display).
+    order_results no longer uses this for the final score — it uses
+    calc_duration_bonus (additive, open-ended) instead.
 
     ### Arguments
     - song: song to match
     - result: result to match
 
     ### Returns
-    - time difference between song and result
+    - time match 0.0 to 100.0 (exp decay)
     """
 
     time_diff = abs(song.duration - result.duration)
     score = exp(-0.05 * time_diff)
     return score * 100
+
+
+def calc_duration_bonus(song: Song, result: Result) -> float:
+    """
+    Additive duration bonus: closer video length to original = more points.
+
+    bonus = 10 - abs(video_secs - song_secs):
+      spot-on (delta 0) => +10, delta 5 => +5, delta 10 => 0, delta 20 => -10.
+    Missing/zero duration on either side yields 0 bonus (not a penalty),
+    so candidates without duration metadata are neither boosted nor buried.
+
+    This is an additive bonus on the open-ended final score, not a 0-100
+    match to be averaged in.
+
+    ### Arguments
+    - song: song to match
+    - result: result to match
+
+    ### Returns
+    - duration bonus (open-ended, typically +10 down to negative)
+    """
+
+    try:
+        song_secs = float(getattr(song, "duration", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    try:
+        video_secs = float(getattr(result, "duration", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if song_secs <= 0 or video_secs <= 0:
+        return 0.0
+    return 10.0 - abs(video_secs - song_secs)
 
 
 def calc_album_match(song: Song, result: Result) -> float:
@@ -932,6 +973,20 @@ def order_results(
 ) -> Dict[Result, float]:
     """
     Order results.
+
+    Scoring model: open-ended score (NOT a 0-100 %). Sub-scores
+    (set/artist/name/album) stay 0-100, but the final total stacks
+    additive bonuses on top and may exceed 100:
+      base = (artists_match + name_match) / 2  (after -5/forbidden-word)
+      +10 channel match / -15 non-official channel (additive, no cap)
+      album blend for verified + low-album case (as before)
+      explicit mismatch -5 (additive)
+      duration bonus = 10 - abs(video_secs - song_secs) (additive;
+        missing/0 duration => 0, not a penalty)
+      YTM source +5 (additive, no cap)
+    Duration filtering is intentionally NOT done here — far durations
+    simply earn a large negative bonus and rank lower. Post-download
+    _validate (90 s tolerance) is unchanged and remains the hard gate.
 
     ### Arguments
     - results: The results to order.
@@ -1008,9 +1063,12 @@ def order_results(
         album_match = calc_album_match(song, result)
         debug(song.song_id, result.result_id, f"Final album match: {album_match}")
 
-        # Calculate time match
-        time_match = calc_time_match(song, result)
-        debug(song.song_id, result.result_id, f"Final time match: {time_match}")
+        # Additive duration bonus (open-ended): 10 - delta_seconds.
+        # Missing/zero duration => 0 bonus (not a penalty). Replaces the
+        # old exp()-based 0-100 time_match blending (calc_time_match is
+        # kept for compat/display only).
+        duration_bonus = calc_duration_bonus(song, result)
+        debug(song.song_id, result.result_id, f"Duration bonus: {duration_bonus}")
 
         # Ignore results with name match lower than 55%
         if name_match <= 55:
@@ -1035,7 +1093,8 @@ def order_results(
         debug(song.song_id, result.result_id, f"Average match: {average_match}")
 
         # Channel/author bonus: if the uploader matches a song artist,
-        # boost the score; if not, penalize to deprioritize random uploads
+        # boost the score; if not, penalize to deprioritize random uploads.
+        # Additive on the open-ended total (no 100 cap, no floor).
         if result.author and song.artists:
             slug_author = slugify(result.author).replace("-", "")
             for artist in song.artists:
@@ -1043,7 +1102,7 @@ def order_results(
                 if slug_artist and (
                     slug_artist in slug_author or slug_author in slug_artist
                 ):
-                    average_match = min(average_match + 10, 100)
+                    average_match += 10
                     debug(
                         song.song_id,
                         result.result_id,
@@ -1052,7 +1111,7 @@ def order_results(
                     break
             else:
                 # No artist match — penalize non-official uploads
-                average_match = max(average_match - 15, 0)
+                average_match -= 15
                 debug(
                     song.song_id,
                     result.result_id,
@@ -1074,64 +1133,34 @@ def order_results(
                 f"Average match /w album match: {average_match}",
             )
 
-        # Skip results with time match lower than 5%
-        # (YouTube videos often have different durations from Spotify
-        #  due to intros/outros, radio edits, etc.)
-        if time_match < 5:
-            debug(
-                song.song_id,
-                result.result_id,
-                "Skipping result due to time match lower than 5%",
-            )
-            continue
-
-        # If the time match is lower than 50%
-        # and the average match is lower than 75%
-        # we skip the result
-        if time_match < 50 and average_match < 75:
-            debug(
-                song.song_id,
-                result.result_id,
-                "Skipping result due to time match < 50% and average match < 75%",
-            )
-            continue
-
-        if (
-            (not result.isrc_search and average_match <= 85)
-            or result.source == "slider.kz"
-            or time_match < 0
+        if (result.explicit is not None and song.explicit is not None) and (
+            result.explicit != song.explicit
         ):
-            # Don't add time to avg match if average match is not the best
-            # (lower than 85%), always include time match if result is from
-            # slider.kz or if time match is lower than 0
-            average_match = (average_match + time_match) / 2
-
             debug(
                 song.song_id,
                 result.result_id,
-                f"Average match /w time match: {average_match}",
+                "Lowering average match due to explicit mismatch",
             )
+            average_match -= 5
 
-            if (result.explicit is not None and song.explicit is not None) and (
-                result.explicit != song.explicit
-            ):
-                debug(
-                    song.song_id,
-                    result.result_id,
-                    "Lowering average match due to explicit mismatch",
-                )
+        # Duration: additive bonus, not a 0-100 average blend.
+        # No duration-based filtering here — a far duration simply earns a
+        # large negative bonus (e.g. delta 20 => -10) and ranks lower.
+        average_match += duration_bonus
+        debug(
+            song.song_id,
+            result.result_id,
+            f"Average match /w duration bonus: {average_match}",
+        )
 
-                average_match -= 5
-
-        average_match = min(average_match, 100)
         debug(song.song_id, result.result_id, f"Final average match: {average_match}")
 
         # YouTube Music source bonus: +5 for YTM candidates so they outrank
         # equal-scoring plain-YouTube candidates in the pooled YT+YTM ranking.
         # Applied once here (single choke point); get_best_result must not
-        # re-apply it. Capped at 100.
+        # re-apply it. Additive on the open-ended total (no 100 cap).
         if _is_youtube_music_source(result):
-            average_match = min(average_match + YTM_SOURCE_BONUS, 100)
+            average_match += YTM_SOURCE_BONUS
             debug(
                 song.song_id,
                 result.result_id,

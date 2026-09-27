@@ -2536,17 +2536,12 @@ class TrackDownloader:
             f"[GHOSTIFY_DEBUG] _download_song: download_url={getattr(song, 'download_url', None)} duration={getattr(song, 'duration', None)}",
             flush=True,
         )
-        # Deterministic YouTube choice when nothing pins a URL: resolve via
-        # _resolve_yt_id (first result with video id, advisory JEV override)
-        # so search_and_download sees a pinned download_url instead of running
-        # spotdl's live scoring. Failures fall through to the legacy path.
-        if not getattr(song, "download_url", None):
-            try:
-                _det_id = _resolve_yt_id(song, DEFAULT_PER_TRACK_YT_TIMEOUT)
-            except Exception:  # noqa: BLE001 - fall through to spotdl search
-                _det_id = None
-            if _det_id:
-                song.download_url = _watch_url(_det_id)
+        # Live pooled scoring: when nothing pins a URL (normal Spotify,
+        # yt_id is None), leave download_url as None so
+        # Downloader.search_and_download -> Downloader.search (pooled YT+YTM
+        # + set scorer + YTM+5 + forbidden-5 + step4-off) picks the URL.
+        # Pinned paths (yt_id from fetch/YouTube origin, YouTube
+        # video/playlist download_url) still bypass search by design.
         recovered = False
         try:
             _song, path = self._downloader.search_and_download(song)
