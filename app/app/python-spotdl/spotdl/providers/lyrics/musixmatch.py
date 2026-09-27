@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 from spotdl.providers.lyrics.base import LyricsProvider
 from spotdl.utils.config import GlobalConfig
+from spotdl.utils.formatter import create_song_title
 
 __all__ = ["MusixMatch"]
 
@@ -58,13 +59,15 @@ class MusixMatch(LyricsProvider):
         """
 
         track_search = kwargs.get("track_search", False)
-        artists_str = ", ".join(
+        filtered_artists = [
             artist for artist in artists if artist.lower() not in name.lower()
-        )
+        ]
 
         # quote the query so that it's safe to use in a url
         # e.g "Au/Ra" -> "Au%2FRa"
-        query = quote(f"{name} - {artists_str}", safe="")
+        query = quote(
+            create_song_title(name, filtered_artists, for_lyrics=True), safe=""
+        )
 
         # search the `tracks page` if track_search is True
         if track_search:

@@ -11,7 +11,7 @@ from syncedlyrics import search as syncedlyrics_search
 from syncedlyrics.utils import Lyrics, TargetType, has_translation
 
 from spotdl.types.song import Song
-from spotdl.utils.formatter import to_ms
+from spotdl.utils.formatter import create_song_title, to_ms
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,9 @@ def generate_lrc(song: Song, output_file: Path):
         lrc_data = song.lyrics
     else:
         try:
-            lrc_data = syncedlyrics_search(song.display_name)
+            lrc_data = syncedlyrics_search(
+                create_song_title(song.name, song.artists, for_lyrics=True)
+            )
         except Exception:
             lrc_data = None
 

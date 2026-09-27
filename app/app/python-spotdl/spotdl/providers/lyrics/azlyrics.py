@@ -9,6 +9,7 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from spotdl.providers.lyrics.base import LyricsProvider
+from spotdl.utils.formatter import create_song_title
 
 __all__ = ["AzLyrics"]
 logger = logging.getLogger(__name__)
@@ -65,8 +66,10 @@ class AzLyrics(LyricsProvider):
         if self.x_code is None:
             return {}
 
+        # Lyrics search order is "Song - Artist" (for_lyrics=True).
+        lyrics_query = create_song_title(name, [artists[0]], for_lyrics=True)
         params = {
-            "q": f"{name.strip().replace(' ', '+')}+{artists[0].strip().replace(' ', '+')}",
+            "q": lyrics_query.replace(" ", "+"),
             "x": self.x_code,
         }
 

@@ -3,9 +3,10 @@ Module for all things matching related
 """
 
 import logging
+import re
 from itertools import product, zip_longest
 from math import exp
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from spotdl.types.result import Result
 from spotdl.types.song import Song
@@ -19,6 +20,17 @@ from spotdl.utils.logging import MATCH
 
 __all__ = [
     "FORBIDDEN_WORDS",
+    "SET_STOPWORDS",
+    "FORBIDDEN_WORD_PENALTY",
+    "YTM_SOURCE_BONUS",
+    "ENABLE_UNRELATED_WORDS_PENALTY",
+    "normalize_to_words",
+    "build_spotify_set",
+    "build_result_set",
+    "build_album_word_set",
+    "calc_set_score",
+    "calc_set_match",
+    "calc_album_set_match",
     "fill_string",
     "create_clean_string",
     "sort_string",
@@ -54,6 +66,192 @@ FORBIDDEN_WORDS = [
     "slowed",
     "instrumental",
 ]
+
+# Simpler set-based scoring (replaces steps 1+2: name + artist fuzzy match).
+#
+# Chosen stoplist (documented): filler feat/join tokens only —
+#   ft, feat, featuring, with, x, vs
+# "ft." normalizes to "ft" via punctuation stripping so it is covered.
+# Deliberately NOT dropping "and"/"the": they are kept when present in the
+# title so "the" in a title still counts; dropping them would inflate
+# unrelated matches. "pres"/"presents"/"versus" are not in the default set
+# (rare, keep signal) — add them here if they cause false positives.
+SET_STOPWORDS = frozenset({"ft", "feat", "featuring", "with", "x", "vs"})
+
+# Step 3 (forbidden words): softened penalty per matched word.
+FORBIDDEN_WORD_PENALTY = 5
+
+# Step 4 (unrelated/clickbait words): disabled — penalty forced to 0.
+# The code path is kept (gated) for future re-enable.
+ENABLE_UNRELATED_WORDS_PENALTY = False
+
+# YouTube Music source bonus: +5 for candidates that come from YouTube Music
+# (vs plain YouTube), applied once in order_results (capped at 100).
+# Detection is via Result.source == "YouTubeMusic" (primary; set from the
+# provider class name) with a music.youtube.com URL fallback, so both YTM
+# songs (music.youtube.com, verified) and YTM videos (www.youtube.com,
+# unverified) get the bonus while plain-YT ytsearch results do not.
+# Single choke point: Downloader.search (pooled YT+YTM), AudioProvider.search,
+# and ghostify_dl._score_candidates all score via order_results exactly once,
+# so the bonus applies to the pooled ranking without double-applying.
+# get_best_result intentionally does NOT re-apply it (view-weighting only).
+YTM_SOURCE_BONUS = 5
+
+
+def normalize_to_words(text: Optional[str]) -> Set[str]:
+    """
+    Normalize text to a word set: lowercase, strip every symbol/punctuation
+    to spaces, split into words, drop stoplist tokens.
+
+    ### Arguments
+    - text: text to normalize (None/empty yields empty set)
+
+    ### Returns
+    - set of word tokens
+    """
+
+    if not text:
+        return set()
+    lowered = str(text).lower()
+    # Every non-word char (plus underscore) becomes a space: strips
+    # symbols/punctuation including ".", "-", "()", "[]" etc.
+    cleaned = re.sub(r"[\W_]+", " ", lowered, flags=re.UNICODE)
+    words = set()
+    for token in cleaned.split():
+        token = token.strip()
+        if not token or token in SET_STOPWORDS:
+            continue
+        words.add(token)
+    return words
+
+
+def build_spotify_set(song: Song) -> Set[str]:
+    """
+    Build the Spotify query word set: words(title) ∪ words(artists[:3]).
+
+    ### Arguments
+    - song: song to build the set for
+
+    ### Returns
+    - word set
+    """
+
+    out: Set[str] = set()
+    out.update(normalize_to_words(song.name))
+    for artist in (song.artists or [])[:3]:
+        out.update(normalize_to_words(artist))
+    return out
+
+
+def build_result_set(result: Result) -> Set[str]:
+    """
+    Build the result word set the same way: words(name) ∪ words(artists).
+
+    Falls back to the uploader/author words when the provider supplies no
+    artist list (plain YouTube ytsearch results carry only ``author``), so
+    YT and YTM candidates stay comparable in the pooled ranking.
+
+    ### Arguments
+    - result: result to build the set for
+
+    ### Returns
+    - word set
+    """
+
+    out: Set[str] = set()
+    out.update(normalize_to_words(result.name))
+    artists = list(result.artists or [])
+    if artists:
+        for artist in artists:
+            out.update(normalize_to_words(artist))
+    elif getattr(result, "author", None):
+        out.update(normalize_to_words(result.author))
+    return out
+
+
+def build_album_word_set(album_name: Optional[str]) -> Set[str]:
+    """
+    Build an album word set with the same normalization.
+
+    ### Arguments
+    - album_name: album name (None/empty yields empty set)
+
+    ### Returns
+    - word set
+    """
+
+    return normalize_to_words(album_name)
+
+
+def calc_set_score(spotify_set: Set[str], result_set: Set[str]) -> float:
+    """
+    Set-overlap score: recall blended with Jaccard, plus exact-match bonus.
+
+    score = (0.6 * recall + 0.4 * jaccard) * 100, where
+      recall  = |inter| / |spotify_set|
+      jaccard = |inter| / |union|
+    Exact-match bonus: +5 only when the two sets are exactly equal
+    (no extra/missing words), capped at 100. Official uploads (exact or
+    near-exact, high Jaccard) therefore strictly outrank covers/sped-up
+    versions (same recall but lower Jaccard from extra "cover"/"sped"/"up"
+    tokens) even after the +10 channel bonus capping in order_results.
+
+    ### Arguments
+    - spotify_set: query word set
+    - result_set: candidate word set
+
+    ### Returns
+    - score 0.0 to 100.0
+    """
+
+    if not spotify_set or not result_set:
+        return 0.0
+    inter = spotify_set & result_set
+    if not inter:
+        return 0.0
+    union = spotify_set | result_set
+    recall = len(inter) / len(spotify_set)
+    jaccard = len(inter) / len(union) if union else 0.0
+    score = (0.6 * recall + 0.4 * jaccard) * 100.0
+    if spotify_set == result_set:
+        score += 5.0
+    return min(score, 100.0)
+
+
+def calc_set_match(song: Song, result: Result) -> float:
+    """
+    Combined set score for a song/result pair (steps 1+2 replacement).
+
+    ### Arguments
+    - song: song to match
+    - result: result to match
+
+    ### Returns
+    - set overlap score 0.0 to 100.0
+    """
+
+    return calc_set_score(build_spotify_set(song), build_result_set(result))
+
+
+def calc_album_set_match(song: Song, result: Result) -> float:
+    """
+    Album-only set score, blended in order_results exactly as before.
+
+    ### Arguments
+    - song: song to match
+    - result: result to match
+
+    ### Returns
+    - album set score 0.0 to 100.0 (0.0 when either side is missing)
+    """
+
+    song_album = getattr(song, "album_name", None)
+    result_album = getattr(result, "album", None)
+    if not song_album or not result_album:
+        return 0.0
+    return calc_set_score(
+        build_album_word_set(song_album), build_album_word_set(result_album)
+    )
 
 
 def debug(song_id: str, result_id: str, message: str) -> None:
@@ -135,7 +333,13 @@ _CONTENT_TYPE_WORDS = frozenset(
 def _penalty_unrelated_words(song: Song, result: Result) -> float:
     """Return a penalty (-points) based on words in the result title that
     do not appear in the song name or artist names but indicate non-song
-    content (e.g. 'Making of', 'Reaction')."""
+    content (e.g. 'Making of', 'Reaction').
+
+    Step 4 is currently DISABLED (ENABLE_UNRELATED_WORDS_PENALTY=False):
+    always returns 0.0 while keeping the code path for a future re-enable.
+    """
+    if not ENABLE_UNRELATED_WORDS_PENALTY:
+        return 0.0
     result_words = set(slugify(result.name).replace("-", " ").split())
     song_words = set()
     song_words.update(slugify(song.name).replace("-", " ").split())
@@ -329,7 +533,7 @@ def create_match_strings(
 
     slug_song_name = slugify(song.name)
     slug_song_title = slugify(
-        create_song_title(song.name, song.artists)
+        create_song_title(song.name, song.artists, for_lyrics=False)
         if not search_query
         else create_search_query(song, search_query, False, None, True)
     )
@@ -450,6 +654,9 @@ def calc_artists_match(song: Song, result: Result) -> float:
     """
     Check if all artists are present in list of artists
 
+    Kept for compatibility: now delegates to the simpler set-based scorer
+    (steps 1+2 replacement). See calc_set_match.
+
     ### Arguments
     - song: song to match
     - result: result to match
@@ -458,27 +665,9 @@ def calc_artists_match(song: Song, result: Result) -> float:
     - artists match percentage
     """
 
-    artist_match_number = 0.0
-
-    # Result has only one artist, return 0.0
-    if len(song.artists) == 1 or not result.artists:
-        return artist_match_number
-
-    artist1_list, artist2_list = based_sort(
-        list(map(slugify, song.artists)), list(map(slugify, result.artists))
-    )
-
-    # Remove main artist from the lists
-    artist1_list, artist2_list = artist1_list[1:], artist2_list[1:]
-
-    artists_match = 0.0
-    for artist1, artist2 in zip_longest(artist1_list, artist2_list):
-        artist12_match = ratio(artist1, artist2)
-        artists_match += artist12_match
-
-    artist_match_number = artists_match / len(artist1_list)
-
-    return artist_match_number
+    score = calc_set_match(song, result)
+    debug(song.song_id, result.result_id, f"Set artists match (compat): {score}")
+    return score
 
 
 def artists_match_fixup1(song: Song, result: Result, score: float) -> float:
@@ -644,7 +833,7 @@ def artists_match_fixup3(song: Song, result: Result, score: float) -> float:
 
     artists_score_fixup = ratio(
         slugify(result.name),
-        slugify(create_song_title(song.name, [song.artist])),
+        slugify(create_song_title(song.name, [song.artist], for_lyrics=False)),
     )
 
     if artists_score_fixup >= 80:
@@ -662,6 +851,9 @@ def calc_name_match(
     """
     Calculate name match percentage
 
+    Kept for compatibility: now delegates to the simpler set-based scorer
+    (steps 1+2 replacement). See calc_set_match. search_query is unused.
+
     ### Arguments
     - song: song to match
     - result: result to match
@@ -670,53 +862,9 @@ def calc_name_match(
     - name match percentage
     """
 
-    # Create match strings that will be used
-    # to calculate name match value
-    match_str1, match_str2 = create_match_strings(song, result, search_query)
-    result_name, song_name = slugify(result.name), slugify(song.name)
-
-    res_list, song_list = based_sort(result_name.split("-"), song_name.split("-"))
-    result_name, song_name = "-".join(res_list), "-".join(song_list)
-
-    # Calculate initial name match
-    name_match = ratio(result_name, song_name)
-
-    debug(song.song_id, result.result_id, f"MATCH STRINGS: {match_str1} - {match_str2}")
-    debug(
-        song.song_id,
-        result.result_id,
-        f"SLUG MATCH STRINGS: {song_name} - {result_name}",
-    )
-    debug(song.song_id, result.result_id, f"First name match: {name_match}")
-
-    # If name match is lower than 60%,
-    # we try to match using the test strings
-    if name_match <= 75:
-        second_name_match = ratio(
-            match_str1,
-            match_str2,
-        )
-
-        debug(
-            song.song_id,
-            result.result_id,
-            f"Second name match: {second_name_match}",
-        )
-
-        name_match = max(name_match, second_name_match)
-
-    # Prefix match: if the song name appears at the start of the result name
-    # (e.g., "Enemy (from the series Arcane...)"), give a high boost
-    if song_name and result_name.startswith(song_name):
-        prefix_match = min(30 + (100 - name_match), 100)
-        name_match = max(name_match, prefix_match)
-        debug(
-            song.song_id,
-            result.result_id,
-            f"Prefix match boost: {name_match}",
-        )
-
-    return name_match
+    score = calc_set_match(song, result)
+    debug(song.song_id, result.result_id, f"Set name match (compat): {score}")
+    return score
 
 
 def calc_time_match(song: Song, result: Result) -> float:
@@ -738,7 +886,10 @@ def calc_time_match(song: Song, result: Result) -> float:
 
 def calc_album_match(song: Song, result: Result) -> float:
     """
-    Calculate album match percentage
+    Calculate album match percentage via album word sets.
+
+    Scored separately and only blended in order_results as before
+    (verified + low album case).
 
     ### Arguments
     - song: song to match
@@ -748,10 +899,30 @@ def calc_album_match(song: Song, result: Result) -> float:
     - album match percentage
     """
 
-    if not result.album or not song.album_name:
-        return 0.0
+    return calc_album_set_match(song, result)
 
-    return ratio(slugify(song.album_name), slugify(result.album))
+
+def _is_youtube_music_source(result: Result) -> bool:
+    """
+    Check if a result comes from YouTube Music (vs plain YouTube).
+
+    Primary signal is Result.source == "YouTubeMusic" (set from the provider
+    class name in ytmusic.py / youtube.py); music.youtube.com URL is the
+    fallback so YTM song URLs are still recognised even if source is lost.
+    YTM videos carry www.youtube.com URLs but keep source "YouTubeMusic",
+    so they are still distinguished from plain-YT ytsearch results.
+
+    ### Arguments
+    - result: result to check
+
+    ### Returns
+    - True when the result originates from YouTube Music
+    """
+
+    if getattr(result, "source", None) == "YouTubeMusic":
+        return True
+    url = getattr(result, "url", "") or ""
+    return "music.youtube.com" in str(url)
 
 
 def order_results(
@@ -790,61 +961,29 @@ def order_results(
 
             continue
 
-        # Calculate match value for main artist
-        artists_match = calc_main_artist_match(song, result)
-        debug(song.song_id, result.result_id, f"Main artist match: {artists_match}")
+        # Steps 1+2 (replaced): simpler set-based scoring.
+        # spotify_set = words(title) ∪ words(artists[:3]); result_set built
+        # the same way; score = recall/Jaccard blend + exact-match bonus.
+        # One score drives both artists_match and name_match (compat with
+        # downstream averaging/thresholds). Legacy fuzzy helpers
+        # (calc_main_artist_match, calc_artists_match + fixups,
+        # calc_name_match) are kept for compat but no longer used here.
+        set_score = calc_set_match(song, result)
+        debug(song.song_id, result.result_id, f"Set match: {set_score}")
 
-        # Calculate match value for all artists
-        other_artists_match = calc_artists_match(song, result)
-        debug(
-            song.song_id,
-            result.result_id,
-            f"Other artists match: {other_artists_match}",
-        )
-
-        artists_match += other_artists_match
-
-        # Calculate initial artist match value
-        debug(song.song_id, result.result_id, f"Initial artists match: {artists_match}")
-        artists_match = artists_match / (2 if len(song.artists) > 1 else 1)
-        debug(song.song_id, result.result_id, f"First artists match: {artists_match}")
-
-        # First attempt to fix artist match
-        artists_match = artists_match_fixup1(song, result, artists_match)
-        debug(
-            song.song_id,
-            result.result_id,
-            f"Artists match after fixup1: {artists_match}",
-        )
-
-        # Second attempt to fix artist match
-        artists_match = artists_match_fixup2(song, result, artists_match)
-        debug(
-            song.song_id,
-            result.result_id,
-            f"Artists match after fixup2: {artists_match}",
-        )
-
-        # Third attempt to fix artist match
-        artists_match = artists_match_fixup3(song, result, artists_match)
-        debug(
-            song.song_id,
-            result.result_id,
-            f"Artists match after fixup3: {artists_match}",
-        )
-
+        artists_match = set_score
         debug(song.song_id, result.result_id, f"Final artists match: {artists_match}")
 
-        # Calculate name match
-        name_match = calc_name_match(song, result, search_query)
+        # Calculate name match (same set score; forbidden penalty applied below)
+        name_match = set_score
         debug(song.song_id, result.result_id, f"Initial name match: {name_match}")
 
         # Check if result contains forbidden words
         contains_fwords, found_fwords = check_forbidden_words(song, result)
         if contains_fwords:
-            # Heavy penalty: each forbidden word drops name_match significantly
+            # Softened penalty (step 3): -5 per word (was -30).
             for _ in found_fwords:
-                name_match -= 30
+                name_match -= FORBIDDEN_WORD_PENALTY
 
         debug(
             song.song_id,
@@ -853,9 +992,17 @@ def order_results(
         )
         debug(song.song_id, result.result_id, f"Final name match: {name_match}")
 
-        # Penalize results with words not in the song or its artists
-        # (e.g., "Making", "Reaction", "Compilation" — indicate non-song content)
-        name_match -= _penalty_unrelated_words(song, result)
+        # Step 4 (disabled): unrelated/clickbait words penalty gated off.
+        # _penalty_unrelated_words returns 0.0 when
+        # ENABLE_UNRELATED_WORDS_PENALTY is False; code path kept.
+        if ENABLE_UNRELATED_WORDS_PENALTY:
+            name_match -= _penalty_unrelated_words(song, result)
+        else:
+            debug(
+                song.song_id,
+                result.result_id,
+                "Skipping unrelated-words penalty (disabled, step 4 off)",
+            )
 
         # Calculate album match
         album_match = calc_album_match(song, result)
@@ -978,6 +1125,18 @@ def order_results(
 
         average_match = min(average_match, 100)
         debug(song.song_id, result.result_id, f"Final average match: {average_match}")
+
+        # YouTube Music source bonus: +5 for YTM candidates so they outrank
+        # equal-scoring plain-YouTube candidates in the pooled YT+YTM ranking.
+        # Applied once here (single choke point); get_best_result must not
+        # re-apply it. Capped at 100.
+        if _is_youtube_music_source(result):
+            average_match = min(average_match + YTM_SOURCE_BONUS, 100)
+            debug(
+                song.song_id,
+                result.result_id,
+                f"YouTube Music source bonus: +{YTM_SOURCE_BONUS} ({result.source})",
+            )
 
         # the results along with the avg Match
         links_with_match_value[result] = average_match

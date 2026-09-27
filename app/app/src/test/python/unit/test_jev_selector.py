@@ -1574,32 +1574,50 @@ class TestSearchYtCandidates:
         }
 
     def test_youtube_music_results_are_returned(self, monkeypatch):
+        # Pooled YT+YTM: songs+videos+plain-YT are all queried and deduped;
+        # YTM songs+videos return the same stubbed urls so the pooled set
+        # equals the stubbed list (deduped by URL).
         results = make_results(2)
-        self._stub(monkeypatch, music=results)
+        self._stub(monkeypatch, music=results, youtube=[])
         report = ghostify_dl.search_yt_candidates(FakeSong(), limit=5)
         assert report["results"] == results
-        assert report["provider"] == "youtube-music"
+        assert "youtube-music" in (report["provider"] or "")
         assert report["error"] is None
         assert report["query"] == "Artist - Song"
 
     def test_youtube_music_search_arguments(self, monkeypatch):
-        seen = {}
+        # Pooled YT+YTM: YTM is queried for songs AND videos, and plain
+        # YouTube is always queried too (no early-return on YTM hits).
+        seen = []
 
         class Provider:
+            def __init__(self, tag):
+                self.tag = tag
+
             def get_results(self, query, **kwargs):
-                seen["query"] = query
-                seen["kwargs"] = kwargs
+                seen.append((self.tag, query, kwargs))
                 return make_results(1)
 
-        monkeypatch.setattr(ghostify_dl, "_get_yt_provider", lambda: Provider())
+        monkeypatch.setattr(ghostify_dl, "_get_yt_provider", lambda: Provider("ytm"))
         monkeypatch.setattr(
             ghostify_dl,
             "_get_youtube_fallback_provider",
-            lambda: pytest.fail("plain YouTube must not be searched when YTMusic has results"),
+            lambda: Provider("yt"),
         )
         ghostify_dl.search_yt_candidates(FakeSong(), limit=5)
-        assert seen["query"] == "Artist - Song"
-        assert seen["kwargs"] == {"filter": "songs", "ignore_spelling": True, "limit": 5}
+        ytm_calls = [c for c in seen if c[0] == "ytm"]
+        yt_calls = [c for c in seen if c[0] == "yt"]
+        assert any(
+            c[1] == "Artist - Song"
+            and c[2] == {"filter": "songs", "ignore_spelling": True, "limit": 5}
+            for c in ytm_calls
+        )
+        assert any(
+            c[1] == "Artist - Song"
+            and c[2] == {"filter": "videos", "ignore_spelling": True, "limit": 5}
+            for c in ytm_calls
+        )
+        assert len(yt_calls) >= 1
 
     def test_falls_back_to_plain_youtube(self, monkeypatch):
         fallback = [FakeResult("zzzzzzzzzzz")]

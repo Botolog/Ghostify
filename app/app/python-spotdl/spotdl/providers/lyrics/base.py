@@ -5,7 +5,7 @@ Base module for all other lyrics providers.
 import logging
 from typing import Dict, List, Optional
 
-from spotdl.utils.formatter import ratio, slugify
+from spotdl.utils.formatter import create_song_title, ratio, slugify
 from spotdl.utils.matching import based_sort
 
 __all__ = ["LyricsProvider"]
@@ -95,7 +95,7 @@ class LyricsProvider:
         results_with_score = {}
         for title, url in results.items():
             result_title = slugify(title)
-            match_title = slugify(f"{name} - {', '.join(artists)}")
+            match_title = slugify(create_song_title(name, artists, for_lyrics=True))
 
             res_list, song_list = based_sort(
                 result_title.split("-"), match_title.split("-")

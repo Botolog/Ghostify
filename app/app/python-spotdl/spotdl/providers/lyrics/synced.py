@@ -8,6 +8,7 @@ import requests
 import syncedlyrics
 
 from spotdl.providers.lyrics.base import LyricsProvider
+from spotdl.utils.formatter import create_song_title
 
 __all__ = ["Synced"]
 
@@ -90,7 +91,7 @@ class Synced(LyricsProvider):
 
         try:
             lyrics = syncedlyrics.search(
-                f"{name} - {artists[0]}",
+                create_song_title(name, artists, for_lyrics=True),
                 synced_only=not kwargs.get("allow_plain_format", True),
                 providers=["Lrclib", "NetEase", "Megalobiz", "Genius"],
             )

@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from spotdl.providers.lyrics.base import LyricsProvider
 from spotdl.utils.config import GlobalConfig
+from spotdl.utils.formatter import create_song_title
 
 __all__ = ["Genius"]
 
@@ -49,8 +50,7 @@ class Genius(LyricsProvider):
         - A dictionary with the results. (The key is the title and the value is the url.)
         """
 
-        artists_str = ", ".join(artists)
-        title = f"{name} - {artists_str}"
+        title = create_song_title(name, artists, for_lyrics=True)
 
         search_resp = self.session.get(
             "https://api.genius.com/search",

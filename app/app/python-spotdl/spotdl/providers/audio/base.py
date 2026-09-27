@@ -169,7 +169,7 @@ class AudioProvider:
         """
 
         # Create initial search query
-        search_query = create_song_title(song.name, song.artists).lower()
+        search_query = create_song_title(song.name, song.artists, for_lyrics=False).lower()
         if self.search_query:
             search_query = create_search_query(
                 song, self.search_query, False, None, True
@@ -238,10 +238,14 @@ class AudioProvider:
 
                         return best_isrc[0].url
 
-        results: Dict[Result, float] = {}
+        # Pooled search: gather ALL candidates across every entry in
+        # GET_RESULTS_OPTS FIRST (YTM: songs limit 50 + videos limit 50;
+        # YT: single ytsearch10 entry), then run order_results ONCE on the
+        # combined list. The old per-OPT early-return (verified + score>=80)
+        # is removed so a later OPT can still win.
+        all_candidates: List[Result] = []
+        seen_urls: set = set()
         for options in self.GET_RESULTS_OPTS:
-            # Query YTM by songs only first, this way if we get correct result on the first try
-            # we don't have to make another request
             search_results = self.get_results(search_query, **options)
 
             if only_verified:
@@ -272,45 +276,37 @@ class AudioProvider:
 
                 return isrc_result.url
 
-            logger.debug(
-                "[%s] Have to filter results: %s", song.song_id, self.filter_results
+            for result in search_results:
+                url = getattr(result, "url", None)
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_candidates.append(result)
+                elif not url:
+                    all_candidates.append(result)
+
+        logger.debug(
+            "[%s] Have to filter results: %s", song.song_id, self.filter_results
+        )
+        logger.debug(
+            "[%s] Pooled %s candidates across %s option sets",
+            song.song_id,
+            len(all_candidates),
+            len(self.GET_RESULTS_OPTS),
+        )
+
+        if not all_candidates:
+            logger.debug("[%s] No results found", song.song_id)
+            return None
+
+        if self.filter_results:
+            # Single scoring pass over the pooled candidates.
+            results: Dict[Result, float] = order_results(
+                all_candidates, song, self.search_query
             )
+        else:
+            results = {all_candidates[0]: 100.0}
 
-            if self.filter_results:
-                # Order results
-                new_results = order_results(search_results, song, self.search_query)
-            else:
-                new_results = {}
-                if len(search_results) > 0:
-                    new_results = {search_results[0]: 100.0}
-
-            logger.debug("[%s] Filtered to %s results", song.song_id, len(new_results))
-
-            # song type results are always more accurate than video type,
-            # so if we get score of 80 or above
-            # we are almost 100% sure that this is the correct link
-            if len(new_results) != 0:
-                # get the result with highest score
-                best_result, best_score = self.get_best_result(new_results)
-                logger.debug(
-                    "[%s] Best result is %s with score %s",
-                    song.song_id,
-                    best_result.url,
-                    best_score,
-                )
-
-                if best_score >= 80 and best_result.verified:
-                    logger.debug(
-                        "[%s] Returning verified best result %s with score %s",
-                        song.song_id,
-                        best_result.url,
-                        best_score,
-                    )
-
-                    return best_result.url
-
-                # Update final results with new results
-                results.update(new_results)
+        logger.debug("[%s] Filtered to %s results", song.song_id, len(results))
 
         # No matches found
         if not results:
@@ -320,7 +316,7 @@ class AudioProvider:
         # get the result with highest score
         best_result, best_score = self.get_best_result(results)
         logger.debug(
-            "[%s] Returning best result %s with score %s",
+            "[%s] Returning pooled best result %s with score %s",
             song.song_id,
             best_result.url,
             best_score,

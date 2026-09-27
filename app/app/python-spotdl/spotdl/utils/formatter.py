@@ -73,7 +73,7 @@ DISALLOWED_REGEX = re.compile(r"[^-a-zA-Z0-9\!\@\$]+")
 logger = logging.getLogger(__name__)
 
 
-def create_song_title(song_name: str, song_artists: List[str]) -> str:
+def create_song_title(song_name: str, song_artists: List[str], for_lyrics:bool=False) -> str:
     """
     Create the song title.
 
@@ -88,10 +88,14 @@ def create_song_title(song_name: str, song_artists: List[str]) -> str:
     - Example: "Artist1, Artist2 - Song Name"
 
     """
-
-    joined_artists = ", ".join(song_artists[:3])
-    if len(song_artists) >= 1:
-        return f"{song_name} - {joined_artists}"
+    if not for_lyrics:
+        joined_artists = ", ".join(song_artists[:3])
+        if len(song_artists) >= 0:
+            return f"{song_name} - {joined_artists}"
+    else:
+        joined_artists = ", ".join(song_artists)
+        if len(song_artists) >= 0:
+            return f"{joined_artists} - {song_name}"
 
     return song_name
 

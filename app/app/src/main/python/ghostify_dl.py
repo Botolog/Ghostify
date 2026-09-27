@@ -980,14 +980,14 @@ def search_yt_candidates(
     limit: int = 10,
     per_track_timeout: float = DEFAULT_PER_TRACK_YT_TIMEOUT,
 ) -> Dict[str, Any]:
-    """Return the raw YouTube candidate results for *song*.
+    """Return the raw YouTube candidate results for *song*, pooled.
 
-    Tooling surface: the production path resolves an id through
-    :func:`_resolve_yt_id` and never needs the full result set, so this
-    exposes the same query and the same providers (YouTube Music first, plain
-    YouTube as fallback) for inspection tools such as
-    ``tools/jev_selection_demo.py``. The download path does not use it, so
-    :func:`_resolve_yt_id` behaviour is untouched.
+    Pooled: gathers ALL candidates from YouTube Music (songs + videos) AND
+    plain YouTube (ytsearch) FIRST, deduped by URL, so callers scoring with
+    :func:`_score_candidates` (single ``order_results`` pass) rank the full
+    YT+YTM pool together. Tooling surface only: the production download path
+    and :func:`_resolve_yt_id` (deterministic first-result) behaviour are
+    untouched.
 
     Never raises. Returns ``results`` (possibly empty), ``provider``,
     ``query`` and ``error`` (the last provider exception's class name).
@@ -1004,17 +1004,29 @@ def search_yt_candidates(
 
     from spotdl.utils.formatter import create_song_title
 
-    report["query"] = create_song_title(song.name, song.artists or [])
+    report["query"] = create_song_title(song.name, song.artists or [], for_lyrics=False)
 
-    def _music() -> Any:
+    def _music_songs() -> Any:
         return _get_yt_provider().get_results(
             report["query"], filter="songs", ignore_spelling=True, limit=limit
+        )
+
+    def _music_videos() -> Any:
+        return _get_yt_provider().get_results(
+            report["query"], filter="videos", ignore_spelling=True, limit=limit
         )
 
     def _youtube() -> Any:
         return _get_youtube_fallback_provider().get_results(report["query"], limit=limit)
 
-    for provider_name, call in (("youtube-music", _music), ("youtube", _youtube)):
+    pooled: List[Any] = []
+    seen: set = set()
+    sources: List[str] = []
+    for provider_name, call in (
+        ("youtube-music:songs", _music_songs),
+        ("youtube-music:videos", _music_videos),
+        ("youtube", _youtube),
+    ):
         try:
             results = _call_with_deadline(per_track_timeout, call)
         except Exception as exc:  # noqa: BLE001 - report, never raise
@@ -1026,11 +1038,20 @@ def search_yt_candidates(
             )
             report["error"] = type(exc).__name__
             continue
-        if results:
-            report["results"] = list(results)
-            report["provider"] = provider_name
-            report["error"] = None
-            return report
+        if not results:
+            continue
+        sources.append(provider_name)
+        for result in results:
+            url = getattr(result, "url", None)
+            if url and url in seen:
+                continue
+            if url:
+                seen.add(url)
+            pooled.append(result)
+    if pooled:
+        report["results"] = pooled
+        report["provider"] = "+".join(sources) if sources else "pooled"
+        report["error"] = None
     return report
 
 
@@ -1047,7 +1068,7 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
     yt_retries = 3
     from spotdl.utils.formatter import create_song_title
 
-    query = create_song_title(song.name, song.artists or [])
+    query = create_song_title(song.name, song.artists or [], for_lyrics=False)
 
     def _search_ytmusic() -> Optional[str]:
         provider = _get_yt_provider()
@@ -1760,7 +1781,9 @@ def preview_app_selection(
         from spotdl.utils.formatter import create_song_title
 
         app_query: Optional[str] = create_song_title(
-            getattr(app_song, "name", None), getattr(app_song, "artists", None) or []
+            getattr(app_song, "name", None),
+            getattr(app_song, "artists", None) or [],
+            for_lyrics=False,
         )
     except Exception:  # noqa: BLE001 - query is informational only
         app_query = None

@@ -377,11 +377,18 @@ class Downloader:
 
     def search(self, song: Song) -> str:
         """
-        Search for a song using all available providers.
+        Search for a song using all available providers, pooled.
 
-        If a provider raises an exception (e.g. AudioProviderError because a
-        candidate YouTube video is unavailable), the error is logged and the
-        next provider is tried instead of aborting the entire search.
+        Gathers ALL candidates from every provider (YTM songs limit 50 +
+        videos limit 50, plus YT ytsearch10) FIRST, then runs order_results
+        ONCE on the combined list. No per-provider early-return: every
+        provider is queried before scoring so a later provider can still win.
+        This is the single choke point covering the device download
+        (filter_results=True) and the demo preview (Downloader.search path;
+        the candidates path in ghostify_dl._score_candidates already scores
+        a pooled list once with the same order_results).
+
+        If a provider raises, it is logged and skipped.
 
         ### Arguments
         - song: The song to search for.
@@ -390,11 +397,102 @@ class Downloader:
         - tuple with download url and audio provider if successful.
         """
 
+        from spotdl.utils.formatter import create_search_query, create_song_title
+        from spotdl.utils.matching import order_results
+
+        # Build the query the same way AudioProvider.search does.
+        search_query = create_song_title(
+            song.name, song.artists, for_lyrics=False
+        ).lower()
+        provider_query = self.settings.get("search_query")
+        if provider_query:
+            search_query = create_search_query(
+                song, provider_query, False, None, True
+            )
+
+        only_verified = self.settings.get("only_verified_results", False)
+
+        all_candidates = []
+        seen_urls: set = set()
+        isrc_urls: set = set()
+
         for audio_provider in self.audio_providers:
             try:
-                url = audio_provider.search(
-                    song, self.settings["only_verified_results"]
-                )
+                # ISRC candidates (pooled, no early scoring): single verified
+                # fast path kept — deterministic, not score-based.
+                if (
+                    song.isrc
+                    and getattr(audio_provider, "SUPPORTS_ISRC", False)
+                    and not getattr(audio_provider, "search_query", None)
+                ):
+                    try:
+                        isrc_results = audio_provider.get_results(song.isrc)
+                    except Exception as exc:  # noqa: BLE001 - skip provider ISRC
+                        logger.debug(
+                            "%s ISRC search failed for %s: %s",
+                            audio_provider.name,
+                            song.display_name,
+                            exc,
+                        )
+                        isrc_results = []
+                    if only_verified:
+                        isrc_results = [
+                            r for r in isrc_results if getattr(r, "verified", False)
+                        ]
+                    for res in isrc_results:
+                        url = getattr(res, "url", None)
+                        if url:
+                            isrc_urls.add(url)
+                    if len(isrc_results) == 1 and getattr(
+                        isrc_results[0], "verified", False
+                    ):
+                        logger.debug(
+                            "[%s] Returning only ISRC result %s",
+                            song.song_id,
+                            isrc_results[0].url,
+                        )
+                        return isrc_results[0].url
+                    for res in isrc_results:
+                        url = getattr(res, "url", None)
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_candidates.append(res)
+                        elif not url:
+                            all_candidates.append(res)
+
+                for options in getattr(audio_provider, "GET_RESULTS_OPTS", [{}]):
+                    try:
+                        search_results = audio_provider.get_results(
+                            search_query, **options
+                        )
+                    except Exception as exc:  # noqa: BLE001 - try next opt/provider
+                        logger.debug(
+                            "%s get_results failed for %s (%s): %s",
+                            audio_provider.name,
+                            song.display_name,
+                            options,
+                            exc,
+                        )
+                        continue
+                    if only_verified:
+                        search_results = [
+                            r for r in search_results if getattr(r, "verified", False)
+                        ]
+                    logger.debug(
+                        "[%s] %s found %s results for %s with %s",
+                        song.song_id,
+                        audio_provider.name,
+                        len(search_results),
+                        search_query,
+                        options,
+                    )
+                    for result in search_results:
+                        url = getattr(result, "url", None)
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_candidates.append(result)
+                        elif not url:
+                            all_candidates.append(result)
             except Exception as exc:  # noqa: BLE001 - try next provider
                 logger.debug(
                     "%s failed to find %s: %s",
@@ -403,12 +501,46 @@ class Downloader:
                     exc,
                 )
                 continue
-            if url:
-                return url
 
-            logger.debug("%s failed to find %s", audio_provider.name, song.display_name)
+        if not all_candidates:
+            raise LookupError(f"No results found for song: {song.display_name}")
 
-        raise LookupError(f"No results found for song: {song.display_name}")
+        logger.debug(
+            "[%s] Pooled %s candidates across %s providers; scoring once",
+            song.song_id,
+            len(all_candidates),
+            len(self.audio_providers),
+        )
+
+        filter_results = self.settings.get("filter_results", True)
+        # Providers share the same filter flag (constructed from settings);
+        # fall back to the first provider's flag when settings lack it.
+        if "filter_results" not in self.settings and self.audio_providers:
+            filter_results = getattr(
+                self.audio_providers[0], "filter_results", True
+            )
+
+        if not filter_results:
+            first_url = getattr(all_candidates[0], "url", None)
+            if first_url:
+                return first_url
+            raise LookupError(f"No results found for song: {song.display_name}")
+
+        scored = order_results(
+            all_candidates, song, provider_query if provider_query else None
+        )
+        if not scored:
+            raise LookupError(f"No results found for song: {song.display_name}")
+
+        # View-aware pick shared with AudioProvider.get_best_result.
+        best_result, best_score = self.audio_providers[0].get_best_result(scored)
+        logger.debug(
+            "[%s] Returning pooled best result %s with score %s",
+            song.song_id,
+            best_result.url,
+            best_score,
+        )
+        return best_result.url
 
     def search_lyrics(self, song: Song) -> Optional[str]:
         """

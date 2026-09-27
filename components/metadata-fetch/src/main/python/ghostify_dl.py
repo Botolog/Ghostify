@@ -482,7 +482,7 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
     def _search() -> Optional[str]:
         from spotdl.utils.formatter import create_song_title
 
-        query = create_song_title(song.name, song.artists or [])
+        query = create_song_title(song.name, song.artists or [], for_lyrics=False)
         results = provider.get_results(
             query, filter="songs", ignore_spelling=True, limit=10
         )
