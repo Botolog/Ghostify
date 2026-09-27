@@ -1516,11 +1516,11 @@ def _fire(hook: Optional[Callable], *args: Any) -> None:
 # ``image_url``) and ``yt_id`` is the stored ``song.ytId`` (``None`` for
 # Spotify tracks today because ``resolve_yt`` defaults to false). The song
 # is rebuilt with ``Song.from_missing_data`` and, when no ``yt_id`` pins a
-# ``download_url``, the deterministic ``_resolve_yt_id`` picks the URL (first
-# result with a video id, advisory JEV override). ``preview_app_selection``
-# runs exactly that selection path without downloading, writing sidecars, or
-# touching the filesystem, so the demo's middle column can call live code
-# instead of a copy.
+# ``download_url``, spotdl's own ``Downloader.search`` picks the URL using
+# its live scoring (``order_results`` + ``get_best_result`` with view
+# weighting). ``preview_app_selection`` runs exactly that selection path
+# without downloading, writing sidecars, or touching the filesystem, so the
+# demo's middle column can call live code instead of a copy.
 
 #: Audio providers the app downloads with (single source of truth).
 _APP_AUDIO_PROVIDERS = ["youtube-music", "youtube"]
@@ -1736,15 +1736,14 @@ def preview_app_selection(
     Mirrors the device: rebuilds the Song from *meta* (built with
     :func:`build_app_meta` when omitted, exactly like Kotlin
     ``buildMetaPayload`` does), pins ``download_url`` when *yt_id* is set,
-    otherwise runs the deterministic first-result pick
-    (``_first_result_video_id`` on the rebuilt Song). When *candidates*
-    (already fetched provider results) are given they are resolved in place
-    with that same deterministic helper, so no second search and no file IO
-    happens; otherwise the same deterministic search
-    (``search_yt_candidates``: YouTube Music first, plain YouTube as
-    fallback) is run and its first result with a video id is used. Never
-    downloads, never writes sidecars or files. Never raises: failures are
-    reported as ``app_video_id`` None with an ``app_reason``.
+    otherwise runs the live spotdl scoring (``order_results`` +
+    ``get_best_result``) on the rebuilt Song. When *candidates* (already
+    fetched provider results) are given they are scored in place with those
+    same live functions, so no second search and no file IO happens;
+    otherwise the live spotdl ``Downloader.search`` (same providers, same
+    flags as :class:`TrackDownloader`) is run. Never downloads, never
+    writes sidecars or files. Never raises: failures are reported as
+    ``app_video_id`` None with an ``app_reason``.
     """
     spotify_url = url or getattr(song, "url", None) or ""
     if not isinstance(spotify_url, str):
@@ -1778,22 +1777,18 @@ def preview_app_selection(
         }
     if candidates is not None:
         try:
-            video_id = _first_result_video_id(candidates)
-            if not video_id:
+            scored = _score_candidates(app_song, candidates, per_track_timeout)
+            if not scored.get("app_video_id"):
                 return {
                     "app_video_id": None,
                     "app_url": None,
                     "app_provider": app_provider,
                     "app_query": app_query,
-                    "app_reason": "deterministic first-result found no match",
+                    "app_reason": scored.get("app_reason") or "app scoring found no match",
                 }
-            return {
-                "app_video_id": video_id,
-                "app_url": _watch_url(video_id),
-                "app_provider": app_provider,
-                "app_query": app_query,
-                "app_reason": "deterministic first result with video id",
-            }
+            scored.setdefault("app_provider", app_provider)
+            scored.setdefault("app_query", app_query)
+            return scored
         except Exception as exc:  # noqa: BLE001 - preview must never raise
             logger.debug("App preview scoring failed (%s)", type(exc).__name__)
             return {
@@ -1812,25 +1807,48 @@ def preview_app_selection(
             "app_reason": "no search budget (per_track_timeout<=0)",
         }
     try:
-        fetched = search_yt_candidates(
-            app_song, limit=10, per_track_timeout=per_track_timeout
-        )
-        results = fetched.get("results") if isinstance(fetched, dict) else []
-        video_id = _first_result_video_id(results)
+        search_fn = None
+        owned = False
+        spotdl_downloader = None
+        if downloader is not None:
+            inner = getattr(downloader, "_downloader", None)
+            if inner is not None and hasattr(inner, "search"):
+                spotdl_downloader = inner
+            elif hasattr(downloader, "search"):
+                spotdl_downloader = downloader
+        if spotdl_downloader is None:
+            from spotdl.download.downloader import Downloader as SpotdlDownloader
+
+            spotdl_downloader = SpotdlDownloader(_app_downloader_settings())
+            owned = True
+        search_fn = spotdl_downloader.search
+        try:
+            found_url = _call_with_deadline(per_track_timeout, search_fn, app_song)
+        finally:
+            if owned:
+                try:
+                    loop = getattr(spotdl_downloader, "loop", None)
+                    if loop is not None and not loop.is_closed():
+                        loop.stop()
+                except Exception:  # noqa: BLE001 - best effort only
+                    pass
+        video_id = _extract_video_id(found_url)
+        if not video_id and isinstance(found_url, str) and found_url.strip():
+            video_id = found_url.strip()
         if not video_id:
             return {
                 "app_video_id": None,
                 "app_url": None,
                 "app_provider": app_provider,
                 "app_query": app_query,
-                "app_reason": "deterministic search returned no usable URL",
+                "app_reason": "spotdl search returned no usable URL",
             }
         return {
             "app_video_id": video_id,
             "app_url": _watch_url(video_id),
             "app_provider": app_provider,
             "app_query": app_query,
-            "app_reason": "deterministic first result with video id",
+            "app_reason": "live spotdl Downloader.search scoring (order_results + views)",
         }
     except Exception as exc:  # noqa: BLE001 - preview must never raise
         logger.debug("App preview search failed (%s)", type(exc).__name__)
@@ -2216,13 +2234,11 @@ class TrackDownloader:
             title = getattr(song, "name", "") or ""
             artists = getattr(song, "artists", []) or []
             artist_str = artists[0] if artists else ""
-
             queries = [
                 f"{title} {artist_str}",
                 f"{title} {artist_str} official",
                 f"{title} {artist_str} music video",
             ]
-
             for query in queries:
                 if not query.strip():
                     continue
@@ -2247,7 +2263,6 @@ class TrackDownloader:
                 except Exception as exc:
                     logger.debug("Fallback YouTube search failed for query=%s: %s", query, exc)
                     continue
-
             return None
         except Exception as exc:
             logger.debug("Fallback search initialization failed: %s", exc)
