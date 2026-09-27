@@ -1681,8 +1681,12 @@ def _score_candidates(app_song: Any, candidates: Any, per_track_timeout: float) 
     Calls ``spotdl.utils.matching.order_results`` (the same function
     ``AudioProvider.search`` uses) and, when it yields scored results, the
     live provider ``get_best_result`` view-aware pick — never a re-typed
-    copy. Pure CPU except for the bounded ``get_views`` lookups inside
-    ``get_best_result``; no download, no file IO. Returns an
+    copy. Pure CPU when candidates carry cached ``views`` ints (YTM parsed
+    at map time); only uncached (``views is None``) candidates trigger
+    ``get_views`` lookups, each bounded to a small per-candidate budget
+    with per-candidate ``0`` fallback so one slow/failing lookup cannot
+    abort the whole view-weighting to ``max(scored)``. The outer deadline
+    wrapper is kept to cap the total; no download, no file IO. Returns an
     ``app_video_id``/``app_url``/``app_reason`` dict (provider/query are
     filled in by the caller).
     """
@@ -1706,6 +1710,45 @@ def _score_candidates(app_song: Any, candidates: Any, per_track_timeout: float) 
         except Exception:  # noqa: BLE001 - fall back to pure scored order
             probe = None
         if probe is not None:
+            # Resilient per-candidate get_views: separate small budget
+            # (min(per_track_timeout slice, 3s)) + try/except fallback to 0
+            # per candidate, so a single timeout/failure degrades that one
+            # candidate instead of aborting the whole weighting. Cached
+            # views ints bypass the network entirely inside get_best_result.
+            try:
+                _orig_get_views = probe.get_views
+                try:
+                    _n_candidates = len(scored)
+                except Exception:  # noqa: BLE001 - defensive
+                    _n_candidates = 0
+                if per_track_timeout and per_track_timeout > 0 and _n_candidates > 0:
+                    _per_candidate = min(
+                        3.0,
+                        max(0.5, per_track_timeout / max(1, _n_candidates)),
+                    )
+                elif per_track_timeout and per_track_timeout > 0:
+                    _per_candidate = min(3.0, per_track_timeout)
+                else:
+                    _per_candidate = 3.0
+
+                def _bounded_get_views(
+                    url: Any,
+                    _orig: Callable = _orig_get_views,
+                    _budget: float = _per_candidate,
+                ) -> int:
+                    try:
+                        if _budget and _budget > 0:
+                            return _call_with_deadline(_budget, _orig, url)
+                        return _orig(url)
+                    except Exception:  # noqa: BLE001 - per-candidate fallback
+                        logger.debug(
+                            "bounded get_views failed for %s, using 0", url
+                        )
+                        return 0
+
+                probe.get_views = _bounded_get_views  # type: ignore[method-assign]
+            except Exception:  # noqa: BLE001 - keep original get_views
+                pass
             if per_track_timeout > 0:
                 best_result, _score = _call_with_deadline(
                     per_track_timeout, probe.get_best_result, scored

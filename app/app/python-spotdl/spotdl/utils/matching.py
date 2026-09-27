@@ -49,6 +49,13 @@ __all__ = [
     "calc_time_match",
     "calc_duration_bonus",
     "calc_album_match",
+    "calc_views_penalty",
+    "is_views_disqualified",
+    "VIEWS_DQ_THRESHOLD",
+    "VIEWS_MID_THRESHOLD",
+    "VIEWS_HIGH_THRESHOLD",
+    "VIEWS_MID_PENALTY",
+    "VIEWS_HIGH_PENALTY",
 ]
 
 logger = logging.getLogger(__name__)
@@ -141,6 +148,33 @@ YTM_SOURCE_BONUS = 5
 # result.name.lower() (not the filtered word set) so set filtering does
 # not break official detection.
 VEVO_BONUS = 3
+
+# Low view-count policy (absolute thresholds, additive, open-ended score).
+# Applied in order_results AFTER channel/YTM/duration bonuses, BEFORE final:
+#   views < VIEWS_DQ_THRESHOLD (1,000)  => disqualified (dropped like the
+#     name<=55 rule, not a negative bonus).
+#   views < VIEWS_MID_THRESHOLD (10,000) => -20 points.
+#   views < VIEWS_HIGH_THRESHOLD (50,000) => -10 points.
+#   views >= 50,000 (or unknown, see below) => documented penalty only.
+# Unknown views (None, 0, unparseable/negative) are NOT disqualified: after
+# the parse fix views are mostly ints, but 0 means "unknown/missing" (YTM
+# unparseable -> 0, YT missing view_count -> 0, uncached -> None), which is
+# common on fresh official uploads. Dropping those would bury new releases,
+# so unknown gets -20 (same as the <10k bucket) instead of DQ.
+# DQ fallback: if EVERY candidate is <1k, the best DQ'd candidate (highest
+# pre-views score) is rescued into the result so callers do not see an empty
+# dict and spam SEARCH_FAILED / "filtered every candidate out". Strict drop
+# is preferred per-candidate, but an all-DQ pool keeps one survivor. This
+# fallback keeps the pre-views score (no extra penalty) and is documented
+# here and in order_results.
+# Interaction: get_best_result's relative +0..+15 views weighting (top-8)
+# stacks on top of this absolute penalty; _score_candidates needs no change
+# since it scores via order_results exactly once.
+VIEWS_DQ_THRESHOLD = 1000
+VIEWS_MID_THRESHOLD = 10_000
+VIEWS_HIGH_THRESHOLD = 50_000
+VIEWS_MID_PENALTY = 20
+VIEWS_HIGH_PENALTY = 10
 
 
 def normalize_to_words(text: Optional[str]) -> Set[str]:
@@ -990,6 +1024,85 @@ def calc_album_match(song: Song, result: Result) -> float:
     return calc_album_set_match(song, result)
 
 
+def _normalize_views(views) -> Optional[int]:
+    """
+    Normalize a raw ``Result.views`` value to an int, or None when unknown.
+
+    Unknown covers: None (uncached, would need a get_views lookup),
+    0 (missing/unparseable after the parse fix: YTM -> 0, YT missing -> 0),
+    bools, negatives, and non-numeric strings. Callers treat unknown as
+    -20 (not DQ) so fresh official uploads with missing counts survive.
+
+    ### Arguments
+    - views: raw views value from the result.
+
+    ### Returns
+    - int view count (> 0) or None when unknown.
+    """
+
+    if views is None or isinstance(views, bool):
+        return None
+    try:
+        number = int(views)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return number
+
+
+def is_views_disqualified(views) -> bool:
+    """
+    Check if a view count disqualifies the candidate (< 1,000).
+
+    Unknown views (None/0/unparseable, see _normalize_views) return False:
+    they are penalized (-20) rather than dropped, so fresh official uploads
+    with missing counts are never filtered out by this rule.
+
+    ### Arguments
+    - views: raw ``Result.views`` value.
+
+    ### Returns
+    - True when the candidate must be dropped (< VIEWS_DQ_THRESHOLD).
+    """
+
+    normalized = _normalize_views(views)
+    if normalized is None:
+        return False
+    return normalized < VIEWS_DQ_THRESHOLD
+
+
+def calc_views_penalty(views) -> float:
+    """
+    Additive low-views penalty (open-ended score, negative or zero).
+
+    Buckets:
+      unknown (None/0/unparseable) => -20 (not DQ; fresh/missing counts).
+      < 1,000  => 0 here (caller drops the candidate via
+        is_views_disqualified; penalty is unused for DQ'd rows).
+      < 10,000 => -20.
+      < 50,000 => -10.
+      >= 50,000 => 0.
+
+    ### Arguments
+    - views: raw ``Result.views`` value.
+
+    ### Returns
+    - penalty to ADD to the score (0.0, -10.0, or -20.0).
+    """
+
+    normalized = _normalize_views(views)
+    if normalized is None:
+        return float(-VIEWS_MID_PENALTY)
+    if normalized < VIEWS_DQ_THRESHOLD:
+        return 0.0
+    if normalized < VIEWS_MID_THRESHOLD:
+        return float(-VIEWS_MID_PENALTY)
+    if normalized < VIEWS_HIGH_THRESHOLD:
+        return float(-VIEWS_HIGH_PENALTY)
+    return 0.0
+
+
 def _is_youtube_music_source(result: Result) -> bool:
     """
     Check if a result comes from YouTube Music (vs plain YouTube).
@@ -1036,9 +1149,15 @@ def order_results(
       duration bonus = 10 - abs(video_secs - song_secs) (additive;
         missing/0 duration => 0, not a penalty)
       YTM source +5 (additive, no cap)
+      views: <1,000 disqualified (dropped like the name<=55 rule);
+        <10,000 -20; <50,000 -10; >=50,000 +0; unknown (None/0) -20
+        not DQ (additive, no cap; applied after YTM, before final).
     Duration filtering is intentionally NOT done here — far durations
     simply earn a large negative bonus and rank lower. Post-download
     _validate (90 s tolerance) is unchanged and remains the hard gate.
+    Views DQ fallback: if every candidate is <1k, the best DQ'd candidate
+    (highest pre-views score) is rescued so the dict is not empty; see
+    VIEWS_* constants for the documented policy.
 
     ### Arguments
     - results: The results to order.
@@ -1051,6 +1170,10 @@ def order_results(
 
     # Assign an overall avg match value to each result
     links_with_match_value = {}
+    # Disqualified-on-views survivors: (result, pre-views score). Used only
+    # when every candidate is <1k, to avoid an empty dict / SEARCH_FAILED
+    # storm on obscure tracks. See VIEWS_* policy above.
+    _views_dq_fallback: List[Tuple[Result, float]] = []
 
     # Iterate over all results
     for result in results:
@@ -1245,7 +1368,47 @@ def order_results(
                 f"YouTube Music source bonus: +{YTM_SOURCE_BONUS} ({result.source})",
             )
 
+        # Low view-count policy (absolute, additive, open-ended; applied
+        # after YTM/duration/channel, before final). <1k is disqualified
+        # (dropped like the name<=55 rule); <10k -20; <50k -10; >=50k +0.
+        # Unknown (None/0/unparseable) is -20, never DQ, so fresh official
+        # uploads with missing counts survive (see VIEWS_* docs).
+        if is_views_disqualified(getattr(result, "views", None)):
+            debug(
+                song.song_id,
+                result.result_id,
+                f"Skipping result due to low views <{VIEWS_DQ_THRESHOLD} "
+                f"(views={getattr(result, 'views', None)!r})",
+            )
+            _views_dq_fallback.append((result, average_match))
+            continue
+        views_penalty = calc_views_penalty(getattr(result, "views", None))
+        if views_penalty:
+            average_match += views_penalty
+            debug(
+                song.song_id,
+                result.result_id,
+                f"Low-views penalty: {views_penalty:+g} "
+                f"(views={getattr(result, 'views', None)!r})",
+            )
+
+        debug(song.song_id, result.result_id, f"Final average match: {average_match}")
+
         # the results along with the avg Match
         links_with_match_value[result] = average_match
+
+    if not links_with_match_value and _views_dq_fallback:
+        # All candidates were <1k: rescue the best DQ'd one (highest
+        # pre-views score) with its pre-views score, to avoid an empty dict
+        # and a SEARCH_FAILED storm on obscure/low-view tracks.
+        best_dq = max(_views_dq_fallback, key=lambda item: item[1])
+        debug(
+            getattr(song, "song_id", "?"),
+            best_dq[0].result_id,
+            f"All candidates <{VIEWS_DQ_THRESHOLD} views: rescuing best "
+            f"(views={getattr(best_dq[0], 'views', None)!r}, "
+            f"score={best_dq[1]}) to avoid empty result",
+        )
+        links_with_match_value[best_dq[0]] = best_dq[1]
 
     return links_with_match_value

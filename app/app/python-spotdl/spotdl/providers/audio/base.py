@@ -356,10 +356,26 @@ class AudioProvider:
         if len(best_results) > 1:
             views: List[int] = []
             for best_result in best_results:
-                if best_result[0].views:
-                    views.append(best_result[0].views)
+                # Cached ints (YTM parsed at map time, YT view_count or 0)
+                # are used directly so no yt-dlp lookup happens; only
+                # uncached (None) results hit the network, each guarded so
+                # one slow/failing lookup degrades to 0 instead of aborting
+                # the whole view-weighting.
+                cached = best_result[0].views
+                if cached is not None:
+                    try:
+                        views.append(max(0, int(cached)))
+                    except (TypeError, ValueError):
+                        views.append(0)
                 else:
-                    views.append(self.get_views(best_result[0].url))
+                    try:
+                        views.append(self.get_views(best_result[0].url))
+                    except Exception:  # noqa: BLE001 - per-candidate fallback
+                        logger.debug(
+                            "get_views failed for %s, falling back to 0",
+                            getattr(best_result[0], "url", None),
+                        )
+                        views.append(0)
 
             highest_views = max(views)
             lowest_views = min(views)
