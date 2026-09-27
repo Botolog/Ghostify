@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
@@ -83,6 +84,12 @@ object SettingsTestTags {
     const val CACHE_COUNT = "setting_cache_count"
     const val CLEAR_CACHE = "setting_clear_cache"
     const val CHECK_UPDATE = "setting_check_update"
+    const val PYTHON_LIBRARIES = "setting_python_libraries"
+    const val PYTHON_LIBRARIES_SHEET = "setting_python_libraries_sheet"
+    const val PYTHON_LIBRARIES_CONTENT = "setting_python_libraries_content"
+    const val PYTHON_LIBRARIES_LOADING = "setting_python_libraries_loading"
+    const val PYTHON_LIBRARIES_ERROR = "setting_python_libraries_error"
+    const val PYTHON_LIBRARIES_EMPTY = "setting_python_libraries_empty"
 
     /**
      * Returns the test tag for a specific bitrate option.
@@ -90,6 +97,9 @@ object SettingsTestTags {
      * @param kbps the bitrate value in kilobits per second.
      */
     fun bitrateOption(kbps: Int) = "setting_bitrate_$kbps"
+
+    /** Returns the test tag for a single reported Python library row. */
+    fun pythonLibraryRow(name: String) = "setting_python_library_$name"
 
     /**
      * Returns the test tag for a specific full-player layout option.
@@ -223,6 +233,17 @@ fun SettingsScreen(
         )
     }
 
+    if (state.showPythonLibraries) {
+        PythonLibrariesSheet(
+            pythonVersion = state.pythonVersion,
+            implementation = state.pythonImplementation,
+            libraries = state.pythonLibraries,
+            isLoading = state.isLoadingPythonLibraries,
+            error = state.pythonLibrariesError,
+            onDismiss = contract::dismissPythonLibraries,
+        )
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -296,6 +317,10 @@ private fun SettingsContent(
 
         SectionHeader("Debug")
         DebugSetting()
+        Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
+
+        SectionHeader("Diagnostics")
+        PythonLibrariesSetting(state = state, contract = contract)
         Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
 
         SectionHeader("About")
@@ -618,6 +643,42 @@ private fun CacheSetting(state: SettingsUiState, contract: SettingsContract) {
 }
 
 private val ICON_SIZE = 18.dp
+
+/** Read-only row opening the sheet with the loaded Python library versions. */
+@Composable
+private fun PythonLibrariesSetting(state: SettingsUiState, contract: SettingsContract) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Python libraries", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Versions of the Python libraries loaded in this build. Nothing is changed.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(modifier = Modifier.width(INNER_SPACING))
+        OutlinedButton(
+            onClick = contract::showPythonLibraries,
+            enabled = !state.isLoadingPythonLibraries,
+            modifier = Modifier.testTag(SettingsTestTags.PYTHON_LIBRARIES),
+        ) {
+            if (state.isLoadingPythonLibraries) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            } else {
+                Icon(
+                    Icons.Filled.BugReport,
+                    contentDescription = null,
+                    modifier = Modifier.size(ICON_SIZE),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("View")
+            }
+        }
+    }
+}
 
 /**
  * Debug section with "Share logs" and "Clear logs" buttons.

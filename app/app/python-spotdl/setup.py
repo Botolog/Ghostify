@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="spotdl",
-    version="4.5.2",
+    version="4.5.2+botolog",
     description="Download Spotify playlists from YouTube (Android/Chaquopy build). "
     "Vendored copy with the web-UI subcommand (fastapi/uvicorn/pydantic) removed "
     "because pydantic-core has no Android wheel; this app only uses the "

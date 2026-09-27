@@ -24,6 +24,7 @@ import xyz.botolog.ghostify.player.PlayerController
 import xyz.botolog.ghostify.player.PlayerStatePersistence
 import xyz.botolog.ghostify.python.FfmpegLocator
 import xyz.botolog.ghostify.python.PlaylistMetadataBridge
+import xyz.botolog.ghostify.python.PythonDiagnosticsBridge
 import xyz.botolog.ghostify.recovery.KilledProcessRecovery
 import xyz.botolog.ghostify.recovery.RecoveryGate
 import xyz.botolog.ghostify.recovery.RoomRecoveryDao
@@ -185,6 +186,8 @@ class GhostifyContainer(private val context: Application) {
 
     val metadataBridge: PlaylistMetadataBridge by lazy { PlaylistMetadataBridge() }
 
+    val pythonDiagnosticsBridge: PythonDiagnosticsBridge by lazy { PythonDiagnosticsBridge() }
+
     // --- downloads ----------------------------------------------------------
 
     /** The single shared [DownloadManager]; also used by [DownloadWorker]. */
@@ -242,6 +245,7 @@ class GhostifyContainer(private val context: Application) {
             player = playerController,
             musicStore = musicStore,
             deletePlaylist = deletePlaylist,
+            diagnostics = pythonDiagnosticsBridge,
         )
 
     /** Tears down activity-scoped ViewModels when the activity is destroyed. */

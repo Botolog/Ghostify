@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="spotipyfree",
-    version="1.9.13",
+    version="1.9.13+botolog",
     description="Spotipy-compatible anonymous wrapper over the SpotAPI "
     "private API (Android/Chaquopy build). The PyPI package hard-requires "
     "pymongo (no Android wheel); this vendored copy drops it and relies on "

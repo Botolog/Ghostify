@@ -1,5 +1,6 @@
 package xyz.botolog.ghostify.ui.contract
 
+import xyz.botolog.ghostify.python.PythonLibraryInfo
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
 import xyz.botolog.ghostify.ui.model.FullPlayerLayout
@@ -119,6 +120,12 @@ interface SettingsContract {
      */
     fun installUpdate()
 
+    /** Reads the loaded Python library versions into the diagnostics sheet. */
+    fun showPythonLibraries()
+
+    /** Dismisses the diagnostics sheet. */
+    fun dismissPythonLibraries()
+
     /**
      * Immutable UI state for the Settings screen.
      *
@@ -133,6 +140,12 @@ interface SettingsContract {
      * @property isMigrating `true` while a migration is in progress.
      * @property migrationResult summary after migration finishes (e.g. "12 moved, 2 failed").
      * @property fullPlayerLayout layout the full player overlay renders with.
+     * @property isLoadingPythonLibraries `true` while the library report is read.
+     * @property showPythonLibraries `true` while the diagnostics sheet is open.
+     * @property pythonLibraries loaded library rows (name, version, source).
+     * @property pythonLibrariesError human-readable error when the report failed.
+     * @property pythonVersion version of the interpreter running the app's Python.
+     * @property pythonImplementation interpreter implementation name.
      */
     data class SettingsUiState(
         val bitrate: Bitrate = Bitrate.MEDIUM,
@@ -153,5 +166,11 @@ interface SettingsContract {
         val downloadState: DownloadState = DownloadState.Idle,
         val updateError: String? = null,
         val fullPlayerLayout: FullPlayerLayout = FullPlayerLayout.NORMAL,
+        val isLoadingPythonLibraries: Boolean = false,
+        val showPythonLibraries: Boolean = false,
+        val pythonLibraries: List<PythonLibraryInfo> = emptyList(),
+        val pythonLibrariesError: String? = null,
+        val pythonVersion: String? = null,
+        val pythonImplementation: String? = null,
     )
 }

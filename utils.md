@@ -99,6 +99,24 @@ They are throwaway — recreate them as needed rather than treating them as code
 > (`dict → java.util.Map`), which only happens across the real bridge. See §7
 > for why that is verified statically instead of via an emulator here.
 
+### 4.1 Comparing the original YouTube pick with the JEV/OpenRouter pick
+
+To see, for one track, which video the app would have picked without the
+advisory JEV selector and which one JEV picks now (both from the live code):
+
+```bash
+python tools/jev_selection_demo.py https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b
+python tools/jev_selection_demo.py <url> --offline        # deterministic only, no OpenRouter call
+python tools/jev_selection_demo.py <url> --no-color      # plain output (also automatic when piped)
+python tools/jev_selection_demo.py <url> --download --output-dir /tmp/out
+```
+
+Compare-only by default: nothing is downloaded and no OpenRouter request is made
+unless `OPENROUTER_API_KEY` is set (the key is never printed). The `JEV status`
+line names what happened — a rejection label with its numbers, or the HTTP status
+and short provider code of a failed call — while the effective fallback URL stays
+visible. Flags, output and exit codes: `tools/README.md`.
+
 ---
 
 ## 5. JVM / JUnit tests

@@ -8,6 +8,7 @@ import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.file.MusicStore
 import xyz.botolog.ghostify.player.PlayerController
 import xyz.botolog.ghostify.python.PlaylistMetadataBridge
+import xyz.botolog.ghostify.python.PythonDiagnosticsBridge
 import xyz.botolog.ghostify.sync.SyncUseCase
 import xyz.botolog.ghostify.ui.contract.AddPlaylistContract
 import xyz.botolog.ghostify.ui.contract.LibraryContract
@@ -49,6 +50,7 @@ class GhostifyViewModels(
     private val player: PlayerController,
     private val musicStore: MusicStore,
     private val deletePlaylist: DeletePlaylistUseCase,
+    private val diagnostics: PythonDiagnosticsBridge = PythonDiagnosticsBridge(),
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
@@ -66,7 +68,14 @@ class GhostifyViewModels(
 
     private val playerVm = PlayerViewModel(player, songRepo.songDao, downloads, settings)
 
-    private val settingsVm = SettingsViewModel(context, settings, repo, songRepo, musicStore)
+    private val settingsVm = SettingsViewModel(
+        context = context,
+        settings = settings,
+        playlistRepo = repo,
+        songRepo = songRepo,
+        musicStore = musicStore,
+        diagnostics = diagnostics,
+    )
 
     private val searchVm = SearchViewModel(
         playlistDao = repo.playlistDao,

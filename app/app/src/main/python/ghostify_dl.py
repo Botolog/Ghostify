@@ -17,6 +17,10 @@ Design notes
 * ``prepend_path`` extends ``os.environ["PATH"]`` so the bundled static
   ``ffmpeg`` (see ``FfmpegLocator``) is found by the ``subprocess`` calls
   spotdl makes (T-025).
+* ``_select_yt_id`` asks the advisory ``jev_selector`` (OpenRouter JEV) which
+  shortlisted video is the canonical recording. It is a no-op unless
+  ``OPENROUTER_API_KEY`` is present, and every failure keeps the deterministic
+  first-result id, so downloads are unaffected when it is off or broken.
 * Every failure is surfaced as a typed exception whose ``str()`` is
   ``"<CODE>: <message>"`` (``GhostifyError`` for fetches,
   ``TrackDownloadError`` for downloads) so the Kotlin bridges can recover a
@@ -35,8 +39,10 @@ import logging
 import os
 import re
 import shutil
+import sys
 import threading
 import time
+import types
 import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -267,6 +273,23 @@ _PLAYLIST_REF_PATTERN = re.compile(
     r"(?:open\.spotify\.com/playlist/|spotify:playlist:)([A-Za-z0-9]{1,64})"
 )
 _VIDEO_ID_PATTERN = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
+
+# ---------------------------------------------------------------------------
+# JEV runtime kill-switch (disabled everywhere, reversible).
+# ---------------------------------------------------------------------------
+# JEV stays fully in-tree (jev_selector.py, helpers, tests, demo display)
+# but is never consulted at runtime while this is False. To re-enable:
+#   1. Set _JEV_RUNTIME_ENABLED = True below, and
+#   2. Provide OPENROUTER_API_KEY (GHOSTIFY_JEV_ENABLED defaults to key
+#      presence).
+# No other change is needed; _select_yt_id / compare_yt_selection resume
+# their advisory calls once the flag is True.
+_JEV_RUNTIME_ENABLED = False
+
+
+def _is_jev_runtime_enabled() -> bool:
+    """Master JEV gate — False forces deterministic fallback everywhere."""
+    return bool(_JEV_RUNTIME_ENABLED)
 
 # ---------------------------------------------------------------------------
 # Module-level state (guarded).
@@ -731,11 +754,293 @@ def _get_youtube_fallback_provider() -> Any:
     return provider
 
 
+def _first_result_video_id(results: Any) -> Optional[str]:
+    """First search result carrying a video id, in raw provider order.
+
+    This is the historical, deterministic selection: JEV only ever *replaces*
+    it after a validated decision, so a missing key or any failure keeps the
+    pre-JEV behaviour byte for byte.
+    """
+    for result in results or ():
+        video_id = _extract_video_id(getattr(result, "url", None))
+        if video_id:
+            return video_id
+    return None
+
+
+def _select_yt_id(
+    song: Any, results: Any, per_track_timeout: float
+) -> Optional[str]:
+    """Pick a YouTube id from ``results`` (deterministic order + advisory JEV).
+
+    The deterministic candidate is always computed first. JEV is consulted
+    only for genuinely ambiguous result sets, only when it is enabled, and its
+    answer is used only when it names one of the shortlisted video ids. Every
+    other outcome keeps the deterministic candidate.
+    """
+    if results is None:
+        results = ()
+    elif not isinstance(results, (list, tuple)):
+        results = list(results)
+
+    fallback = _first_result_video_id(results)
+    if not fallback:
+        return None
+
+    # JEV runtime kill-switch: never import/call jev_selector while disabled.
+    # Reversible via _JEV_RUNTIME_ENABLED above. Keeps deterministic fallback.
+    if not _is_jev_runtime_enabled():
+        logger.debug(
+            "JEV disabled by runtime kill-switch; using deterministic candidate"
+        )
+        return fallback
+
+    try:
+        import jev_selector
+    except Exception as exc:  # noqa: BLE001 - selector is optional
+        logger.debug(
+            "JEV selector unavailable (%s); using deterministic candidate",
+            type(exc).__name__,
+        )
+        return fallback
+
+    try:
+        config = jev_selector.JevConfig.from_env(timeout_cap=per_track_timeout)
+        if not config.enabled or not config.api_key:
+            return fallback
+        shortlist = jev_selector.build_shortlist(results, song, config)
+        if not shortlist.is_ambiguous():
+            return fallback
+        chosen = jev_selector.select_video_id(song, shortlist, config)
+        return chosen or fallback
+    except Exception as exc:  # noqa: BLE001 - never break resolution
+        logger.debug(
+            "JEV selection failed (%s); using deterministic candidate",
+            type(exc).__name__,
+        )
+        return fallback
+
+
+def compare_yt_selection(
+    song: Any,
+    results: Any,
+    per_track_timeout: float = DEFAULT_PER_TRACK_YT_TIMEOUT,
+    transport: Optional[Callable] = None,
+) -> Dict[str, Any]:
+    """Report the original and the JEV decision for one song, side by side.
+
+    Read-only counterpart of :func:`_select_yt_id`: it reuses the very same
+    deterministic candidate, the same ``jev_selector`` config/shortlist and the
+    same advisory call, but returns a dict describing *both* outcomes instead
+    of a single id, so the two decisions can be compared (see
+    ``tools/jev_selection_demo.py``). ``effective_video_id`` is exactly what
+    :func:`_select_yt_id` would return for the same inputs, which is what makes
+    this safe to use as a live comparison entry point.
+
+    ``transport`` is forwarded to ``jev_selector`` (tests inject a stub; the
+    default is the real OpenRouter call and only happens when a key is set).
+    Never raises, and never returns the API key.
+    """
+    if results is None:
+        results = ()
+    elif not isinstance(results, (list, tuple)):
+        results = list(results)
+
+    original = _first_result_video_id(results)
+    report: Dict[str, Any] = {
+        "candidate_count": len(results),
+        "original_video_id": original,
+        "original_url": _watch_url(original),
+        "jev_video_id": None,
+        "jev_url": None,
+        "effective_video_id": original,
+        "agree": True,
+        "changed": False,
+        "outcome": "no_candidates",
+        "reason": "no candidate carried a YouTube video id",
+        "confidence": None,
+        "shortlist_ids": [],
+        "shortlist_count": 0,
+        "shortlist_fallback_id": None,
+        "ambiguous": False,
+        "jev_enabled": False,
+        "api_key_present": False,
+        "model": None,
+        "endpoint": None,
+        "selector_error": None,
+    }
+    if not original:
+        return report
+
+    # JEV runtime kill-switch: report inactive/fallback without calling decide
+    # or transport (no network, no API key use). Shortlist is still built
+    # locally so the demo keeps its 3-column display. Reversible via
+    # _JEV_RUNTIME_ENABLED above.
+    if not _is_jev_runtime_enabled():
+        logger.debug(
+            "JEV disabled by runtime kill-switch; using deterministic candidate"
+        )
+        try:
+            import jev_selector as _jev_mod
+
+            _cfg = _jev_mod.JevConfig.from_env(timeout_cap=per_track_timeout)
+            _shortlist = _jev_mod.build_shortlist(results, song, _cfg)
+            report.update(
+                {
+                    "outcome": "inactive",
+                    "reason": "JEV disabled by runtime kill-switch "
+                    "(GHOSTIFY_JEV_ENABLED forced off); "
+                    "deterministic candidate kept",
+                    "shortlist_ids": [
+                        candidate.video_id
+                        for candidate in _shortlist.candidates
+                    ],
+                    "shortlist_count": len(_shortlist),
+                    "shortlist_fallback_id": _shortlist.fallback_id,
+                    "ambiguous": _shortlist.is_ambiguous(),
+                    "jev_enabled": False,
+                    "api_key_present": bool(
+                        os.environ.get("OPENROUTER_API_KEY")
+                    ),
+                    "model": _cfg.model,
+                    "endpoint": _cfg.endpoint,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - never break comparison
+            report["outcome"] = "inactive"
+            report["reason"] = (
+                "JEV disabled by runtime kill-switch "
+                "(GHOSTIFY_JEV_ENABLED forced off); "
+                "deterministic candidate kept"
+            )
+            report["jev_enabled"] = False
+            report["selector_error"] = type(exc).__name__
+        return report
+
+    try:
+        import jev_selector
+    except Exception as exc:  # noqa: BLE001 - selector is optional
+        logger.debug(
+            "JEV selector unavailable (%s); using deterministic candidate",
+            type(exc).__name__,
+        )
+        report["outcome"] = "selector_unavailable"
+        report["reason"] = "jev_selector unavailable (%s)" % type(exc).__name__
+        report["selector_error"] = type(exc).__name__
+        return report
+
+    try:
+        config = jev_selector.JevConfig.from_env(timeout_cap=per_track_timeout)
+        shortlist = jev_selector.build_shortlist(results, song, config)
+        decision = jev_selector.decide(song, shortlist, config, transport)
+    except Exception as exc:  # noqa: BLE001 - never break resolution
+        logger.debug(
+            "JEV selection failed (%s); using deterministic candidate",
+            type(exc).__name__,
+        )
+        report["outcome"] = "selector_failed"
+        report["reason"] = "JEV comparison failed (%s)" % type(exc).__name__
+        report["selector_error"] = type(exc).__name__
+        return report
+
+    effective = decision.video_id or original
+    report.update(
+        {
+            "jev_video_id": decision.video_id,
+            "jev_url": _watch_url(decision.video_id),
+            "effective_video_id": effective,
+            "effective_url": _watch_url(effective),
+            "agree": decision.video_id is None or decision.video_id == original,
+            "changed": bool(decision.video_id) and decision.video_id != original,
+            "outcome": decision.outcome,
+            "reason": decision.reason,
+            "confidence": decision.confidence,
+            "shortlist_ids": [candidate.video_id for candidate in shortlist.candidates],
+            "shortlist_count": len(shortlist),
+            "shortlist_fallback_id": shortlist.fallback_id,
+            "ambiguous": shortlist.is_ambiguous(),
+            "jev_enabled": bool(config.enabled and config.api_key),
+            "api_key_present": bool(config.api_key),
+            "model": config.model,
+            "endpoint": config.endpoint,
+        }
+    )
+    return report
+
+
+def _watch_url(video_id: Optional[str]) -> Optional[str]:
+    """Canonical watch URL for *video_id* (or None)."""
+    if not video_id:
+        return None
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def search_yt_candidates(
+    song: Any,
+    limit: int = 10,
+    per_track_timeout: float = DEFAULT_PER_TRACK_YT_TIMEOUT,
+) -> Dict[str, Any]:
+    """Return the raw YouTube candidate results for *song*.
+
+    Tooling surface: the production path resolves an id through
+    :func:`_resolve_yt_id` and never needs the full result set, so this
+    exposes the same query and the same providers (YouTube Music first, plain
+    YouTube as fallback) for inspection tools such as
+    ``tools/jev_selection_demo.py``. The download path does not use it, so
+    :func:`_resolve_yt_id` behaviour is untouched.
+
+    Never raises. Returns ``results`` (possibly empty), ``provider``,
+    ``query`` and ``error`` (the last provider exception's class name).
+    """
+    report: Dict[str, Any] = {
+        "results": [],
+        "provider": None,
+        "query": None,
+        "error": None,
+    }
+    if per_track_timeout <= 0:
+        report["error"] = "TimeoutBudget"
+        return report
+
+    from spotdl.utils.formatter import create_song_title
+
+    report["query"] = create_song_title(song.name, song.artists or [])
+
+    def _music() -> Any:
+        return _get_yt_provider().get_results(
+            report["query"], filter="songs", ignore_spelling=True, limit=limit
+        )
+
+    def _youtube() -> Any:
+        return _get_youtube_fallback_provider().get_results(report["query"], limit=limit)
+
+    for provider_name, call in (("youtube-music", _music), ("youtube", _youtube)):
+        try:
+            results = _call_with_deadline(per_track_timeout, call)
+        except Exception as exc:  # noqa: BLE001 - report, never raise
+            logger.debug(
+                "%s candidate search failed for %s: %s",
+                provider_name,
+                getattr(song, "song_id", "?"),
+                type(exc).__name__,
+            )
+            report["error"] = type(exc).__name__
+            continue
+        if results:
+            report["results"] = list(results)
+            report["provider"] = provider_name
+            report["error"] = None
+            return report
+    return report
+
+
 def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
     """Resolve a YouTube id for ``song`` or return None on any failure.
 
     Tries YouTube Music first; if no results, falls back to plain YouTube
-    search (ytsearch) before giving up.
+    search (ytsearch) before giving up. Both paths hand their full result set
+    to ``_select_yt_id``, which keeps the first usable id unless the advisory
+    JEV selector validates a better shortlist candidate.
     """
     if per_track_timeout <= 0:
         return None
@@ -749,20 +1054,12 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
         results = provider.get_results(
             query, filter="songs", ignore_spelling=True, limit=10
         )
-        for result in results or ():
-            video_id = _extract_video_id(getattr(result, "url", None))
-            if video_id:
-                return video_id
-        return None
+        return _select_yt_id(song, results, per_track_timeout)
 
     def _search_youtube_fallback() -> Optional[str]:
         provider = _get_youtube_fallback_provider()
         results = provider.get_results(query, limit=10)
-        for result in results or ():
-            video_id = _extract_video_id(getattr(result, "url", None))
-            if video_id:
-                return video_id
-        return None
+        return _select_yt_id(song, results, per_track_timeout)
 
     # Try YouTube Music with retries
     last_exc: Optional[BaseException] = None
@@ -1209,6 +1506,343 @@ def _fire(hook: Optional[Callable], *args: Any) -> None:
         logger.exception("Ignoring failure of progress hook %r", hook)
 
 
+# ---------------------------------------------------------------------------
+# App-download dry-run preview (live code for tools/jev_selection_demo.py).
+# ---------------------------------------------------------------------------
+#
+# The Android app downloads through ``TrackDownloader.download(url, …,
+# yt_id, meta)`` where ``meta`` is the flat map built by Kotlin
+# ``buildMetaPayload`` (keys ``name``/``artists``/``album``/``duration_sec``/
+# ``image_url``) and ``yt_id`` is the stored ``song.ytId`` (``None`` for
+# Spotify tracks today because ``resolve_yt`` defaults to false). The song
+# is rebuilt with ``Song.from_missing_data`` and, when no ``yt_id`` pins a
+# ``download_url``, the deterministic ``_resolve_yt_id`` picks the URL (first
+# result with a video id, advisory JEV override). ``preview_app_selection``
+# runs exactly that selection path without downloading, writing sidecars, or
+# touching the filesystem, so the demo's middle column can call live code
+# instead of a copy.
+
+#: Audio providers the app downloads with (single source of truth).
+_APP_AUDIO_PROVIDERS = ["youtube-music", "youtube"]
+
+
+def build_app_meta(song: Any) -> Dict[str, Any]:
+    """Build the ``meta`` wire map for *song*, mirroring ``buildMetaPayload``.
+
+    Reads the same Spotify fields the Kotlin bridge forwards (title, artist
+    list, album, duration seconds, cover URL) and returns the same five
+    contract keys, so :func:`preview_app_selection` rebuilds the Song the
+    same way :meth:`TrackDownloader.download` does on device.
+    """
+    name = getattr(song, "name", None)
+    raw_artists = getattr(song, "artists", None) or []
+    if isinstance(raw_artists, str):
+        artists = [part.strip() for part in raw_artists.split(",") if part.strip()]
+    else:
+        try:
+            artists = [str(part).strip() for part in list(raw_artists) if str(part).strip()]
+        except TypeError:
+            artists = []
+    album = getattr(song, "album_name", None) or ""
+    try:
+        duration_sec = float(getattr(song, "duration", None) or 0)
+    except (TypeError, ValueError):
+        duration_sec = 0.0
+    cover = getattr(song, "cover_url", None)
+    return {
+        "name": name,
+        "artists": artists,
+        "album": album if isinstance(album, str) else "",
+        "duration_sec": duration_sec,
+        "image_url": cover if isinstance(cover, str) and cover else None,
+    }
+
+
+def _build_song_from_meta(meta: Any, url: str) -> Optional[Any]:
+    """Build a Song from bridge-passed *meta*, or None when unusable.
+
+    Single implementation behind both :meth:`TrackDownloader._song_from_meta`
+    and :func:`preview_app_selection`, so the demo preview and the device
+    download path can never drift apart. Never raises.
+    """
+    try:
+        if not isinstance(meta, dict):
+            return None
+        name = meta.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        raw_artists = meta.get("artists")
+        if isinstance(raw_artists, str):
+            artists = [part.strip() for part in raw_artists.split(";") if part.strip()]
+        elif isinstance(raw_artists, list):
+            artists = [
+                part for part in raw_artists if isinstance(part, str) and part.strip()
+            ]
+        else:
+            return None
+        if not artists:
+            return None
+
+        album = meta.get("album")
+        album_name = album if isinstance(album, str) else ""
+        try:
+            duration = max(0, int(round(float(meta.get("duration_sec") or 0))))
+        except (TypeError, ValueError):
+            duration = 0
+        image_url = meta.get("image_url")
+        cover_url = image_url if isinstance(image_url, str) and image_url else None
+
+        from spotdl.types.song import Song
+
+        return Song.from_missing_data(
+            name=name.strip(),
+            artist=artists[0],
+            artists=artists,
+            song_id=extract_spotify_id(url) or "",
+            duration=duration,
+            url=url,
+            genres=[],
+            disc_number=1,
+            disc_count=1,
+            album_name=album_name,
+            album_artist=artists[0],
+            year=0,
+            date="",
+            track_number=1,
+            tracks_count=1,
+            explicit=False,
+            publisher=artists[0],
+            isrc=None,
+            cover_url=cover_url,
+            copyright_text=None,
+            album_id="",
+        )
+    except Exception:  # noqa: BLE001 - preview/download callers fall back
+        logger.debug("Could not build Song from meta", exc_info=True)
+        return None
+
+
+def _app_downloader_settings() -> Dict[str, Any]:
+    """Spotdl settings matching :class:`TrackDownloader`'s search path.
+
+    Single source for the provider list and scoring flags the preview and
+    the real downloader share, so a future app change to providers or
+    ``filter_results`` propagates to the demo automatically. ``output`` is
+    never written during a preview search; it only satisfies Downloader's
+    required settings schema.
+    """
+    return {
+        "output": "{artists} - {title}.{output-ext}",
+        "format": "mp3",
+        "bitrate": "320k",
+        "overwrite": "skip",
+        "scan_for_songs": False,
+        "audio_providers": list(_APP_AUDIO_PROVIDERS),
+        "lyrics_providers": [],
+        "yt_dlp_args": "--format bestaudio/best",
+        "ffmpeg": "ffmpeg",
+        "threads": 1,
+        "filter_results": True,
+        "simple_tui": True,
+        "print_errors": False,
+        "log_level": "DEBUG",
+        "generate_lrc": False,
+        "sponsor_block": False,
+        "create_skip_file": False,
+        "respect_skip_file": False,
+        "restrict": None,
+    }
+
+
+def _score_candidates(app_song: Any, candidates: Any, per_track_timeout: float) -> Dict[str, Any]:
+    """Score already-fetched *candidates* with the live spotdl scoring.
+
+    Calls ``spotdl.utils.matching.order_results`` (the same function
+    ``AudioProvider.search`` uses) and, when it yields scored results, the
+    live provider ``get_best_result`` view-aware pick — never a re-typed
+    copy. Pure CPU except for the bounded ``get_views`` lookups inside
+    ``get_best_result``; no download, no file IO. Returns an
+    ``app_video_id``/``app_url``/``app_reason`` dict (provider/query are
+    filled in by the caller).
+    """
+    from spotdl.utils.matching import order_results
+
+    results = list(candidates or [])
+    if not results:
+        return {"app_video_id": None, "app_url": None,
+                "app_reason": "no candidates to score"}
+    scored = order_results(results, app_song, None)
+    if not scored:
+        return {"app_video_id": None, "app_url": None,
+                "app_reason": "live order_results filtered every candidate out"}
+    best_url: Optional[str] = None
+    best_result = None
+    try:
+        from spotdl.providers.audio.ytmusic import YouTubeMusic
+
+        try:
+            probe = YouTubeMusic()
+        except Exception:  # noqa: BLE001 - fall back to pure scored order
+            probe = None
+        if probe is not None:
+            if per_track_timeout > 0:
+                best_result, _score = _call_with_deadline(
+                    per_track_timeout, probe.get_best_result, scored
+                )
+            else:
+                best_result, _score = probe.get_best_result(scored)
+            best_url = getattr(best_result, "url", None)
+        else:
+            raise RuntimeError("no probe provider")
+    except Exception:  # noqa: BLE001 - fall back to top scored result
+        try:
+            best_result = max(scored.items(), key=lambda item: item[1])[0]
+            best_url = getattr(best_result, "url", None)
+        except Exception:  # noqa: BLE001 - reported below as no video id
+            best_result = None
+            best_url = None
+    video_id = _extract_video_id(best_url)
+    if not video_id and isinstance(best_url, str) and best_url.strip():
+        for result in results:
+            candidate_id = _extract_video_id(getattr(result, "url", None))
+            if candidate_id and getattr(result, "url", None) == best_url:
+                video_id = candidate_id
+                break
+        else:
+            result_id = getattr(best_result, "result_id", None) if "best_result" in locals() else None
+            if isinstance(result_id, str) and result_id.strip():
+                video_id = result_id.strip()
+    if not video_id:
+        return {"app_video_id": None, "app_url": None,
+                "app_reason": "live scoring picked a result without a video id"}
+    return {
+        "app_video_id": video_id,
+        "app_url": _watch_url(video_id),
+        "app_reason": "live spotdl order_results + get_best_result scoring",
+    }
+
+
+def preview_app_selection(
+    song: Any,
+    meta: Optional[Dict[str, Any]] = None,
+    yt_id: Optional[str] = None,
+    url: Optional[str] = None,
+    per_track_timeout: float = DEFAULT_PER_TRACK_YT_TIMEOUT,
+    downloader: Optional[Any] = None,
+    candidates: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Dry-run the exact URL choice ``TrackDownloader.download`` would make.
+
+    Mirrors the device: rebuilds the Song from *meta* (built with
+    :func:`build_app_meta` when omitted, exactly like Kotlin
+    ``buildMetaPayload`` does), pins ``download_url`` when *yt_id* is set,
+    otherwise runs the deterministic first-result pick
+    (``_first_result_video_id`` on the rebuilt Song). When *candidates*
+    (already fetched provider results) are given they are resolved in place
+    with that same deterministic helper, so no second search and no file IO
+    happens; otherwise the same deterministic search
+    (``search_yt_candidates``: YouTube Music first, plain YouTube as
+    fallback) is run and its first result with a video id is used. Never
+    downloads, never writes sidecars or files. Never raises: failures are
+    reported as ``app_video_id`` None with an ``app_reason``.
+    """
+    spotify_url = url or getattr(song, "url", None) or ""
+    if not isinstance(spotify_url, str):
+        spotify_url = ""
+    if meta is None:
+        try:
+            meta = build_app_meta(song)
+        except Exception:  # noqa: BLE001 - fall back to the caller's song
+            meta = None
+    app_song = _build_song_from_meta(meta, spotify_url) if meta is not None else None
+    if app_song is None:
+        app_song = song
+    try:
+        from spotdl.utils.formatter import create_song_title
+
+        app_query: Optional[str] = create_song_title(
+            getattr(app_song, "name", None), getattr(app_song, "artists", None) or []
+        )
+    except Exception:  # noqa: BLE001 - query is informational only
+        app_query = None
+    app_provider = "+".join(_APP_AUDIO_PROVIDERS)
+
+    if yt_id:
+        video_id = _extract_video_id(f"https://www.youtube.com/watch?v={yt_id}") or yt_id
+        return {
+            "app_video_id": video_id,
+            "app_url": _watch_url(video_id),
+            "app_provider": app_provider,
+            "app_query": app_query,
+            "app_reason": "pre-resolved yt_id; download would use it directly without search",
+        }
+    if candidates is not None:
+        try:
+            video_id = _first_result_video_id(candidates)
+            if not video_id:
+                return {
+                    "app_video_id": None,
+                    "app_url": None,
+                    "app_provider": app_provider,
+                    "app_query": app_query,
+                    "app_reason": "deterministic first-result found no match",
+                }
+            return {
+                "app_video_id": video_id,
+                "app_url": _watch_url(video_id),
+                "app_provider": app_provider,
+                "app_query": app_query,
+                "app_reason": "deterministic first result with video id",
+            }
+        except Exception as exc:  # noqa: BLE001 - preview must never raise
+            logger.debug("App preview scoring failed (%s)", type(exc).__name__)
+            return {
+                "app_video_id": None,
+                "app_url": None,
+                "app_provider": app_provider,
+                "app_query": app_query,
+                "app_reason": "app scoring failed (%s)" % type(exc).__name__,
+            }
+    if per_track_timeout <= 0:
+        return {
+            "app_video_id": None,
+            "app_url": None,
+            "app_provider": app_provider,
+            "app_query": app_query,
+            "app_reason": "no search budget (per_track_timeout<=0)",
+        }
+    try:
+        fetched = search_yt_candidates(
+            app_song, limit=10, per_track_timeout=per_track_timeout
+        )
+        results = fetched.get("results") if isinstance(fetched, dict) else []
+        video_id = _first_result_video_id(results)
+        if not video_id:
+            return {
+                "app_video_id": None,
+                "app_url": None,
+                "app_provider": app_provider,
+                "app_query": app_query,
+                "app_reason": "deterministic search returned no usable URL",
+            }
+        return {
+            "app_video_id": video_id,
+            "app_url": _watch_url(video_id),
+            "app_provider": app_provider,
+            "app_query": app_query,
+            "app_reason": "deterministic first result with video id",
+        }
+    except Exception as exc:  # noqa: BLE001 - preview must never raise
+        logger.debug("App preview search failed (%s)", type(exc).__name__)
+        return {
+            "app_video_id": None,
+            "app_url": None,
+            "app_provider": app_provider,
+            "app_query": app_query,
+            "app_reason": "app search failed (%s)" % type(exc).__name__,
+        }
+
+
 class TrackDownloader:
     """Downloads one track at a time through spotdl's programmatic API.
 
@@ -1255,7 +1889,7 @@ class TrackDownloader:
             "bitrate": self.bitrate,
             "overwrite": "skip",
             "scan_for_songs": False,
-            "audio_providers": audio_providers or ["youtube-music", "youtube"],
+            "audio_providers": audio_providers or list(_APP_AUDIO_PROVIDERS),
             "lyrics_providers": lyrics_providers or [],
             "yt_dlp_args": yt_dlp_args or "--format bestaudio/best",
             "ffmpeg": ffmpeg,
@@ -1577,37 +2211,43 @@ class TrackDownloader:
         _fire(hook, percent, message or "")
 
     def _fallback_search_yt_id(self, song: Any) -> Optional[str]:
-        """Search YouTube with a broader query when the pre-resolved yt_id fails."""
+        """Broader search when the pre-resolved yt_id fails (YTM first, YT fallback)."""
         try:
-            from spotdl.providers.audio.ytmusic import YouTubeMusic
-
-            provider = YouTubeMusic()
             title = getattr(song, "name", "") or ""
             artists = getattr(song, "artists", []) or []
             artist_str = artists[0] if artists else ""
-            
+
             queries = [
                 f"{title} {artist_str}",
                 f"{title} {artist_str} official",
                 f"{title} {artist_str} music video",
             ]
-            
+
             for query in queries:
                 if not query.strip():
                     continue
                 try:
-                    results = provider.get_results(
+                    results = _get_yt_provider().get_results(
                         query, filter="songs", ignore_spelling=True, limit=5
                     )
-                    for result in results or ():
-                        video_id = _extract_video_id(getattr(result, "url", None))
-                        if video_id:
-                            logger.debug("Fallback search found video_id=%s for query=%s", video_id, query)
-                            return video_id
+                    video_id = _first_result_video_id(results)
+                    if video_id:
+                        logger.debug("Fallback search found video_id=%s for query=%s", video_id, query)
+                        return video_id
                 except Exception as exc:
-                    logger.debug("Fallback search failed for query=%s: %s", query, exc)
+                    logger.debug("Fallback YTM search failed for query=%s: %s", query, exc)
+                try:
+                    results = _get_youtube_fallback_provider().get_results(
+                        query, limit=5
+                    )
+                    video_id = _first_result_video_id(results)
+                    if video_id:
+                        logger.debug("Fallback YouTube search found video_id=%s for query=%s", video_id, query)
+                        return video_id
+                except Exception as exc:
+                    logger.debug("Fallback YouTube search failed for query=%s: %s", query, exc)
                     continue
-            
+
             return None
         except Exception as exc:
             logger.debug("Fallback search initialization failed: %s", exc)
@@ -1807,59 +2447,11 @@ class TrackDownloader:
         Kotlin stores title/artists/album/duration/cover when the user picks a
         track; passing it here lets :meth:`download` skip the Spotify API.
         Returns None (never raises) for absent or unusable *meta* so the caller
-        falls back to the legacy ``_search`` resolution path.
+        falls back to the legacy ``_search`` resolution path. Delegates to
+        :func:`_build_song_from_meta` so the download path and the dry-run
+        preview share one implementation.
         """
-        if not isinstance(meta, dict):
-            return None
-        name = meta.get("name")
-        if not isinstance(name, str) or not name.strip():
-            return None
-        raw_artists = meta.get("artists")
-        if isinstance(raw_artists, str):
-            artists = [part.strip() for part in raw_artists.split(";") if part.strip()]
-        elif isinstance(raw_artists, list):
-            artists = [
-                part for part in raw_artists if isinstance(part, str) and part.strip()
-            ]
-        else:
-            return None
-        if not artists:
-            return None
-
-        album = meta.get("album")
-        album_name = album if isinstance(album, str) else ""
-        try:
-            duration = max(0, int(round(float(meta.get("duration_sec") or 0))))
-        except (TypeError, ValueError):
-            duration = 0
-        image_url = meta.get("image_url")
-        cover_url = image_url if isinstance(image_url, str) and image_url else None
-
-        from spotdl.types.song import Song
-
-        return Song.from_missing_data(
-            name=name.strip(),
-            artist=artists[0],
-            artists=artists,
-            song_id=extract_spotify_id(url) or "",
-            duration=duration,
-            url=url,
-            genres=[],
-            disc_number=1,
-            disc_count=1,
-            album_name=album_name,
-            album_artist=artists[0],
-            year=0,
-            date="",
-            track_number=1,
-            tracks_count=1,
-            explicit=False,
-            publisher=artists[0],
-            isrc=None,
-            cover_url=cover_url,
-            copyright_text=None,
-            album_id="",
-        )
+        return _build_song_from_meta(meta, url)
 
     def _download_song(
         self,
@@ -1906,6 +2498,17 @@ class TrackDownloader:
             f"[GHOSTIFY_DEBUG] _download_song: download_url={getattr(song, 'download_url', None)} duration={getattr(song, 'duration', None)}",
             flush=True,
         )
+        # Deterministic YouTube choice when nothing pins a URL: resolve via
+        # _resolve_yt_id (first result with video id, advisory JEV override)
+        # so search_and_download sees a pinned download_url instead of running
+        # spotdl's live scoring. Failures fall through to the legacy path.
+        if not getattr(song, "download_url", None):
+            try:
+                _det_id = _resolve_yt_id(song, DEFAULT_PER_TRACK_YT_TIMEOUT)
+            except Exception:  # noqa: BLE001 - fall through to spotdl search
+                _det_id = None
+            if _det_id:
+                song.download_url = _watch_url(_det_id)
         recovered = False
         try:
             _song, path = self._downloader.search_and_download(song)
@@ -2356,3 +2959,121 @@ def fetch_lyrics(name: str, artists: str, provider: str = "synced") -> Optional[
         return lyrics_provider.get_lyrics(name, [artists])
     finally:
         _base.TimeoutSession.request.__defaults__ = _orig_default
+
+
+DIAGNOSTICS_CUSTOM_VERSION = "my libs"
+DIAGNOSTICS_MISSING_VERSION = "not installed"
+DIAGNOSTICS_MISSING_ERROR = "ImportError"
+DIAGNOSTICS_UNKNOWN_VERSION = "unknown"
+
+_VERSION_ATTRS = ("__version__", "version", "VERSION")
+
+_DIAGNOSTIC_MODULES: Tuple[Tuple[str, Optional[str], bool], ...] = (
+    ("spotdl", "spotdl", False),
+    ("yt_dlp", "yt-dlp", False),
+    ("ytmusicapi", "ytmusicapi", False),
+    ("requests", "requests", False),
+    ("curl_cffi", "curl_cffi", False),
+    ("spotapi", "spotapi", False),
+    ("SpotipyFree", "spotipyfree", False),
+    ("syncedlyrics", "syncedlyrics", False),
+    ("rapidfuzz", "rapidfuzz", False),
+    ("jev_selector", None, True),
+    ("ghostify_dl", None, True),
+)
+
+
+def _diagnostics_version_value(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, types.ModuleType):
+        return _diagnostics_version_value(getattr(value, "__version__", None))
+    return None
+
+
+def _diagnostics_module_version(module: Any, distribution: Optional[str]) -> Optional[str]:
+    for attr in _VERSION_ATTRS:
+        found = _diagnostics_version_value(getattr(module, attr, None))
+        if found:
+            return found
+    if not distribution:
+        return None
+    try:
+        from importlib import metadata
+
+        return str(metadata.version(distribution)).strip() or None
+    except Exception:  # noqa: BLE001 - metadata is best effort
+        return None
+
+
+def _diagnostics_module_source(module: Any) -> str:
+    path = getattr(module, "__file__", None)
+    if path is None:
+        return ""
+    try:
+        return str(path)
+    except Exception:  # noqa: BLE001 - exotic path objects stay unreported
+        return ""
+
+
+def _diagnostics_import(module_name: str) -> Tuple[Any, Optional[str]]:
+    if module_name == __name__:
+        return sys.modules.get(__name__), None
+    try:
+        return _import(module_name), None
+    except Exception as exc:  # noqa: BLE001 - an optional module may be absent
+        logger.debug(
+            "library_diagnostics: %s unavailable (%s)", module_name, type(exc).__name__
+        )
+        return None, type(exc).__name__
+
+
+def _diagnostics_row(
+    module_name: str,
+    module: Any,
+    error: Optional[str],
+    distribution: Optional[str],
+    custom: bool,
+) -> Dict[str, Any]:
+    if module is None:
+        return {
+            "name": module_name,
+            "version": DIAGNOSTICS_MISSING_VERSION,
+            "source": "",
+            "error": error or DIAGNOSTICS_MISSING_ERROR,
+        }
+    if custom:
+        version = DIAGNOSTICS_CUSTOM_VERSION
+    else:
+        version = (
+            _diagnostics_module_version(module, distribution) or DIAGNOSTICS_UNKNOWN_VERSION
+        )
+    return {
+        "name": module_name,
+        "version": version,
+        "source": _diagnostics_module_source(module),
+        "error": None,
+    }
+
+
+def library_diagnostics() -> List[Dict[str, Any]]:
+    """Report the loaded version and file of every Python library the app uses."""
+    rows: List[Dict[str, Any]] = []
+    for module_name, distribution, custom in _DIAGNOSTIC_MODULES:
+        module, error = _diagnostics_import(module_name)
+        rows.append(
+            _diagnostics_row(module_name, module, error, distribution, custom)
+        )
+    return rows
+
+
+def library_diagnostics_report() -> Dict[str, Any]:
+    """Return [library_diagnostics] plus the interpreter it was read from."""
+    import platform
+
+    return {
+        "python_version": platform.python_version(),
+        "implementation": platform.python_implementation(),
+        "executable": sys.executable,
+        "libraries": library_diagnostics(),
+    }

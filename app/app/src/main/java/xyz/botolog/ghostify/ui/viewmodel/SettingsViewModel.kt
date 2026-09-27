@@ -7,11 +7,13 @@ import xyz.botolog.ghostify.data.repo.SettingsRepository
 import xyz.botolog.ghostify.data.repo.SongRepository
 import xyz.botolog.ghostify.file.MusicStore
 import xyz.botolog.ghostify.file.resolveTreeUriToPath
+import xyz.botolog.ghostify.python.PythonDiagnosticsBridge
 import xyz.botolog.ghostify.ui.contract.SettingsContract
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
 import xyz.botolog.ghostify.ui.model.FullPlayerLayout
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import xyz.botolog.ghostify.update.DownloadState
 import xyz.botolog.ghostify.update.UpdateChecker
@@ -45,6 +48,7 @@ class SettingsViewModel(
     private val playlistRepo: PlaylistRepository,
     private val songRepo: SongRepository,
     private val musicStore: MusicStore,
+    private val diagnostics: PythonDiagnosticsBridge = PythonDiagnosticsBridge(),
 ) : ContractViewModel(), SettingsContract {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -323,6 +327,38 @@ class SettingsViewModel(
                 it.copy(updateError = "Install failed: ${e.message}")
             }
         }
+    }
+
+    override fun showPythonLibraries() {
+        Timber.i("SettingsViewModel.showPythonLibraries: START")
+        launch {
+            _state.update {
+                it.copy(
+                    showPythonLibraries = true,
+                    isLoadingPythonLibraries = true,
+                    pythonLibraries = emptyList(),
+                    pythonLibrariesError = null,
+                    pythonVersion = null,
+                    pythonImplementation = null,
+                )
+            }
+            val report = withContext(Dispatchers.IO) { diagnostics.reportBlocking() }
+            Timber.i("SettingsViewModel.showPythonLibraries: got ${report.libraries.size} libraries")
+            _state.update {
+                it.copy(
+                    isLoadingPythonLibraries = false,
+                    pythonLibraries = report.libraries,
+                    pythonLibrariesError = report.error,
+                    pythonVersion = report.pythonVersion,
+                    pythonImplementation = report.implementation,
+                )
+            }
+        }
+    }
+
+    override fun dismissPythonLibraries() {
+        Timber.i("SettingsViewModel.dismissPythonLibraries: START")
+        _state.update { it.copy(showPythonLibraries = false) }
     }
 
     /**
