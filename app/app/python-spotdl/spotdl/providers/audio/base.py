@@ -5,6 +5,8 @@ Base audio provider module.
 import logging
 import re
 import shlex
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from yt_dlp import YoutubeDL
@@ -19,6 +21,24 @@ from spotdl.utils.formatter import (
     create_song_title,
 )
 from spotdl.utils.matching import get_best_matches, order_results
+
+try:
+    from ghostify_consts import (  # type: ignore[import-not-found]
+        ISRC_SCORE_THRESHOLD,
+        VIEWS_TOP_N,
+        VIEWS_WEIGHT_CAP,
+        YTDL_RETRIES,
+    )
+except ImportError:  # pragma: no cover - vendored sys.path fallback
+    _APP_PYTHON_DIR = Path(__file__).resolve().parents[4] / "src" / "main" / "python"
+    if str(_APP_PYTHON_DIR) not in sys.path:
+        sys.path.insert(0, str(_APP_PYTHON_DIR))
+    from ghostify_consts import (  # type: ignore[import-not-found,no-redef]
+        ISRC_SCORE_THRESHOLD,
+        VIEWS_TOP_N,
+        VIEWS_WEIGHT_CAP,
+        YTDL_RETRIES,
+    )
 
 __all__ = ["AudioProviderError", "AudioProvider", "ISRC_REGEX", "YTDLLogger"]
 
@@ -115,7 +135,7 @@ class AudioProvider:
             "logger": YTDLLogger(),
             "cookiefile": self.cookie_file,
             "outtmpl": str((get_temp_path() / "%(id)s.%(ext)s").resolve()),
-            "retries": 5,
+            "retries": YTDL_RETRIES,
             "extractor_args": {},
         }
 
@@ -336,7 +356,7 @@ class AudioProvider:
         - The best match URL and its score
         """
 
-        best_results = get_best_matches(results, 8)
+        best_results = get_best_matches(results, VIEWS_TOP_N)
 
         # If we have only one result, return it
         if len(best_results) == 1:
@@ -345,9 +365,9 @@ class AudioProvider:
         # Initial best result based on the average match
         best_result = best_results[0]
 
-        # If the best result has a score higher than 80%
+        # If the best result has a score higher than threshold
         # and it's a isrc search, return it
-        if best_result[1] > 80 and best_result[0].isrc_search:
+        if best_result[1] > ISRC_SCORE_THRESHOLD and best_result[0].isrc_search:
             return best_result[0], best_result[1]
 
         # If we have more than one result,
@@ -388,7 +408,7 @@ class AudioProvider:
                 result_views = views[index]
                 views_score = (
                     (result_views - lowest_views) / (highest_views - lowest_views)
-                ) * 15
+                ) * VIEWS_WEIGHT_CAP
                 # Open-ended score (no 100 cap): view weighting stacks
                 # additively so a high-view + high-match result may exceed 100.
                 score = best_result[1] + views_score

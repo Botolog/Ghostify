@@ -47,6 +47,23 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from ghostify_consts import (
+    DEFAULT_TIMEOUT as _CONST_DEFAULT_TIMEOUT,
+    FALLBACK_SEARCH_LIMIT,
+    FFMPEG_PROBE_TIMEOUT,
+    GHOSTIFY_SEARCH_LIMIT,
+    LYRICS_CONNECT_TIMEOUT,
+    LYRICS_READ_TIMEOUT,
+    PER_TRACK_YT_TIMEOUT as _CONST_PER_TRACK_YT_TIMEOUT,
+    TEMP_SWEEP_AGE as _CONST_TEMP_SWEEP_AGE,
+    DURATION_TOLERANCE as _CONST_DURATION_TOLERANCE,
+    VIEWS_LOOKUP_MAX_BUDGET,
+    VIEWS_LOOKUP_MIN_BUDGET,
+    YT_CONCURRENCY as _CONST_YT_CONCURRENCY,
+    YT_RESOLVE_RETRIES,
+    YT_RETRY_BACKOFF_BASE,
+)
+
 logger = logging.getLogger("ghostify_dl")
 
 _MODULES: Dict[str, Any] = {}
@@ -172,7 +189,7 @@ def ffmpeg_probe():
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=30,
+        timeout=FFMPEG_PROBE_TIMEOUT,
     )
     if proc.returncode != 0:
         detail = proc.stderr.decode("utf-8", "replace") if proc.stderr else ""
@@ -259,13 +276,13 @@ class TrackDownloadError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Defaults (metadata fetch).
+# Defaults (metadata fetch). Canonical values live in ghostify_consts.
 # ---------------------------------------------------------------------------
 
-DEFAULT_TIMEOUT = 180.0
+DEFAULT_TIMEOUT = _CONST_DEFAULT_TIMEOUT
 DEFAULT_RESOLVE_YT = True
-DEFAULT_PER_TRACK_YT_TIMEOUT = 8.0
-YT_CONCURRENCY = 10
+DEFAULT_PER_TRACK_YT_TIMEOUT = _CONST_PER_TRACK_YT_TIMEOUT
+YT_CONCURRENCY = _CONST_YT_CONCURRENCY
 _yt_semaphore = threading.Semaphore(YT_CONCURRENCY)
 
 _PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{1,64}$")
@@ -977,7 +994,7 @@ def _watch_url(video_id: Optional[str]) -> Optional[str]:
 
 def search_yt_candidates(
     song: Any,
-    limit: int = 10,
+    limit: int = GHOSTIFY_SEARCH_LIMIT,
     per_track_timeout: float = DEFAULT_PER_TRACK_YT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Return the raw YouTube candidate results for *song*, pooled.
@@ -1065,7 +1082,7 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
     """
     if per_track_timeout <= 0:
         return None
-    yt_retries = 3
+    yt_retries = YT_RESOLVE_RETRIES
     from spotdl.utils.formatter import create_song_title
 
     query = create_song_title(song.name, song.artists or [], for_lyrics=False)
@@ -1073,13 +1090,13 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
     def _search_ytmusic() -> Optional[str]:
         provider = _get_yt_provider()
         results = provider.get_results(
-            query, filter="songs", ignore_spelling=True, limit=10
+            query, filter="songs", ignore_spelling=True, limit=GHOSTIFY_SEARCH_LIMIT
         )
         return _select_yt_id(song, results, per_track_timeout)
 
     def _search_youtube_fallback() -> Optional[str]:
         provider = _get_youtube_fallback_provider()
-        results = provider.get_results(query, limit=10)
+        results = provider.get_results(query, limit=GHOSTIFY_SEARCH_LIMIT)
         return _select_yt_id(song, results, per_track_timeout)
 
     # Try YouTube Music with retries
@@ -1092,7 +1109,7 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
         if attempt < yt_retries - 1:
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(YT_RETRY_BACKOFF_BASE * (attempt + 1))
 
     # Fallback: plain YouTube search
     logger.debug(
@@ -1321,8 +1338,8 @@ ALLOWED_BITRATES = (128, 192, 320)
 SIDECAR_EXT = ".spotdl"
 SIDECAR_SCHEMA = 1
 
-DEFAULT_TEMP_SWEEP_AGE = 3600.0  # seconds
-DEFAULT_DURATION_TOLERANCE = 90.0  # seconds
+DEFAULT_TEMP_SWEEP_AGE = _CONST_TEMP_SWEEP_AGE  # seconds
+DEFAULT_DURATION_TOLERANCE = _CONST_DURATION_TOLERANCE  # seconds
 
 
 def extract_spotify_id(url: Any) -> Optional[str]:
@@ -1723,13 +1740,13 @@ def _score_candidates(app_song: Any, candidates: Any, per_track_timeout: float) 
                     _n_candidates = 0
                 if per_track_timeout and per_track_timeout > 0 and _n_candidates > 0:
                     _per_candidate = min(
-                        3.0,
-                        max(0.5, per_track_timeout / max(1, _n_candidates)),
+                        VIEWS_LOOKUP_MAX_BUDGET,
+                        max(VIEWS_LOOKUP_MIN_BUDGET, per_track_timeout / max(1, _n_candidates)),
                     )
                 elif per_track_timeout and per_track_timeout > 0:
-                    _per_candidate = min(3.0, per_track_timeout)
+                    _per_candidate = min(VIEWS_LOOKUP_MAX_BUDGET, per_track_timeout)
                 else:
-                    _per_candidate = 3.0
+                    _per_candidate = VIEWS_LOOKUP_MAX_BUDGET
 
                 def _bounded_get_views(
                     url: Any,
@@ -2310,7 +2327,7 @@ class TrackDownloader:
                     continue
                 try:
                     results = _get_yt_provider().get_results(
-                        query, filter="songs", ignore_spelling=True, limit=5
+                        query, filter="songs", ignore_spelling=True, limit=FALLBACK_SEARCH_LIMIT
                     )
                     video_id = _first_result_video_id(results)
                     if video_id:
@@ -2320,7 +2337,7 @@ class TrackDownloader:
                     logger.debug("Fallback YTM search failed for query=%s: %s", query, exc)
                 try:
                     results = _get_youtube_fallback_provider().get_results(
-                        query, limit=5
+                        query, limit=FALLBACK_SEARCH_LIMIT
                     )
                     video_id = _first_result_video_id(results)
                     if video_id:
@@ -3019,7 +3036,7 @@ def fetch_lyrics(name: str, artists: str, provider: str = "synced") -> Optional[
 
     _orig_default = _base.TimeoutSession.request.__defaults__
     try:
-        _base.TimeoutSession.request.__defaults__ = (8, 10)
+        _base.TimeoutSession.request.__defaults__ = (LYRICS_CONNECT_TIMEOUT, LYRICS_READ_TIMEOUT)
         if provider == "genius":
             from spotdl.providers.lyrics.genius import Genius
             lyrics_provider = Genius()

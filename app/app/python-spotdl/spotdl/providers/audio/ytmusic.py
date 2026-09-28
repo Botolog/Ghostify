@@ -4,6 +4,8 @@ YTMusic module for downloading and searching songs.
 
 import logging
 import re
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from ytmusicapi import YTMusic
@@ -11,6 +13,18 @@ from ytmusicapi import YTMusic
 from spotdl.providers.audio.base import ISRC_REGEX, AudioProvider
 from spotdl.types.result import Result
 from spotdl.utils.formatter import parse_duration
+
+try:
+    from ghostify_consts import YTM_SEARCH_ATTEMPTS, YTM_SONGS_LIMIT, YTM_VIDEOS_LIMIT
+except ImportError:  # pragma: no cover - vendored sys.path fallback
+    _APP_PYTHON_DIR = Path(__file__).resolve().parents[4] / "src" / "main" / "python"
+    if str(_APP_PYTHON_DIR) not in sys.path:
+        sys.path.insert(0, str(_APP_PYTHON_DIR))
+    from ghostify_consts import (  # type: ignore[import-not-found,no-redef]
+        YTM_SEARCH_ATTEMPTS,
+        YTM_SONGS_LIMIT,
+        YTM_VIDEOS_LIMIT,
+    )
 
 __all__ = ["YouTubeMusic", "parse_ytm_views"]
 
@@ -124,10 +138,10 @@ class YouTubeMusic(AudioProvider):
     """
 
     SUPPORTS_ISRC = True
-    SEARCH_ATTEMPTS = 3
+    SEARCH_ATTEMPTS = YTM_SEARCH_ATTEMPTS
     GET_RESULTS_OPTS: List[Dict[str, Any]] = [
-        {"filter": "songs", "ignore_spelling": True, "limit": 50},
-        {"filter": "videos", "ignore_spelling": True, "limit": 50},
+        {"filter": "songs", "ignore_spelling": True, "limit": YTM_SONGS_LIMIT},
+        {"filter": "videos", "ignore_spelling": True, "limit": YTM_VIDEOS_LIMIT},
     ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:

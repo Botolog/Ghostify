@@ -126,6 +126,9 @@ for _directory in (APP_PYTHON_DIR, *VENDORED_DIRS):
     if _directory.is_dir() and _path not in sys.path:
         sys.path.insert(0, _path)
 
+from ghostify_consts import JEV_DEMO_DEFAULT_LIMIT as _DEMO_LIMIT
+from ghostify_consts import DEFAULT_PER_TRACK_TIMEOUT as _DEMO_TIMEOUT
+
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_DEPENDENCY = 3
@@ -133,8 +136,8 @@ EXIT_METADATA = 4
 EXIT_PROVIDER = 5
 EXIT_NO_CANDIDATES = 6
 
-DEFAULT_LIMIT = 10
-DEFAULT_TIMEOUT = 8.0
+DEFAULT_LIMIT = _DEMO_LIMIT
+DEFAULT_TIMEOUT = _DEMO_TIMEOUT
 COLUMN_WIDTH = 36
 MAX_FIELD_WIDTH = 100
 OPTION_LABEL_WIDTH = 44

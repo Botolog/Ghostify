@@ -43,6 +43,9 @@ class SettingsRepository(private val settingDao: SettingDao) {
         /** Preference key for the full-player layout mode. */
         const val KEY_FULL_PLAYER_LAYOUT = "full_player_compact"
 
+        /** Preference key for offering pre-release GitHub versions in update checks. */
+        const val KEY_INCLUDE_PRE_RELEASE_UPDATES = "include_pre_release_updates"
+
         // ── Defaults ──────────────────────────────────────────────────
 
         /** Default storage directory name. */
@@ -64,6 +67,9 @@ class SettingsRepository(private val settingDao: SettingDao) {
         const val DEFAULT_SHOW_QUEUE_COVERS = true
 
         const val DEFAULT_LOOP_PLAYLISTS = true
+
+        /** Default include-pre-releases flag (stable releases only). */
+        const val DEFAULT_INCLUDE_PRE_RELEASE_UPDATES = false
 
         /**
          * Default full-player layout. Older builds stored a boolean here, where
@@ -329,6 +335,44 @@ class SettingsRepository(private val settingDao: SettingDao) {
 
     suspend fun setLoopPlaylists(value: Boolean) {
         set(KEY_LOOP_PLAYLISTS, value.toString())
+    }
+
+    // ── include_pre_release_updates ───────────────────────────────────
+
+    /**
+     * Observes whether pre-release GitHub versions should be offered in update checks.
+     *
+     * @return A [Flow] emitting the boolean flag.
+     */
+    fun observeIncludePreReleaseUpdates(): Flow<Boolean> {
+        Timber.i("SettingsRepository.observeIncludePreReleaseUpdates: START")
+        val result = observe(KEY_INCLUDE_PRE_RELEASE_UPDATES, DEFAULT_INCLUDE_PRE_RELEASE_UPDATES.toString())
+            .map { parseBooleanSetting(it, DEFAULT_INCLUDE_PRE_RELEASE_UPDATES) }
+        Timber.i("SettingsRepository.observeIncludePreReleaseUpdates: returning $result")
+        return result
+    }
+
+    /**
+     * One-shot fetch of the include-pre-releases flag.
+     *
+     * @return `true` if pre-release versions should be offered in update checks.
+     */
+    suspend fun getIncludePreReleaseUpdates(): Boolean {
+        Timber.i("SettingsRepository.getIncludePreReleaseUpdates: START")
+        val raw = get(KEY_INCLUDE_PRE_RELEASE_UPDATES, DEFAULT_INCLUDE_PRE_RELEASE_UPDATES.toString())
+        val result = parseBooleanSetting(raw, DEFAULT_INCLUDE_PRE_RELEASE_UPDATES)
+        Timber.i("SettingsRepository.getIncludePreReleaseUpdates: returning $result")
+        return result
+    }
+
+    /**
+     * Persists the include-pre-releases flag.
+     *
+     * @param value `true` to offer pre-release versions in update checks.
+     */
+    suspend fun setIncludePreReleaseUpdates(value: Boolean) {
+        Timber.i("SettingsRepository.setIncludePreReleaseUpdates: START")
+        set(KEY_INCLUDE_PRE_RELEASE_UPDATES, value.toString())
     }
 
     // ── full_player_compact (full-player layout) ───────────────────────

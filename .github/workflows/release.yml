@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -86,4 +91,4 @@ jobs:
             ghostify-${{ inputs.tag }}-debug.apk
             ghostify-${{ inputs.tag }}-release.apk
           draft: false
-          prerelease: false
+          prerelease: ${{ inputs.prerelease }}

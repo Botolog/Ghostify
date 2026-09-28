@@ -299,4 +299,77 @@ class UpdateCheckerTest {
     fun shouldOfferUpdate_largeGap_upgradeAllowed() {
         assertTrue(UpdateChecker.shouldOfferUpdate(currentVersionCode = 1, latestVersionCode = 999))
     }
+
+    // ── extractJsonBoolean ────────────────────────────────────────────
+
+    @Test
+    fun extractJsonBoolean_parsesTrueAndFalse() {
+        val json = """{"prerelease": true, "draft":false}"""
+        assertTrue(UpdateChecker.extractJsonBoolean(json, "prerelease") == true)
+        assertTrue(UpdateChecker.extractJsonBoolean(json, "draft") == false)
+    }
+
+    @Test
+    fun extractJsonBoolean_missingOrNonBoolean_returnsNull() {
+        val json = """{"prerelease": "yes", "tag_name": "v1"}"""
+        assertNull(UpdateChecker.extractJsonBoolean(json, "prerelease"))
+        assertNull(UpdateChecker.extractJsonBoolean(json, "draft"))
+    }
+
+    // ── splitTopLevelJsonObjects ──────────────────────────────────────
+
+    @Test
+    fun splitTopLevelJsonObjects_extractsReleaseObjects() {
+        val json = """[{"tag_name":"v2","body":"a { tricky } \"quoted\""},{"tag_name":"v1"}]"""
+        val objects = UpdateChecker.splitTopLevelJsonObjects(json)
+        assertEquals(2, objects.size)
+        assertEquals("v2", UpdateChecker.extractJsonString(objects[0], "tag_name"))
+        assertEquals("v1", UpdateChecker.extractJsonString(objects[1], "tag_name"))
+    }
+
+    @Test
+    fun splitTopLevelJsonObjects_emptyArray_returnsEmpty() {
+        assertTrue(UpdateChecker.splitTopLevelJsonObjects("[]").isEmpty())
+    }
+
+    // ── selectRelease ─────────────────────────────────────────────────
+
+    private fun releaseJson(tag: String, pre: Boolean, draft: Boolean, version: Int): String {
+        return """{"tag_name":"$tag","prerelease":$pre,"draft":$draft,"body":"","published_at":"",
+            |"assets":[{"name":"ghostify-v$version-release.apk",
+            |"browser_download_url":"https://example.com/ghostify-v$version-release.apk"}]}""".trimMargin()
+    }
+
+    private val releasesListJson: String
+        get() = "[${releaseJson("v0.5.0-beta", true, false, 50)}," +
+            "${releaseJson("v0.4.0", false, false, 40)}," +
+            "${releaseJson("v0.6.0-draft", false, true, 60)}]"
+
+    @Test
+    fun selectRelease_stableOnly_skipsPreReleaseAndDraft() {
+        val info = UpdateChecker.selectRelease(releasesListJson, 30, includePreReleases = false)
+        assertEquals("0.4.0", info?.versionName)
+        assertEquals(40L, info?.versionCode)
+    }
+
+    @Test
+    fun selectRelease_includePreReleases_picksNewestEligible() {
+        val info = UpdateChecker.selectRelease(releasesListJson, 30, includePreReleases = true)
+        assertEquals("0.5.0-beta", info?.versionName)
+        assertEquals(50L, info?.versionCode)
+    }
+
+    @Test
+    fun selectRelease_nothingNewer_returnsNull() {
+        assertNull(UpdateChecker.selectRelease(releasesListJson, 50, includePreReleases = true))
+        assertNull(UpdateChecker.selectRelease(releasesListJson, 40, includePreReleases = false))
+    }
+
+    @Test
+    fun selectRelease_releaseWithoutApk_isSkipped() {
+        val json = """[{"tag_name":"v0.9.0","prerelease":false,"draft":false,"body":"","assets":[]},
+            |${releaseJson("v0.4.0", false, false, 40)}]""".trimMargin()
+        val info = UpdateChecker.selectRelease(json, 30, includePreReleases = false)
+        assertEquals(40L, info?.versionCode)
+    }
 }

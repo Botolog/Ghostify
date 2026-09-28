@@ -62,17 +62,26 @@ object UpdateChecker {
 
     private const val GITHUB_API_URL =
         "https://api.github.com/repos/Botolog/Ghostify/releases/latest"
+
+    private const val GITHUB_RELEASES_URL =
+        "https://api.github.com/repos/Botolog/Ghostify/releases?per_page=30"
     private const val APK_MIME = "application/vnd.android.package-archive"
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 30_000
 
     /**
-     * Fetches the latest release from GitHub and returns [UpdateInfo] if a newer
+     * Fetches releases from GitHub and returns [UpdateInfo] if a newer
      * version is available, or `null` if the app is already up to date.
      *
-     * @throws IOException if the network request fails or the response is malformed.
+     * Hits `/releases/latest` (stable releases only) unless [includePreReleases]
+     * is set, in which case the releases list is scanned newest-first and
+     * pre-releases are eligible candidates. Drafts are never offered.
+     *
+     * @param includePreReleases `true` to treat pre-releases (beta/RC builds)
+     *   as update candidates.
+     * @throws IOException if the network request fails or no usable release is found.
      */
-    suspend fun checkForUpdate(context: Context): UpdateInfo? {
+    suspend fun checkForUpdate(context: Context, includePreReleases: Boolean = false): UpdateInfo? {
         return withContext(Dispatchers.IO) {
             val currentVersionCode = try {
                 @Suppress("DEPRECATION")
@@ -85,7 +94,7 @@ object UpdateChecker {
 
             Timber.d(TAG, "Current version code: %d", currentVersionCode)
 
-            val url = URL(GITHUB_API_URL)
+            val url = URL(if (includePreReleases) GITHUB_RELEASES_URL else GITHUB_API_URL)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/vnd.github.v3+json")
@@ -102,50 +111,101 @@ object UpdateChecker {
 
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
 
-                val tagName = extractJsonString(body, "tag_name")
-                    ?: throw IOException("Missing tag_name in release JSON")
-                val releaseBody = extractJsonString(body, "body") ?: ""
-                val publishedAt = extractJsonString(body, "published_at") ?: ""
-
-                val assetsStart = body.indexOf("\"assets\"")
-                if (assetsStart == -1) {
-                    throw IOException("No assets array found in release JSON")
-                }
-
                 val isDebug = try {
                     context.applicationContext.applicationInfo.flags and
                         android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
                 } catch (_: Exception) { false }
 
-                val apkUrl = findApkUrl(body, assetsStart, preferDebug = isDebug)
-                    ?: throw IOException("No APK asset found in release")
-                val assetName = extractApkFileName(body, assetsStart, preferDebug = isDebug)
-                val latestVersionCode = extractVersionCodeFromFileName(assetName, tagName)
-                    ?: throw IOException("Could not extract versionCode from $assetName")
+                val info = if (includePreReleases) {
+                    selectRelease(body, currentVersionCode, includePreReleases = true, preferDebug = isDebug)
+                } else {
+                    val release = parseRelease(body, isDebug)
+                    if (!shouldOfferUpdate(currentVersionCode, release.versionCode)) {
+                        Timber.d(TAG, "Already up to date")
+                        return@withContext null
+                    }
+                    release
+                }
 
-                Timber.d(
-                    TAG,
-                    "Latest release: tag=%s versionCode=%d",
-                    tagName,
-                    latestVersionCode,
-                )
-
-                if (!shouldOfferUpdate(currentVersionCode, latestVersionCode)) {
+                if (info == null) {
                     Timber.d(TAG, "Already up to date")
                     return@withContext null
                 }
 
-                UpdateInfo(
-                    versionName = tagName.trimStart('v', 'V'),
-                    versionCode = latestVersionCode,
-                    releaseNotes = releaseBody,
-                    apkDownloadUrl = apkUrl,
-                    publishedAt = publishedAt,
+                Timber.d(
+                    TAG,
+                    "Update candidate: version=%s versionCode=%d",
+                    info.versionName,
+                    info.versionCode,
                 )
+                info
             } finally {
                 conn.disconnect()
             }
         }
+    }
+
+    /**
+     * Builds [UpdateInfo] from a single GitHub release object.
+     *
+     * @param releaseJson the release object JSON.
+     * @param preferDebug `true` to prefer the `-debug.apk` asset variant.
+     * @throws IOException if the release has no tag, no assets, no APK, or no
+     *   extractable version code.
+     */
+    internal fun parseRelease(releaseJson: String, preferDebug: Boolean? = null): UpdateInfo {
+        val tagName = extractJsonString(releaseJson, "tag_name")
+            ?: throw IOException("Missing tag_name in release JSON")
+        val releaseBody = extractJsonString(releaseJson, "body") ?: ""
+        val publishedAt = extractJsonString(releaseJson, "published_at") ?: ""
+
+        val assetsStart = releaseJson.indexOf("\"assets\"")
+        if (assetsStart == -1) {
+            throw IOException("No assets array found in release JSON")
+        }
+
+        val apkUrl = findApkUrl(releaseJson, assetsStart, preferDebug = preferDebug)
+            ?: throw IOException("No APK asset found in release")
+        val assetName = extractApkFileName(releaseJson, assetsStart, preferDebug = preferDebug)
+        val versionCode = extractVersionCodeFromFileName(assetName, tagName)
+            ?: throw IOException("Could not extract versionCode from $assetName")
+
+        return UpdateInfo(
+            versionName = tagName.trimStart('v', 'V'),
+            versionCode = versionCode,
+            releaseNotes = releaseBody,
+            apkDownloadUrl = apkUrl,
+            publishedAt = publishedAt,
+        )
+    }
+
+    /**
+     * Picks the newest usable release from a GitHub releases-list payload.
+     *
+     * The list is scanned in API order (newest first). Drafts are skipped; when
+     * [includePreReleases] is `false`, pre-releases are skipped too. Releases
+     * that fail to parse (e.g. no APK asset) are skipped rather than failing
+     * the whole check.
+     *
+     * @return the first release newer than [currentVersionCode], or `null`.
+     */
+    internal fun selectRelease(
+        releasesJson: String,
+        currentVersionCode: Long,
+        includePreReleases: Boolean,
+        preferDebug: Boolean? = null,
+    ): UpdateInfo? {
+        for (releaseJson in splitTopLevelJsonObjects(releasesJson)) {
+            if (extractJsonBoolean(releaseJson, "draft") == true) continue
+            if (!includePreReleases && extractJsonBoolean(releaseJson, "prerelease") == true) continue
+            val info = try {
+                parseRelease(releaseJson, preferDebug)
+            } catch (_: IOException) {
+                continue
+            }
+            if (shouldOfferUpdate(currentVersionCode, info.versionCode)) return info
+        }
+        return null
     }
 
     /**
@@ -279,6 +339,71 @@ object UpdateChecker {
             .replace("\\\"", "\"")
             .replace("\\n", "\n")
             .replace("\\\\", "\\")
+    }
+
+    /**
+     * Extracts a boolean value from a flat JSON object by key.
+     *
+     * @return the boolean value, or `null` when the key is absent or not a boolean.
+     */
+    internal fun extractJsonBoolean(json: String, key: String): Boolean? {
+        val pattern = "\"$key\""
+        val start = json.indexOf(pattern)
+        if (start == -1) return null
+
+        val colonStart = json.indexOf(':', start + pattern.length)
+        if (colonStart == -1) return null
+
+        var valueStart = colonStart + 1
+        while (valueStart < json.length && json[valueStart].isWhitespace()) valueStart++
+
+        return when {
+            json.startsWith("true", valueStart) -> true
+            json.startsWith("false", valueStart) -> false
+            else -> null
+        }
+    }
+
+    /**
+     * Splits a JSON array into its top-level object elements.
+     *
+     * Handles nested objects, arrays, and quoted strings (with escapes). Only
+     * intended for the small GitHub releases-list payload.
+     *
+     * @return the raw JSON of each top-level `{...}` element, in order.
+     */
+    internal fun splitTopLevelJsonObjects(jsonArray: String): List<String> {
+        val result = mutableListOf<String>()
+        var depth = 0
+        var inString = false
+        var escape = false
+        var start = -1
+        for (i in jsonArray.indices) {
+            val c = jsonArray[i]
+            if (inString) {
+                when {
+                    escape -> escape = false
+                    c == '\\' -> escape = true
+                    c == '"' -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inString = true
+                '{', '[' -> {
+                    if (c == '{' && depth == 1) start = i
+                    depth++
+                }
+                '}', ']' -> {
+                    depth--
+                    if (c == '}' && depth == 1 && start != -1) {
+                        result.add(jsonArray.substring(start, i + 1))
+                        start = -1
+                    }
+                }
+            }
+        }
+        return result
     }
 
     internal fun findClosingQuote(json: String, from: Int): Int {

@@ -4,8 +4,10 @@ Module for all things matching related
 
 import logging
 import re
+import sys
 from itertools import product, zip_longest
 from math import exp
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from spotdl.types.result import Result
@@ -17,6 +19,95 @@ from spotdl.utils.formatter import (
     slugify,
 )
 from spotdl.utils.logging import MATCH
+
+# Central constants (single source of truth). Vendored spotdl does not have
+# the app python dir on sys.path by default, so fall back to adding the
+# sibling src/main/python directory before importing.
+try:
+    from ghostify_consts import (  # type: ignore[import-not-found]
+        ALBUM_BLEND_HIGH_INCLUSIVE,
+        ALBUM_BLEND_LOW_EXCLUSIVE,
+        ALBUM_STRONG_SET_THRESHOLD,
+        ARTIST_FIXUP2_BONUS,
+        ARTIST_FIXUP2_HIGH,
+        ARTIST_FIXUP3_BLEND_THRESHOLD,
+        ARTIST_FIXUP3_HIGH,
+        ARTIST_FIXUP_GOOD_ENOUGH,
+        ARTIST_FIXUP_LOW_THRESHOLD,
+        CHANNEL_MATCH_BONUS,
+        CHANNEL_MISMATCH_PENALTY,
+        DURATION_BASE_BONUS,
+        ENABLE_UNRELATED_WORDS_PENALTY,
+        EXPLICIT_MISMATCH_PENALTY,
+        FORBIDDEN_WORD_PENALTY,
+        FORBIDDEN_WORDS,
+        MAIN_ARTIST_LOW_THRESHOLD,
+        NAME_MATCH_THRESHOLD,
+        ARTISTS_MATCH_THRESHOLD,
+        SET_EXACT_BONUS,
+        SET_JACCARD_WEIGHT,
+        SET_RECALL_WEIGHT,
+        SET_SCORE_CAP,
+        SET_SCORE_SCALE,
+        SET_STOPWORDS,
+        SPOTIFY_ARTISTS_SLICE,
+        TIME_DECAY_RATE,
+        TIME_SCORE_SCALE,
+        UNRELATED_CONTENT_TYPE_PENALTY,
+        UNRELATED_OTHER_WORD_PENALTY,
+        UNRELATED_PENALTY_CAP,
+        VEVO_BONUS,
+        VIEWS_DQ_THRESHOLD,
+        VIEWS_HIGH_PENALTY,
+        VIEWS_HIGH_THRESHOLD,
+        VIEWS_MID_PENALTY,
+        VIEWS_MID_THRESHOLD,
+        YTM_SOURCE_BONUS,
+    )
+except ImportError:  # pragma: no cover - vendored sys.path fallback
+    _APP_PYTHON_DIR = Path(__file__).resolve().parents[3] / "src" / "main" / "python"
+    if str(_APP_PYTHON_DIR) not in sys.path:
+        sys.path.insert(0, str(_APP_PYTHON_DIR))
+    from ghostify_consts import (  # type: ignore[import-not-found,no-redef]
+        ALBUM_BLEND_HIGH_INCLUSIVE,
+        ALBUM_BLEND_LOW_EXCLUSIVE,
+        ALBUM_STRONG_SET_THRESHOLD,
+        ARTIST_FIXUP2_BONUS,
+        ARTIST_FIXUP2_HIGH,
+        ARTIST_FIXUP3_BLEND_THRESHOLD,
+        ARTIST_FIXUP3_HIGH,
+        ARTIST_FIXUP_GOOD_ENOUGH,
+        ARTIST_FIXUP_LOW_THRESHOLD,
+        CHANNEL_MATCH_BONUS,
+        CHANNEL_MISMATCH_PENALTY,
+        DURATION_BASE_BONUS,
+        ENABLE_UNRELATED_WORDS_PENALTY,
+        EXPLICIT_MISMATCH_PENALTY,
+        FORBIDDEN_WORD_PENALTY,
+        FORBIDDEN_WORDS,
+        MAIN_ARTIST_LOW_THRESHOLD,
+        NAME_MATCH_THRESHOLD,
+        ARTISTS_MATCH_THRESHOLD,
+        SET_EXACT_BONUS,
+        SET_JACCARD_WEIGHT,
+        SET_RECALL_WEIGHT,
+        SET_SCORE_CAP,
+        SET_SCORE_SCALE,
+        SET_STOPWORDS,
+        SPOTIFY_ARTISTS_SLICE,
+        TIME_DECAY_RATE,
+        TIME_SCORE_SCALE,
+        UNRELATED_CONTENT_TYPE_PENALTY,
+        UNRELATED_OTHER_WORD_PENALTY,
+        UNRELATED_PENALTY_CAP,
+        VEVO_BONUS,
+        VIEWS_DQ_THRESHOLD,
+        VIEWS_HIGH_PENALTY,
+        VIEWS_HIGH_THRESHOLD,
+        VIEWS_MID_PENALTY,
+        VIEWS_MID_THRESHOLD,
+        YTM_SOURCE_BONUS,
+    )
 
 __all__ = [
     "FORBIDDEN_WORDS",
@@ -60,121 +151,9 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-FORBIDDEN_WORDS = [
-    "bassboosted",
-    "remix",
-    "remastered",
-    "remaster",
-    "reverb",
-    "bassboost",
-    "live",
-    "acoustic",
-    "8daudio",
-    "concert",
-    "acapella",
-    "slowed",
-    "instrumental",
-]
-
-# Simpler set-based scoring (replaces steps 1+2: name + artist fuzzy match).
-#
-# Chosen stoplist (documented): filler feat/join tokens —
-#   ft, feat, featuring, with, x, vs
-# plus music-video descriptor tokens (subset of _STANDARD_TITLE_WORDS
-# plus vevo/footnotes):
-#   vevo, footnotes, official, video, audio, lyrics, lyric, visualizer,
-#   music, mv, hd, hq, 4k
-# "ft." normalizes to "ft" via punctuation stripping so it is covered.
-# Applied consistently on BOTH sides (build_spotify_set + build_result_set
-# via normalize_to_words) so e.g. "OneRepublic - I Ain't Worried (Official
-# Music Video)" on a VEVO channel collapses to the exact query set (=100)
-# instead of being diluted by descriptor tokens. Raw-name checks (VEVO
-# bonus, official detection) still use result.name/author directly, so
-# filtering the set does not break them.
-# Deliberately NOT dropping "and"/"the": they are kept when present in the
-# title so "the" in a title still counts; dropping them would inflate
-# unrelated matches. "pres"/"presents"/"versus" are not in the default set
-# (rare, keep signal) — add them here if they cause false positives.
-SET_STOPWORDS = frozenset(
-    {
-        "ft",
-        "feat",
-        "featuring",
-        "with",
-        "x",
-        "vs",
-        "vevo",
-        "footnotes",
-        "official",
-        "video",
-        "audio",
-        "lyrics",
-        "lyric",
-        "visualizer",
-        "music",
-        "mv",
-        "hd",
-        "hq",
-        "4k",
-    }
-)
-
-# Step 3 (forbidden words): softened penalty per matched word.
-FORBIDDEN_WORD_PENALTY = 5
-
-# Step 4 (unrelated/clickbait words): disabled — penalty forced to 0.
-# The code path is kept (gated) for future re-enable.
-ENABLE_UNRELATED_WORDS_PENALTY = False
-
-# YouTube Music source bonus: +5 for candidates that come from YouTube Music
-# (vs plain YouTube), applied once in order_results (open-ended score, no cap).
-# Detection is via Result.source == "YouTubeMusic" (primary; set from the
-# provider class name) with a music.youtube.com URL fallback, so both YTM
-# songs (music.youtube.com, verified) and YTM videos (www.youtube.com,
-# unverified) get the bonus while plain-YT ytsearch results do not.
-# Single choke point: Downloader.search (pooled YT+YTM), AudioProvider.search,
-# and ghostify_dl._score_candidates all score via order_results exactly once,
-# so the bonus applies to the pooled ranking without double-applying.
-# get_best_result intentionally does NOT re-apply it (view-weighting only).
-# Final scores are open-ended (not a 0-100 %): sub-scores stay 0-100 but
-# channel/YTM/duration bonuses stack additively on top and may exceed 100.
-YTM_SOURCE_BONUS = 5
-
-# Vevo-official bonus: +3 when the raw result title carries "vevo" and the
-# uploader is trusted (verified) or the channel already matched a song
-# artist (+10 above). The set scorer strips "vevo" (see SET_STOPWORDS) so
-# it cannot dilute the set score; this bonus restores the official signal
-# on top of the open-ended total (no cap). Checked against raw
-# result.name.lower() (not the filtered word set) so set filtering does
-# not break official detection.
-VEVO_BONUS = 3
-
-# Low view-count policy (absolute thresholds, additive, open-ended score).
-# Applied in order_results AFTER channel/YTM/duration bonuses, BEFORE final:
-#   views < VIEWS_DQ_THRESHOLD (1,000)  => disqualified (dropped like the
-#     name<=55 rule, not a negative bonus).
-#   views < VIEWS_MID_THRESHOLD (10,000) => -20 points.
-#   views < VIEWS_HIGH_THRESHOLD (50,000) => -10 points.
-#   views >= 50,000 (or unknown, see below) => documented penalty only.
-# Unknown views (None, 0, unparseable/negative) are NOT disqualified: after
-# the parse fix views are mostly ints, but 0 means "unknown/missing" (YTM
-# unparseable -> 0, YT missing view_count -> 0, uncached -> None), which is
-# common on fresh official uploads. Dropping those would bury new releases,
-# so unknown gets -20 (same as the <10k bucket) instead of DQ.
-# DQ fallback: if EVERY candidate is <1k, the best DQ'd candidate (highest
-# pre-views score) is rescued into the result so callers do not see an empty
-# dict and spam SEARCH_FAILED / "filtered every candidate out". Strict drop
-# is preferred per-candidate, but an all-DQ pool keeps one survivor. This
-# fallback keeps the pre-views score (no extra penalty) and is documented
-# here and in order_results.
-# Interaction: get_best_result's relative +0..+15 views weighting (top-8)
-# stacks on top of this absolute penalty; _score_candidates needs no change
-# since it scores via order_results exactly once.
-VIEWS_DQ_THRESHOLD = 1000
-VIEWS_MID_THRESHOLD = 10_000
-VIEWS_HIGH_THRESHOLD = 50_000
-VIEWS_MID_PENALTY = 20
-VIEWS_HIGH_PENALTY = 10
+# Canonical values live in ghostify_consts (imported above); the names below
+# are re-exported here for backwards compatibility (matching.FORBIDDEN_WORDS
+# etc. keep working). See ghostify_consts.py for original-value comments.
 
 
 def normalize_to_words(text: Optional[str]) -> Set[str]:
@@ -217,7 +196,7 @@ def build_spotify_set(song: Song) -> Set[str]:
 
     out: Set[str] = set()
     out.update(normalize_to_words(song.name))
-    for artist in (song.artists or [])[:3]:
+    for artist in (song.artists or [])[:SPOTIFY_ARTISTS_SLICE]:
         out.update(normalize_to_words(artist))
     return out
 
@@ -292,10 +271,10 @@ def calc_set_score(spotify_set: Set[str], result_set: Set[str]) -> float:
     union = spotify_set | result_set
     recall = len(inter) / len(spotify_set)
     jaccard = len(inter) / len(union) if union else 0.0
-    score = (0.6 * recall + 0.4 * jaccard) * 100.0
+    score = (SET_RECALL_WEIGHT * recall + SET_JACCARD_WEIGHT * jaccard) * SET_SCORE_SCALE
     if spotify_set == result_set:
-        score += 5.0
-    return min(score, 100.0)
+        score += SET_EXACT_BONUS
+    return min(score, SET_SCORE_CAP)
 
 
 def calc_set_match(song: Song, result: Result) -> float:
@@ -442,10 +421,10 @@ def _penalty_unrelated_words(song: Song, result: Result) -> float:
         if not word or word in song_words or word in _STANDARD_TITLE_WORDS:
             continue
         if word in _CONTENT_TYPE_WORDS:
-            penalty += 20
+            penalty += UNRELATED_CONTENT_TYPE_PENALTY
         else:
-            penalty += 3
-    return min(penalty, 30)
+            penalty += UNRELATED_OTHER_WORD_PENALTY
+    return min(penalty, UNRELATED_PENALTY_CAP)
 
 
 def fill_string(strings: List[str], main_string: str, string_to_check: str) -> str:
@@ -706,7 +685,7 @@ def calc_main_artist_match(song: Song, result: Result) -> float:
             res_main_artist = sort_string(slug_result_main_artist.split("-"), "-")
 
             if artist in res_main_artist:
-                main_artist_match += 100 / len(song.artists)
+                main_artist_match += SET_SCORE_SCALE / len(song.artists)
 
         return main_artist_match
 
@@ -719,7 +698,7 @@ def calc_main_artist_match(song: Song, result: Result) -> float:
 
     # Use second artist from the sorted list to
     # calculate the match if the first artist match is too low
-    if main_artist_match < 50 and len(song_artists) > 1:
+    if main_artist_match < MAIN_ARTIST_LOW_THRESHOLD and len(song_artists) > 1:
         for song_artist, result_artist in product(
             song_artists[:2], sorted_result_artists[:2]
         ):
@@ -771,7 +750,7 @@ def artists_match_fixup1(song: Song, result: Result, score: float) -> float:
     """
 
     # Don't fix if the score is already good enough
-    if score > 50:
+    if score > ARTIST_FIXUP_GOOD_ENOUGH:
         return score
 
     # If we didn't find any artist match,
@@ -789,7 +768,7 @@ def artists_match_fixup1(song: Song, result: Result, score: float) -> float:
     # If artist match is still too low,
     # we fallback to matching all song artist names
     # with the result's title
-    if score <= 70:
+    if score <= ARTIST_FIXUP_LOW_THRESHOLD:
         artist_title_match = 0.0
         result_name = slugify(result.name).replace("-", "")
         for artist in song.artists:
@@ -798,14 +777,14 @@ def artists_match_fixup1(song: Song, result: Result, score: float) -> float:
             if slug_artist in result_name:
                 artist_title_match += 1.0
 
-        artist_title_match = (artist_title_match / len(song.artists)) * 100
+        artist_title_match = (artist_title_match / len(song.artists)) * SET_SCORE_SCALE
 
         score = max(score, artist_title_match)
 
     # If artist match is still too low,
     # we fallback to matching all song artist names
     # with the result's artists
-    if score <= 70:
+    if score <= ARTIST_FIXUP_LOW_THRESHOLD:
         # Song artists: ['charlie-moncler', 'fukaj', 'mata', 'pedro']
         # Result artists: ['fukaj-mata-charlie-moncler-und-pedro']
 
@@ -846,7 +825,7 @@ def artists_match_fixup2(
     - new score
     """
 
-    if score > 70 or not result.verified:
+    if score > ARTIST_FIXUP2_HIGH or not result.verified:
         # Don't fixup the score
         # if the artist match is already high
         # or if the result is not verified
@@ -857,7 +836,7 @@ def artists_match_fixup2(
     slug_result_name = slugify(result.name)
 
     # # Check if the main artist is simlar
-    has_main_artist = (score / (2 if len(song.artists) > 1 else 1)) > 50
+    has_main_artist = (score / (2 if len(song.artists) > 1 else 1)) > ARTIST_FIXUP_GOOD_ENOUGH
 
     _, match_str2 = create_match_strings(song, result, search_query)
 
@@ -868,12 +847,12 @@ def artists_match_fixup2(
     for artist in artists_to_check:
         artist = slugify(artist).replace("-", "")
         if artist in match_str2.replace("-", ""):
-            score += 5
+            score += ARTIST_FIXUP2_BONUS
 
     # if the artist match is still too low,
     # we fallback to matching all song artist names
     # with the result's artists
-    if score <= 70:
+    if score <= ARTIST_FIXUP_LOW_THRESHOLD:
         # Artists from song/result name without the song/result name words
         artist_list1 = create_clean_string(song.artists, slug_song_name, True)
         artist_list2 = create_clean_string(
@@ -905,7 +884,7 @@ def artists_match_fixup3(song: Song, result: Result, score: float) -> float:
     """
 
     if (
-        score > 70
+        score > ARTIST_FIXUP3_HIGH
         or not result.artists
         or len(result.artists) > 1
         or len(song.artists) == 1
@@ -921,11 +900,11 @@ def artists_match_fixup3(song: Song, result: Result, score: float) -> float:
         slugify(create_song_title(song.name, [song.artist], for_lyrics=False)),
     )
 
-    if artists_score_fixup >= 80:
+    if artists_score_fixup >= ARTIST_FIXUP3_BLEND_THRESHOLD:
         score = (score + artists_score_fixup) / 2
 
     # Make sure that the score is not higher than 100
-    score = min(score, 100)
+    score = min(score, SET_SCORE_CAP)
 
     return score
 
@@ -969,8 +948,8 @@ def calc_time_match(song: Song, result: Result) -> float:
     """
 
     time_diff = abs(song.duration - result.duration)
-    score = exp(-0.05 * time_diff)
-    return score * 100
+    score = exp(-TIME_DECAY_RATE * time_diff)
+    return score * TIME_SCORE_SCALE
 
 
 def calc_duration_bonus(song: Song, result: Result) -> float:
@@ -1003,7 +982,7 @@ def calc_duration_bonus(song: Song, result: Result) -> float:
         return 0.0
     if song_secs <= 0 or video_secs <= 0:
         return 0.0
-    return 10.0 - abs(video_secs - song_secs)
+    return DURATION_BASE_BONUS - abs(video_secs - song_secs)
 
 
 def calc_album_match(song: Song, result: Result) -> float:
@@ -1245,8 +1224,8 @@ def order_results(
         duration_bonus = calc_duration_bonus(song, result)
         debug(song.song_id, result.result_id, f"Duration bonus: {duration_bonus}")
 
-        # Ignore results with name match lower than 55%
-        if name_match <= 55:
+        # Ignore results with name match lower than threshold
+        if name_match <= NAME_MATCH_THRESHOLD:
             debug(
                 song.song_id,
                 result.result_id,
@@ -1254,8 +1233,8 @@ def order_results(
             )
             continue
 
-        # Ignore results with artists match lower than 70%
-        if artists_match < 70 and result.source != "slider.kz":
+        # Ignore results with artists match lower than threshold
+        if artists_match < ARTISTS_MATCH_THRESHOLD and result.source != "slider.kz":
             debug(
                 song.song_id,
                 result.result_id,
@@ -1278,7 +1257,7 @@ def order_results(
                 if slug_artist and (
                     slug_artist in slug_author or slug_author in slug_artist
                 ):
-                    average_match += 10
+                    average_match += CHANNEL_MATCH_BONUS
                     channel_hit = True
                     debug(
                         song.song_id,
@@ -1288,7 +1267,7 @@ def order_results(
                     break
             else:
                 # No artist match — penalize non-official uploads
-                average_match -= 15
+                average_match -= CHANNEL_MISMATCH_PENALTY
                 debug(
                     song.song_id,
                     result.result_id,
@@ -1313,8 +1292,8 @@ def order_results(
             result.verified
             and not result.isrc_search
             and result.album
-            and 0 < album_match <= 80
-            and set_score < 85
+            and ALBUM_BLEND_LOW_EXCLUSIVE < album_match <= ALBUM_BLEND_HIGH_INCLUSIVE
+            and set_score < ALBUM_STRONG_SET_THRESHOLD
         ):
             # Album blend (verified + low-album case, as before) with two
             # guards:
@@ -1342,7 +1321,7 @@ def order_results(
                 result.result_id,
                 "Lowering average match due to explicit mismatch",
             )
-            average_match -= 5
+            average_match -= EXPLICIT_MISMATCH_PENALTY
 
         # Duration: additive bonus, not a 0-100 average blend.
         # No duration-based filtering here — a far duration simply earns a

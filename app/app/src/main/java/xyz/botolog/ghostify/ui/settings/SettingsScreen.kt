@@ -84,6 +84,7 @@ object SettingsTestTags {
     const val CACHE_COUNT = "setting_cache_count"
     const val CLEAR_CACHE = "setting_clear_cache"
     const val CHECK_UPDATE = "setting_check_update"
+    const val INCLUDE_PRE_RELEASE_UPDATES = "setting_include_pre_release_updates"
     const val PYTHON_LIBRARIES = "setting_python_libraries"
     const val PYTHON_LIBRARIES_SHEET = "setting_python_libraries_sheet"
     const val PYTHON_LIBRARIES_CONTENT = "setting_python_libraries_content"
@@ -324,6 +325,8 @@ private fun SettingsContent(
         Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
 
         SectionHeader("About")
+        IncludePreReleaseUpdatesSetting(state = state, contract = contract)
+        Spacer(modifier = Modifier.height(SECTION_SPACING))
         UpdateSetting(state = state, contract = contract)
 
         Spacer(modifier = Modifier.weight(1f))
@@ -732,6 +735,31 @@ private fun shareLogs(
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(intent, "Share logs"))
+}
+
+/**
+ * Toggle for offering pre-release GitHub versions (beta/RC builds) in update checks.
+ */
+@Composable
+private fun IncludePreReleaseUpdatesSetting(state: SettingsUiState, contract: SettingsContract) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Include pre-release versions", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Offer beta and release-candidate builds when checking for updates.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = state.includePreReleaseUpdates,
+            onCheckedChange = contract::setIncludePreReleaseUpdates,
+            modifier = Modifier.testTag(SettingsTestTags.INCLUDE_PRE_RELEASE_UPDATES),
+        )
+    }
 }
 
 /**

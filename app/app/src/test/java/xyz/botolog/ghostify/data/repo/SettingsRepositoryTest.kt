@@ -168,6 +168,39 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun defaultIncludePreReleaseUpdatesIsFalse() {
+        assertFalse(SettingsRepository.DEFAULT_INCLUDE_PRE_RELEASE_UPDATES)
+    }
+
+    @Test
+    fun observeIncludePreReleaseUpdates_defaultsToFalseWhenMissing() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_INCLUDE_PRE_RELEASE_UPDATES)
+        } returns flowOf(null)
+
+        assertFalse(repository.observeIncludePreReleaseUpdates().first())
+    }
+
+    @Test
+    fun observeIncludePreReleaseUpdates_readsStoredTrue() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_INCLUDE_PRE_RELEASE_UPDATES)
+        } returns flowOf("true")
+
+        assertTrue(repository.observeIncludePreReleaseUpdates().first())
+    }
+
+    @Test
+    fun setIncludePreReleaseUpdates_persistsBooleanValue() = runTest {
+        val setting = SettingEntity(SettingsRepository.KEY_INCLUDE_PRE_RELEASE_UPDATES, "true")
+        coEvery { settingDao.upsert(setting) } returns Unit
+
+        repository.setIncludePreReleaseUpdates(true)
+
+        coVerify(exactly = 1) { settingDao.upsert(setting) }
+    }
+
+    @Test
     fun getShowQueueCovers_keepsExplicitlyStoredFalse() = runTest {
         coEvery { settingDao.getValue(SettingsRepository.KEY_SHOW_QUEUE_COVERS) } returns "false"
 

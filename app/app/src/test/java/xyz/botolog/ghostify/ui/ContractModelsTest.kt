@@ -168,6 +168,7 @@ class ContractModelsTest {
         assertFalse(state.autoDownloadOnAdd)
         assertTrue(state.loopPlaylists)
         assertTrue(state.showQueueCovers)
+        assertFalse(state.includePreReleaseUpdates)
         assertEquals(FullPlayerLayout.NORMAL, state.fullPlayerLayout)
         assertEquals(CacheStats(0, 0), state.cacheStats)
         assertFalse(state.isClearingCache)

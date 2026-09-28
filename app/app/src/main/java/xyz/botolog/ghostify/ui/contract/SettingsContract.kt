@@ -101,6 +101,13 @@ interface SettingsContract {
     fun migrateSongs()
 
     /**
+     * Enable or disable offering pre-release GitHub versions in update checks.
+     *
+     * @param enabled `true` to treat pre-releases (beta/RC builds) as update candidates.
+     */
+    fun setIncludePreReleaseUpdates(enabled: Boolean)
+
+    /**
      * Checks for a new release on GitHub.
      */
     fun checkForUpdate()
@@ -146,6 +153,8 @@ interface SettingsContract {
      * @property pythonLibrariesError human-readable error when the report failed.
      * @property pythonVersion version of the interpreter running the app's Python.
      * @property pythonImplementation interpreter implementation name.
+     * @property includePreReleaseUpdates `true` when pre-release GitHub versions
+     *   should be offered in update checks.
      */
     data class SettingsUiState(
         val bitrate: Bitrate = Bitrate.MEDIUM,
@@ -172,5 +181,6 @@ interface SettingsContract {
         val pythonLibrariesError: String? = null,
         val pythonVersion: String? = null,
         val pythonImplementation: String? = null,
+        val includePreReleaseUpdates: Boolean = false,
     )
 }

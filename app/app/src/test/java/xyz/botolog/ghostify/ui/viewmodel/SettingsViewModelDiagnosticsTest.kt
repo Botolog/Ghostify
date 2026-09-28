@@ -56,6 +56,7 @@ class SettingsViewModelDiagnosticsTest {
         every { settings.observeShowQueueCovers() } returns flowOf(true)
         every { settings.observeLoopPlaylists() } returns flowOf(true)
         every { settings.observeFullPlayerLayout() } returns flowOf("normal")
+        every { settings.observeIncludePreReleaseUpdates() } returns flowOf(false)
         coEvery { settings.getStorageDir() } returns "ghostify"
 
         playlistRepo = mockk()

@@ -243,6 +243,11 @@ class SettingsViewModel(
         launch { settings.setLandscapeControlsSide(side) }
     }
 
+    override fun setIncludePreReleaseUpdates(enabled: Boolean) {
+        Timber.i("SettingsViewModel.setIncludePreReleaseUpdates: enabled=$enabled")
+        launch { settings.setIncludePreReleaseUpdates(enabled) }
+    }
+
     override fun clearCache() {
         Timber.i("SettingsViewModel.clearCache: START")
         launch {
@@ -256,7 +261,8 @@ class SettingsViewModel(
         launch {
             _state.update { it.copy(isCheckingUpdate = true, updateError = null) }
             try {
-                val info = UpdateChecker.checkForUpdate(context)
+                val includePreReleases = _state.value.includePreReleaseUpdates
+                val info = UpdateChecker.checkForUpdate(context, includePreReleases)
                 if (info != null) {
                     _state.update {
                         it.copy(
@@ -406,6 +412,9 @@ class SettingsViewModel(
             }
             .combine(settings.observeFullPlayerLayout()) { uiState, fullPlayerLayout ->
                 uiState.copy(fullPlayerLayout = FullPlayerLayout.fromStorageValue(fullPlayerLayout))
+            }
+            .combine(settings.observeIncludePreReleaseUpdates()) { uiState, includePreReleaseUpdates ->
+                uiState.copy(includePreReleaseUpdates = includePreReleaseUpdates)
             }
             .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
             .collect { uiState -> _state.value = uiState }

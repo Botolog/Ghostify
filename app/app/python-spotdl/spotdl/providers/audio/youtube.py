@@ -3,12 +3,26 @@ YouTube module for downloading and searching songs using yt-dlp.
 """
 
 import time
+import sys
+from pathlib import Path
 from typing import Any, Dict, List
 
 from yt_dlp import YoutubeDL
 
 from spotdl.providers.audio.base import AudioProvider
 from spotdl.types.result import Result
+
+try:
+    from ghostify_consts import YT_PROVIDER_BACKOFF_BASE, YT_PROVIDER_MAX_RETRIES, YT_SEARCH_LIMIT
+except ImportError:  # pragma: no cover - vendored sys.path fallback
+    _APP_PYTHON_DIR = Path(__file__).resolve().parents[4] / "src" / "main" / "python"
+    if str(_APP_PYTHON_DIR) not in sys.path:
+        sys.path.insert(0, str(_APP_PYTHON_DIR))
+    from ghostify_consts import (  # type: ignore[import-not-found,no-redef]
+        YT_PROVIDER_BACKOFF_BASE,
+        YT_PROVIDER_MAX_RETRIES,
+        YT_SEARCH_LIMIT,
+    )
 
 __all__ = ["YouTube"]
 
@@ -42,15 +56,15 @@ class YouTube(AudioProvider):
         search_opts["skip_download"] = True
         search_opts["extract_flat"] = "in_playlist"
 
-        max_retries = 3
+        max_retries = YT_PROVIDER_MAX_RETRIES
         for attempt in range(max_retries):
             try:
                 with YoutubeDL(search_opts) as ydl:
-                    info = ydl.extract_info(f"ytsearch10:{search_term}", download=False)
+                    info = ydl.extract_info(f"ytsearch{YT_SEARCH_LIMIT}:{search_term}", download=False)
                 break
             except Exception:
                 if attempt < max_retries - 1:
-                    time.sleep(2 ** (attempt + 1))
+                    time.sleep(YT_PROVIDER_BACKOFF_BASE ** (attempt + 1))
                     continue
                 return []
 

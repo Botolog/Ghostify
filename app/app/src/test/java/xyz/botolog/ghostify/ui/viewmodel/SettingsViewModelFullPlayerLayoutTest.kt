@@ -49,6 +49,7 @@ class SettingsViewModelFullPlayerLayoutTest {
         every { settings.observeLandscapeControlsSide() } returns flowOf("left")
         every { settings.observeShowQueueCovers() } returns flowOf(false)
         every { settings.observeLoopPlaylists() } returns flowOf(true)
+        every { settings.observeIncludePreReleaseUpdates() } returns flowOf(false)
         coEvery { settings.getStorageDir() } returns "ghostify"
         coEvery { settings.setFullPlayerLayout(any()) } returns Unit
 
