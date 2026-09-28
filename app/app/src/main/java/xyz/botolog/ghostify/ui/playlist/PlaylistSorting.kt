@@ -48,6 +48,27 @@ data class PlaylistSortSpec(
     val descending: Boolean = false,
 )
 
+/**
+ * Resolves the sort a playlist row was saved with into a [PlaylistSortSpec].
+ *
+ * The stored field is a bare token, so a playlist row that predates the sort columns — or
+ * one written by a build that knew an option this one does not — resolves to the default
+ * sort instead of failing: playlist order ascending, which is the order the playlist's
+ * `songs.position` values already hold. The direction is always taken from the row, so a
+ * saved descending sort is never quietly flattened.
+ *
+ * @param sortField the playlist's `sort_field` value, or `null` when unset.
+ * @param sortDescending the playlist's `sort_descending` value.
+ * @return the saved sort, or the default one when the stored field is missing or unknown.
+ */
+fun storedSortSpec(
+    sortField: String?,
+    sortDescending: Boolean,
+): PlaylistSortSpec = PlaylistSortSpec(
+    option = PlaylistSortOption.fromStorageValue(sortField) ?: PlaylistSortOption.PLAYLIST_ORDER,
+    descending = sortDescending,
+)
+
 fun sortPlaylistTracks(
     tracks: List<TrackUi>,
     specification: PlaylistSortSpec = PlaylistSortSpec(),

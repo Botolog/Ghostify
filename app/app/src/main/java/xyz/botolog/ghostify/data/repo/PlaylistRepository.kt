@@ -207,6 +207,24 @@ class PlaylistRepository(
     }
 
     /**
+     * Persists the playlist's track sort: the sort option and its direction.
+     *
+     * Stored as playlist data rather than as a UI draft, so re-opening the playlist shows
+     * — and keeps re-applying — the sort the user last chose, and so a metadata edit made
+     * elsewhere (the player info dialog) can re-sort the playlist without the detail screen
+     * being open. Only the two sort columns are written; `songs.position` is left to
+     * [applySongOrder], which the caller runs right after.
+     *
+     * @param playlistId The playlist whose sort is being saved.
+     * @param field The sort option's stable storage token, e.g. `title`.
+     * @param descending `true` for highest-to-lowest, `false` for lowest-to-highest.
+     */
+    suspend fun saveTrackSort(playlistId: String, field: String, descending: Boolean) {
+        Timber.i("PlaylistRepository.saveTrackSort: $playlistId field=$field descending=$descending")
+        playlistDao.setTrackSort(playlistId, field, descending)
+    }
+
+    /**
      * Reorders a song within a playlist.
      *
      * @param songId The song to reorder.

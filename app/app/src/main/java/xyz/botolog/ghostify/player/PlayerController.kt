@@ -732,6 +732,56 @@ class PlayerController private constructor(
     }
 
     /**
+     * Mirrors edited display metadata onto the live queue, the ExoPlayer timeline and the
+     * media session, then publishes a fresh snapshot.
+     *
+     * The queue (and so the queue editor) and the now-playing line are both re-read from
+     * the timeline, so this is what makes a saved title/artist/album visible immediately
+     * instead of only after the queue is rebuilt. Only metadata is touched — the URI,
+     * the position and the play state are all restored around the item replacement, so
+     * saving while a song is playing does not restart it.
+     *
+     * Must run on the main thread.
+     *
+     * @param songId the song database ID whose metadata was edited.
+     * @param title the new track title.
+     * @param artist the new artist name.
+     * @param album the new album name, or `null` when the track has no album.
+     * @return `true` when the song was queued and has been updated.
+     */
+    fun updateQueueItemMetadata(
+        songId: String,
+        title: String,
+        artist: String,
+        album: String?,
+    ): Boolean {
+        Timber.i("PlayerController.updateQueueItemMetadata: songId=$songId")
+        val index = queueManager.updateMetadata(songId, title, artist, album)
+        if (index < 0) return false
+        if (index < exoPlayer.mediaItemCount) {
+            val mediaItem = exoPlayer.getMediaItemAt(index)
+            val metadata = mediaItem.mediaMetadata.buildUpon()
+                .setTitle(title)
+                .setArtist(artist)
+                .setAlbumTitle(album)
+                .build()
+            val isCurrent = exoPlayer.currentMediaItem?.mediaId == songId
+            val savedPosition = exoPlayer.currentPosition
+            val wasPlaying = exoPlayer.isPlaying
+            exoPlayer.replaceMediaItem(index, mediaItem.buildUpon().setMediaMetadata(metadata).build())
+            if (isCurrent) {
+                // Replacing the current item drops it back to the start, so put the
+                // listener back where they were and keep the music running.
+                exoPlayer.seekTo(exoPlayer.currentMediaItemIndex, savedPosition.coerceAtLeast(0L))
+                ensurePrepared()
+                if (wasPlaying) exoPlayer.play()
+            }
+        }
+        publishSnapshot()
+        return true
+    }
+
+    /**
      * Sets the player volume.
      *
      * @param volume 0.0 (mute) .. 1.0 (full).

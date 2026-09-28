@@ -25,6 +25,12 @@ import timber.log.Timber
  * v7 — adds lyrics metadata (`lyrics_source`, `lyrics_edited`), YouTube
  *      metadata (`yt_url`, `yt_name`, `yt_channel`), and download metadata
  *      (`bitrate`, `file_size`, `downloaded_at`).
+ * v8 — adds `cover_art_local_path` to `songs` and `playlists` for offline artwork.
+ * v9 — adds the playlist's saved track sort: `playlists.sort_field` (the sort
+ *      option's storage token) and `playlists.sort_descending` (ascending or
+ *      descending). Existing rows default to playlist order ascending, which is
+ *      the order their `songs.position` values already hold, so upgrading never
+ *      re-sorts a playlist.
  *
  * The migration is a single Room transaction, so it is atomic: if any step fails
  * SQLite rolls the whole upgrade back and the database is left at the previous
@@ -146,6 +152,28 @@ object Migrations {
         }
     }
 
+    /**
+     * The v8 → v9 DDL. Adds the playlist's saved track sort: the sort field token and
+     * its direction.
+     *
+     * Both columns are `NOT NULL` with a column-level default, so the `ALTER` backfills
+     * every existing playlist row with playlist order ascending — the order its
+     * `songs.position` values already describe, so no playlist is re-sorted by the upgrade
+     * and no row is left with a missing sort.
+     */
+    val MIGRATION_8_9_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE playlists ADD COLUMN sort_field TEXT NOT NULL DEFAULT 'playlist_order'",
+        "ALTER TABLE playlists ADD COLUMN sort_descending INTEGER NOT NULL DEFAULT 0",
+    )
+
+    /** v8 → v9 migration. */
+    val MIGRATION_8_9: Migration = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_8_9.migrate")
+            MIGRATION_8_9_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
     /** All migrations in order, passed to [Room.databaseBuilder]. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
@@ -155,5 +183,6 @@ object Migrations {
         MIGRATION_5_6,
         MIGRATION_6_7,
         MIGRATION_7_8,
+        MIGRATION_8_9,
     )
 }

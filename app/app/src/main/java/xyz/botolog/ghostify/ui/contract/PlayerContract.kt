@@ -70,6 +70,42 @@ interface PlayerContract {
     fun saveLyrics(lyrics: String, edited: Boolean = false)
 
     /**
+     * Persists edited title/artists/album for a song and refreshes the player so the
+     * now-playing line and the queue editor show the new values straight away.
+     *
+     * The media file itself is never renamed, moved or re-downloaded: only the metadata
+     * columns of the song row are written. Nothing is written at all when the caller
+     * discards the edit, which is why the dialog never calls this on dismiss.
+     *
+     * @param songId the song database ID to update.
+     * @param title the new track title.
+     * @param artists the new comma-separated artist names.
+     * @param album the new album name; blank is stored as "no album".
+     * @param onResult called with the outcome, on the main thread.
+     */
+    fun updateSongMetadata(
+        songId: String,
+        title: String,
+        artists: String,
+        album: String,
+        onResult: (SongMetadataUpdateResult) -> Unit = {},
+    )
+
+    /** Outcome of a [updateSongMetadata] call, delivered to the caller rather than thrown. */
+    sealed interface SongMetadataUpdateResult {
+
+        /** The song row was written and the player now shows the new metadata. */
+        data object Updated : SongMetadataUpdateResult
+
+        /**
+         * Nothing was written.
+         *
+         * @property reason a readable, user-facing explanation to show in the dialog.
+         */
+        data class Failed(val reason: String) : SongMetadataUpdateResult
+    }
+
+    /**
      * Reorder the queue by moving an item from one position to another.
      *
      * @param fromIndex the current position of the item to move.

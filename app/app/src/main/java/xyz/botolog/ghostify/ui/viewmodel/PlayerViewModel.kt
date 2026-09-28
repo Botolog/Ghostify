@@ -1,6 +1,7 @@
 package xyz.botolog.ghostify.ui.viewmodel
 
 import xyz.botolog.ghostify.data.db.dao.SongDao
+import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.data.repo.SettingsRepository
 import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.player.PlayerController
@@ -9,8 +10,13 @@ import xyz.botolog.ghostify.player.core.CurrentItem
 import xyz.botolog.ghostify.player.core.PlayerUiState as CorePlayerUiState
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
+import xyz.botolog.ghostify.ui.contract.PlayerContract.SongMetadataUpdateResult
 import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.model.QueueItem
+import xyz.botolog.ghostify.ui.playlist.PlaylistSortSpec
+import xyz.botolog.ghostify.ui.playlist.isStoredOrder
+import xyz.botolog.ghostify.ui.playlist.sortedTrackIds
+import xyz.botolog.ghostify.ui.playlist.storedSortSpec
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,9 +36,15 @@ import timber.log.Timber
  * (now-playing / position / shuffle / repeat / queue / lyrics) and forwards user
  * commands. It never owns playback state itself.
  *
+ * Saving a metadata edit is the one command that reaches past the player into the
+ * database twice: it writes the song row, then re-applies the sort the song's playlist
+ * was saved with so the edited track lands where that sort says it should. That re-sort
+ * only touches `songs.position` — the playback queue keeps the order it was built with.
+ *
  * @property player the underlying media playback controller.
  * @property songDao DAO for observing lyrics from the database.
  * @property downloads download manager for retry-lyrics support.
+ * @property playlistRepo playlist persistence layer, for the saved-sort re-application.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerViewModel(
@@ -40,6 +52,7 @@ class PlayerViewModel(
     private val songDao: SongDao,
     private val downloads: DownloadManager,
     private val settingsRepository: SettingsRepository,
+    private val playlistRepo: PlaylistRepository,
 ) : ContractViewModel(), PlayerContract {
 
     private val _state = MutableStateFlow(PlayerUiState())
@@ -223,6 +236,81 @@ class PlayerViewModel(
         }
     }
 
+    override fun updateSongMetadata(
+        songId: String,
+        title: String,
+        artists: String,
+        album: String,
+        onResult: (SongMetadataUpdateResult) -> Unit,
+    ) {
+        Timber.i("PlayerViewModel.updateSongMetadata: songId=$songId")
+        val id = songId.trim()
+        val newTitle = title.trim()
+        val newArtists = artists.trim()
+        val newAlbum = album.trim().ifEmpty { null }
+        if (id.isEmpty()) {
+            Timber.w("PlayerViewModel.updateSongMetadata: no song id")
+            onResult(SongMetadataUpdateResult.Failed(METADATA_SONG_MISSING))
+            return
+        }
+        if (newTitle.isEmpty()) {
+            onResult(SongMetadataUpdateResult.Failed(METADATA_TITLE_REQUIRED))
+            return
+        }
+        launch {
+            try {
+                val written = songDao.updateMetadata(id, newTitle, newArtists, newAlbum)
+                if (written <= 0) {
+                    Timber.w("PlayerViewModel.updateSongMetadata: no row for $id")
+                    onResult(SongMetadataUpdateResult.Failed(METADATA_SONG_MISSING))
+                    return@launch
+                }
+                player.updateQueueItemMetadata(id, newTitle, newArtists, newAlbum)
+                onResult(SongMetadataUpdateResult.Updated)
+                reapplyPlaylistSortAfterEdit(id)
+            } catch (e: Exception) {
+                Timber.e(e, "PlayerViewModel.updateSongMetadata: FAILED for songId=$id")
+                onResult(SongMetadataUpdateResult.Failed(METADATA_SAVE_FAILED))
+            }
+        }
+    }
+
+    /**
+     * Moves a just-edited track to where the playlist's saved sort says it belongs.
+     *
+     * A playlist is sorted by writing `songs.position`, so renaming a track can leave it
+     * sitting in the wrong place: "Alpha" renamed to "Zulu" in an A–Z playlist is still at
+     * the top. Re-applying the sort after the write moves it. The sort is read from the
+     * playlist's own row, so the track lands where the *playlist* is sorted, whether or not
+     * the detail screen is open.
+     *
+     * Nothing happens for a playlist in its own ascending order — the default, whose
+     * positions are the order the user dragged them into — or for a stored field this build
+     * does not know: an edit must never rewrite a manual order. A direction the user did
+     * choose (playlist order descending, say) is a real sort, so it is re-applied like any
+     * other. The order is always recomputed from a fresh read of the whole playlist and
+     * written as one batch, so a concurrent edit or sort cannot lose a position.
+     *
+     * The playback queue is deliberately left alone — it keeps the order it was built with
+     * until the playlist is started again. A failure here cannot undo the saved metadata,
+     * so it is logged rather than reported back to the dialog.
+     */
+    private suspend fun reapplyPlaylistSortAfterEdit(songId: String) {
+        try {
+            val song = songDao.getById(songId) ?: return
+            val playlist = playlistRepo.getPlaylist(song.playlistId) ?: return
+            val specification = storedSortSpec(playlist.sortField, playlist.sortDescending)
+            if (specification.isStoredOrder()) return
+            val songs = playlistRepo.getSongs(playlist.id)
+            if (songs.size < 2) return
+            val orderedIds = sortedTrackIds(songs.map { it.toTrackUi() }, specification)
+            val changed = playlistRepo.applySongOrder(playlist.id, orderedIds)
+            Timber.i("PlayerViewModel.reapplyPlaylistSortAfterEdit: $specification changed=$changed")
+        } catch (e: Exception) {
+            Timber.e(e, "PlayerViewModel.reapplyPlaylistSortAfterEdit: FAILED for songId=$songId")
+        }
+    }
+
     override fun refetchLyrics(provider: String, onResult: (String?) -> Unit) {
         Timber.i("PlayerViewModel.refetchLyrics: START provider=$provider")
         val songId = currentSongId.value ?: run {
@@ -350,5 +438,14 @@ class PlayerViewModel(
     companion object {
         /** Default duration used when the player core reports `null`. */
         private const val DEFAULT_DURATION_MS = 0L
+
+        /** Shown when the edited song id matches no row — the write is skipped entirely. */
+        internal const val METADATA_SONG_MISSING = "This song is no longer in your library"
+
+        /** Shown when the title field is empty, so there is nothing worth saving. */
+        internal const val METADATA_TITLE_REQUIRED = "Enter a title before saving"
+
+        /** Shown when the database write itself failed; the row is left untouched. */
+        internal const val METADATA_SAVE_FAILED = "Couldn't save the changes. Please try again."
     }
 }

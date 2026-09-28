@@ -155,6 +155,20 @@ interface PlaylistDao {
     suspend fun setSortOrder(id: String, sortOrder: Int)
 
     /**
+     * Saves the playlist's track sort: the sort option and its direction.
+     *
+     * Both halves are written by one statement, so a playlist row can never end up with
+     * the field of one sort and the direction of another. Neither column is derived from
+     * `songs.position`, so this write never depends on — or blocks — a position batch.
+     *
+     * @param id The playlist row id.
+     * @param field The sort option's stable storage token, e.g. `title`.
+     * @param descending `true` for highest-to-lowest, `false` for lowest-to-highest.
+     */
+    @Query("UPDATE playlists SET sort_field = :field, sort_descending = :descending WHERE id = :id")
+    suspend fun setTrackSort(id: String, field: String, descending: Boolean)
+
+    /**
      * Searches playlists by name.
      *
      * @param query The search term to match against the name column.

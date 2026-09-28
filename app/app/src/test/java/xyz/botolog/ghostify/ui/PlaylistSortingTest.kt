@@ -13,6 +13,7 @@ import xyz.botolog.ghostify.ui.playlist.isStoredOrder
 import xyz.botolog.ghostify.ui.playlist.orderedBy
 import xyz.botolog.ghostify.ui.playlist.sortPlaylistTracks
 import xyz.botolog.ghostify.ui.playlist.sortedTrackIds
+import xyz.botolog.ghostify.ui.playlist.storedSortSpec
 
 class PlaylistSortingTest {
     @Test
@@ -294,6 +295,33 @@ class PlaylistSortingTest {
         assertNull(PlaylistSortOption.fromStorageValue(null))
         assertNull(PlaylistSortOption.fromStorageValue(""))
         assertNull(PlaylistSortOption.fromStorageValue("artist_album_song"))
+    }
+
+    @Test
+    fun aStoredSortResolvesBackIntoTheSortThatWasSaved() {
+        assertEquals(
+            PlaylistSortSpec(option = PlaylistSortOption.ARTIST, descending = true),
+            storedSortSpec("artist", true),
+        )
+        assertEquals(
+            PlaylistSortSpec(option = PlaylistSortOption.DATE_ADDED, descending = false),
+            storedSortSpec("date_added", false),
+        )
+    }
+
+    @Test
+    fun aMissingStoredSortFallsBackToPlaylistOrderAscending() {
+        assertTrue(storedSortSpec(null, false).isStoredOrder())
+        assertTrue(storedSortSpec("", false).isStoredOrder())
+        assertTrue(storedSortSpec("mood", false).isStoredOrder())
+    }
+
+    @Test
+    fun aStoredSortKeepsItsDirectionEvenWhenTheFieldIsUnknown() {
+        assertEquals(
+            PlaylistSortSpec(option = PlaylistSortOption.PLAYLIST_ORDER, descending = true),
+            storedSortSpec("mood", true),
+        )
     }
 
     private fun track(

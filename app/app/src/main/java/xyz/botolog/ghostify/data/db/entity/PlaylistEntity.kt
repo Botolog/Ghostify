@@ -26,6 +26,10 @@ import xyz.botolog.ghostify.data.model.PlaylistStatus
  * @property lastSyncedAt Epoch millis of the most recent successful sync.
  * @property sortOrder User-defined sort position (lower = higher in list). Falls back to created_at.
  * @property origin Where this playlist was fetched from (Spotify / YouTube).
+ * @property sortField The track sort this playlist was last saved with, as a stable
+ *   [PlaylistSortOption] storage token (`playlist_order` when the playlist is in its
+ *   own order).
+ * @property sortDescending `true` when [sortField] was saved highest-to-lowest.
  */
 @Entity(
     tableName = "playlists",
@@ -65,4 +69,24 @@ data class PlaylistEntity(
 
     @ColumnInfo(name = "origin", defaultValue = "SPOTIFY")
     val origin: PlaylistOrigin = PlaylistOrigin.SPOTIFY,
-)
+
+    @ColumnInfo(name = "sort_field", defaultValue = SORT_FIELD_PLAYLIST_ORDER)
+    val sortField: String = SORT_FIELD_PLAYLIST_ORDER,
+
+    @ColumnInfo(name = "sort_descending", defaultValue = "0")
+    val sortDescending: Boolean = false,
+) {
+    companion object {
+
+        /**
+         * The `sort_field` value that means "the order already stored in the database".
+         *
+         * Deliberately a plain token and not a reference to
+         * `ui.playlist.PlaylistSortOption.PLAYLIST_ORDER`: the entity layer stays free of
+         * UI types, and `PlaylistSortOption.fromStorageValue` resolves the token back.
+         * Every playlist that predates the sort columns keeps this value, so it opens in
+         * playlist order, ascending — exactly the order its `songs.position` values hold.
+         */
+        const val SORT_FIELD_PLAYLIST_ORDER = "playlist_order"
+    }
+}

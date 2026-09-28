@@ -305,6 +305,22 @@ interface SongDao {
     suspend fun updateCoverArtLocalPath(songId: String, path: String?)
 
     /**
+     * Writes the user-editable display metadata of a single song.
+     *
+     * Only `title`, `artists` and `album` are touched: the file path, the download status
+     * and every other column are left exactly as they are, so renaming a track in the info
+     * dialog can never orphan, re-download or replace the file it plays from.
+     *
+     * @param songId The song row id.
+     * @param title The new track title.
+     * @param artists The new comma-separated artist names.
+     * @param album The new album name, or `null` when the track has no album.
+     * @return The number of rows written, i.e. `0` when no song carries that id.
+     */
+    @Query("UPDATE songs SET title = :title, artists = :artists, album = :album WHERE id = :songId")
+    suspend fun updateMetadata(songId: String, title: String, artists: String, album: String?): Int
+
+    /**
      * Searches songs by title or artist name across all playlists.
      *
      * @param query The search term to match against title and artists columns.

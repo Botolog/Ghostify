@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -39,10 +38,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -58,6 +58,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -86,7 +87,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.lerp
 import androidx.compose.ui.text.style.TextAlign
@@ -104,6 +108,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
+import xyz.botolog.ghostify.ui.contract.PlayerContract.SongMetadataUpdateResult
 import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.ui.model.NowPlaying
 import xyz.botolog.ghostify.ui.util.DurationFormat
@@ -388,6 +393,9 @@ fun FullPlayerOverlay(
             SongInfoDialog(
                 nowPlaying = state.nowPlaying,
                 onDismiss = { showSongInfo = false },
+                onSaveMetadata = { songId, title, artists, album, onResult ->
+                    contract.updateSongMetadata(songId, title, artists, album, onResult)
+                },
             )
         }
 
@@ -1638,37 +1646,112 @@ private fun formatTimestamp2(epochMs: Long): String {
 
 // ── Song Info Dialog ────────────────────────────────────────────────
 
+// The body is a fixed, half-screen-ish box: it does not grow with the number of detail
+// rows, so moving from a sparse song to a fully downloaded one — or simply from one
+// track to the next — never resizes the dialog under the user's fingers. Content that
+// does not fit scrolls instead.
+internal const val SONG_INFO_BODY_HEIGHT_FRACTION = 0.5f
+private val SONG_INFO_MIN_BODY_HEIGHT = 200.dp
+private val SONG_INFO_MAX_BODY_HEIGHT = 420.dp
+
+/**
+ * Height of the song-info dialog body for a [screenHeightDp]-tall window: half the
+ * screen, clamped so the three editable fields plus the actions always fit on a small
+ * phone and the dialog never grows into a full sheet on a tablet. Depends on the window
+ * alone, never on the song, so the box is identical from one track to the next.
+ *
+ * @param screenHeightDp the window height in dp, as reported by the configuration.
+ */
+internal fun songInfoDialogBodyHeight(screenHeightDp: Float): Dp {
+    if (!screenHeightDp.isFinite() || screenHeightDp <= 0f) return SONG_INFO_MAX_BODY_HEIGHT
+    return (screenHeightDp * SONG_INFO_BODY_HEIGHT_FRACTION).dp
+        .coerceIn(SONG_INFO_MIN_BODY_HEIGHT, SONG_INFO_MAX_BODY_HEIGHT)
+}
+
+/** The metadata the dialog is willing to persist: trimmed, with a blank album as "none". */
+internal data class SongMetadataEdit(
+    val title: String,
+    val artists: String,
+    val album: String,
+) {
+    /** The album as the database stores it — a track with no album stores `null`. */
+    val albumOrNull: String? get() = album.ifEmpty { null }
+
+    /** A title is the one field a song cannot do without, so a blank one blocks Save. */
+    val isSavable: Boolean get() = title.isNotEmpty()
+}
+
+/**
+ * Normalises the raw text-field contents into a [SongMetadataEdit] before they are
+ * written, so a stray leading space in a title can never reach the database.
+ */
+internal fun songMetadataEdit(title: String, artists: String, album: String): SongMetadataEdit =
+    SongMetadataEdit(
+        title = title.trim(),
+        artists = artists.trim(),
+        album = album.trim(),
+    )
+
+/**
+ * The message the dialog shows when it stays open, or `null` when the save succeeded.
+ *
+ * Success closes the dialog (the values are already in the database and on screen); any
+ * failure keeps the dialog — and the edit — on screen with a readable reason, so the user
+ * can fix the field or try again without retyping everything. The reason is always a
+ * message chosen at the boundary, never the text of the exception that caused it.
+ */
+internal fun songInfoSaveError(result: SongMetadataUpdateResult): String? =
+    if (result is SongMetadataUpdateResult.Failed) result.reason else null
+
+/**
+ * Editable song info: title, artists and album can be corrected and saved to the
+ * database, with the remaining track details shown read-only underneath them.
+ *
+ * Scoped to the song the dialog was opened for, so a track change underneath (playback
+ * keeps running) can never re-seed the fields — or redirect Save — onto another song.
+ *
+ * @param nowPlaying the track the dialog was opened for.
+ * @param onDismiss invoked by Discard, by a tap outside and by system back; never writes.
+ * @param onSaveMetadata persists the edit and reports the outcome back to the dialog.
+ */
 @Composable
 private fun SongInfoDialog(
     nowPlaying: NowPlaying?,
     onDismiss: () -> Unit,
+    onSaveMetadata: (
+        songId: String,
+        title: String,
+        artists: String,
+        album: String,
+        onResult: (SongMetadataUpdateResult) -> Unit,
+    ) -> Unit,
 ) {
     if (nowPlaying == null) return
 
-    val fields = remember(nowPlaying) {
-        listOf(
-            "Title" to nowPlaying.title.ifEmpty { "N/A" },
-            "Artists" to nowPlaying.artist.ifEmpty { "N/A" },
-            "Album" to nowPlaying.album.ifEmpty { "N/A" },
-            "Spotify ID" to nowPlaying.spotifyId.ifEmpty { "N/A" },
-            "YouTube ID" to (nowPlaying.ytId ?: "N/A"),
-            "YouTube URL" to (nowPlaying.ytUrl ?: "N/A"),
-            "YouTube Name" to (nowPlaying.ytName ?: "N/A"),
-            "YouTube Channel" to (nowPlaying.ytChannel ?: "N/A"),
-            "File Path" to (nowPlaying.filePath ?: "N/A"),
-            "Status" to nowPlaying.status.ifEmpty { "N/A" },
-            "Error" to (nowPlaying.error ?: "N/A"),
-            "Duration (ms)" to nowPlaying.durationMs.toString(),
-            "Position" to nowPlaying.position.toString(),
-            "Bitrate" to (nowPlaying.bitrate?.let { "${it} kbps" } ?: "N/A"),
-            "File Size" to (nowPlaying.fileSize?.let { formatFileSize(it) } ?: "N/A"),
-            "Downloaded At" to (nowPlaying.downloadedAt?.let { formatTimestamp2(it) } ?: "N/A"),
-            "Lyrics Source" to (nowPlaying.lyricsSource ?: "N/A"),
-            "Lyrics Edited" to if (nowPlaying.lyricsEdited) "Yes" else "No",
-            "Lyrics" to (nowPlaying.lyrics?.let {
-                if (it.length > 200) it.take(200) + "..." else it
-            } ?: "N/A"),
-        )
+    val song = remember { nowPlaying }
+    var title by remember(song.id) { mutableStateOf(song.title) }
+    var artists by remember(song.id) { mutableStateOf(song.artist) }
+    var album by remember(song.id) { mutableStateOf(song.album) }
+    var saving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val bodyHeight = songInfoDialogBodyHeight(LocalConfiguration.current.screenHeightDp.toFloat())
+    val details = remember(song) { songInfoDetails(song) }
+    val edit = songMetadataEdit(title, artists, album)
+
+    fun save() {
+        if (saving) return
+        saving = true
+        errorMessage = null
+        onSaveMetadata(song.id, edit.title, edit.artists, edit.album) { result ->
+            val failure = songInfoSaveError(result)
+            if (failure == null) {
+                onDismiss()
+            } else {
+                saving = false
+                errorMessage = failure
+            }
+        }
     }
 
     AlertDialog(
@@ -1680,28 +1763,123 @@ private fun SongInfoDialog(
             )
         },
         text = {
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 400.dp),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(bodyHeight),
             ) {
-                items(fields) { (label, value) ->
-                    Column(modifier = Modifier.padding(vertical = 6.dp)) {
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = value,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                errorMessage?.let { message ->
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    SongInfoField(
+                        label = "Title",
+                        value = title,
+                        onValueChange = { title = it; errorMessage = null },
+                    )
+                    SongInfoField(
+                        label = "Artists",
+                        value = artists,
+                        onValueChange = { artists = it; errorMessage = null },
+                    )
+                    SongInfoField(
+                        label = "Album",
+                        value = album,
+                        onValueChange = { album = it; errorMessage = null },
+                    )
+                    Text(
+                        text = "Track details",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                    )
+                    details.forEach { (label, value) ->
+                        SongInfoDetail(label = label, value = value)
                     }
                 }
             }
         },
         confirmButton = {
+            TextButton(onClick = ::save, enabled = edit.isSavable && !saving) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text("Discard")
             }
         },
     )
 }
+
+/**
+ * A single editable metadata field. The label doubles as the field's accessible name,
+ * so screen readers announce "Title, edit box" without any extra semantics.
+ */
+@Composable
+private fun SongInfoField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** One read-only `label: value` pair from the detail list. */
+@Composable
+private fun SongInfoDetail(label: String, value: String) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+/**
+ * The read-only half of the dialog: everything about the track that is *not* editable
+ * here. The three editable fields are deliberately absent — they are on screen as text
+ * fields above, and repeating them as static text would only drift from the edit.
+ */
+private fun songInfoDetails(nowPlaying: NowPlaying): List<Pair<String, String>> = listOf(
+    "Spotify ID" to nowPlaying.spotifyId.ifEmpty { "N/A" },
+    "YouTube ID" to (nowPlaying.ytId ?: "N/A"),
+    "YouTube URL" to (nowPlaying.ytUrl ?: "N/A"),
+    "YouTube Name" to (nowPlaying.ytName ?: "N/A"),
+    "YouTube Channel" to (nowPlaying.ytChannel ?: "N/A"),
+    "File Path" to (nowPlaying.filePath ?: "N/A"),
+    "Status" to nowPlaying.status.ifEmpty { "N/A" },
+    "Error" to (nowPlaying.error ?: "N/A"),
+    "Duration (ms)" to nowPlaying.durationMs.toString(),
+    "Position" to nowPlaying.position.toString(),
+    "Bitrate" to (nowPlaying.bitrate?.let { "${it} kbps" } ?: "N/A"),
+    "File Size" to (nowPlaying.fileSize?.let { formatFileSize(it) } ?: "N/A"),
+    "Downloaded At" to (nowPlaying.downloadedAt?.let { formatTimestamp2(it) } ?: "N/A"),
+    "Lyrics Source" to (nowPlaying.lyricsSource ?: "N/A"),
+    "Lyrics Edited" to if (nowPlaying.lyricsEdited) "Yes" else "No",
+    "Lyrics" to (nowPlaying.lyrics?.let {
+        if (it.length > 200) it.take(200) + "..." else it
+    } ?: "N/A"),
+)

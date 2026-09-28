@@ -17,6 +17,7 @@ import xyz.botolog.ghostify.ui.playlist.PlaylistSortSpec
 import xyz.botolog.ghostify.ui.playlist.isStoredOrder
 import xyz.botolog.ghostify.ui.playlist.orderedBy
 import xyz.botolog.ghostify.ui.playlist.sortedTrackIds
+import xyz.botolog.ghostify.ui.playlist.storedSortSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -80,9 +81,22 @@ class PlaylistDetailViewModel(
      * The committed sort (field + direction). Held here rather than in the
      * composable so a sort survives configuration changes and so a sync
      * completion knows which order to re-apply.
+     *
+     * Seeded from the playlist row's own `sort_field` / `sort_descending` columns, so
+     * opening a playlist shows the order it was last saved with.
      */
     private val _sortMode = MutableStateFlow(PlaylistSortSpec())
     override val sortMode: StateFlow<PlaylistSortSpec> = _sortMode.asStateFlow()
+
+    /**
+     * `true` once a sort has been committed in this session.
+     *
+     * The sort sheet is the only writer of the playlist's sort columns, so after a commit
+     * this ViewModel — not the row it reads back — is the authority: the row is being
+     * written to match [sortMode], and adopting the pre-commit value from a row re-read
+     * during the write would drop the sort the user just chose.
+     */
+    private var sortCommittedLocally = false
 
     /**
      * Serialises every write to `songs.position` (sort persistence vs. a manual
@@ -143,6 +157,7 @@ class PlaylistDetailViewModel(
                         }
                     }
                 }
+                playlist?.let { adoptStoredSort(it) }
                 mapToUi(playlist, progress, isSyncing, loadError)
             }
                 .distinctUntilChanged()
@@ -167,7 +182,31 @@ class PlaylistDetailViewModel(
     override fun commitSort(specification: PlaylistSortSpec) {
         Timber.i("PlaylistDetailViewModel.commitSort: $specification")
         _sortMode.value = specification
+        sortCommittedLocally = true
         sortRequests.trySend(specification)
+    }
+
+    /**
+     * Adopts the sort stored on the playlist row as the active sort.
+     *
+     * Runs on every playlist emission until a sort is committed in this session, so a
+     * playlist saved with e.g. "Artist, descending" comes back sorted that way — and keeps
+     * re-applying that order after a sync. A playlist that was never sorted resolves to
+     * playlist order ascending, which is exactly the order its positions already hold, so
+     * nothing is rewritten for it.
+     *
+     * Adoption never triggers a write: the positions were persisted when the sort was
+     * committed, so re-sorting on open would be pure churn. After [commitSort] this
+     * ViewModel keeps its own choice instead (see [sortCommittedLocally]).
+     *
+     * @param playlist the playlist row as it was just read from the database.
+     */
+    private fun adoptStoredSort(playlist: xyz.botolog.ghostify.data.db.entity.PlaylistEntity) {
+        if (sortCommittedLocally) return
+        val stored = storedSortSpec(playlist.sortField, playlist.sortDescending)
+        if (stored == _sortMode.value) return
+        Timber.i("PlaylistDetailViewModel.adoptStoredSort: $stored")
+        _sortMode.value = stored
     }
 
     override fun downloadAll() {
@@ -317,7 +356,8 @@ class PlaylistDetailViewModel(
 
     /**
      * Rewrites the playlist's stored `position` values so the database reflects
-     * [specification] — the database is the source of truth from here on.
+     * [specification] — the database is the source of truth from here on — and saves
+     * [specification] itself on the playlist row so it survives leaving the screen.
      *
      * Runs on the single [sortRequests] consumer, serialised against manual
      * reorders by [orderMutex]. The order is always computed from a *fresh* read
@@ -325,23 +365,44 @@ class PlaylistDetailViewModel(
      * moments ago is fully covered, and the write is skipped when the stored
      * order already matches, so a repeated sort does no work.
      *
+     * The sort itself is recorded first, even when it is the stored order: switching back
+     * to playlist order has to be remembered too, otherwise re-opening the playlist would
+     * re-apply the previous sort.
+     *
      * The playback queue is never touched here: it keeps whatever order it was
      * built with until the playlist is started again.
      */
     private suspend fun persistSort(specification: PlaylistSortSpec) {
+        orderMutex.withLock {
+            try {
+                repo.saveTrackSort(
+                    playlistId = playlistId,
+                    field = specification.option.storageValue,
+                    descending = specification.descending,
+                )
+                applySortToPositions(specification)
+            } catch (e: Exception) {
+                Timber.e(e, "PlaylistDetailViewModel.persistSort: FAILED for $specification")
+            }
+        }
+    }
+
+    /**
+     * Rewrites `songs.position` to match [specification], skipping the write entirely when
+     * the specification asks for the order the database already holds.
+     */
+    private suspend fun applySortToPositions(specification: PlaylistSortSpec) {
         if (specification.isStoredOrder()) {
-            Timber.i("PlaylistDetailViewModel.persistSort: stored order, nothing to write")
+            Timber.i("PlaylistDetailViewModel.applySortToPositions: stored order, nothing to write")
             return
         }
-        orderMutex.withLock {
-            val songs = songRepo.getSongs(playlistId)
-            if (songs.size < 2) return@withLock
-            val orderedIds = sortedTrackIds(songs.map { it.toTrackUi() }, specification)
-            val changed = repo.applySongOrder(playlistId, orderedIds)
-            Timber.i("PlaylistDetailViewModel.persistSort: $specification changed=$changed")
-            if (changed) {
-                _state.update { current -> current.copy(tracks = current.tracks.orderedBy(orderedIds)) }
-            }
+        val songs = songRepo.getSongs(playlistId)
+        if (songs.size < 2) return
+        val orderedIds = sortedTrackIds(songs.map { it.toTrackUi() }, specification)
+        val changed = repo.applySongOrder(playlistId, orderedIds)
+        Timber.i("PlaylistDetailViewModel.applySortToPositions: $specification changed=$changed")
+        if (changed) {
+            _state.update { current -> current.copy(tracks = current.tracks.orderedBy(orderedIds)) }
         }
     }
 

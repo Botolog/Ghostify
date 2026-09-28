@@ -251,6 +251,35 @@ class PlayerQueueManager {
         _queue.add(toIndex, moved)
         return true
     }
+
+    /**
+     * Rewrites the display metadata of one queued item, leaving its position, its
+     * user-queued flag and its file untouched.
+     *
+     * Applied to the live queue *and* to the saved unshuffled order, so turning shuffle
+     * off after an edit cannot resurrect the pre-edit title.
+     *
+     * @param songId the song database ID.
+     * @param title the new track title.
+     * @param artist the new artist name.
+     * @param album the new album name, or `null` when the track has no album.
+     * @return the index the item was found at, or -1 when it is not queued.
+     */
+    fun updateMetadata(songId: String, title: String, artist: String, album: String?): Int {
+        val index = indexOf(songId)
+        if (index < 0) {
+            Timber.w("PlayerQueueManager.updateMetadata: $songId is not queued")
+            return -1
+        }
+        _queue[index] = _queue[index].copy(title = title, artist = artist, album = album)
+        val originalIndex = _originalQueue.indexOfFirst { it.songId == songId }
+        if (originalIndex >= 0) {
+            _originalQueue[originalIndex] = _originalQueue[originalIndex]
+                .copy(title = title, artist = artist, album = album)
+        }
+        Timber.i("PlayerQueueManager.updateMetadata: $songId updated at $index")
+        return index
+    }
 }
 
 /**

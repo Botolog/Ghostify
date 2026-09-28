@@ -393,6 +393,68 @@ class QueueManagementTest {
     }
 
     // ══════════════════════════════════════════════════════════════════════
+    //  updateMetadata
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun updateMetadata_rewritesTitleArtistAndAlbum_inPlace() {
+        setupQueue(listOf("a", "b", "c"))
+
+        assertEquals(1, manager.updateMetadata("b", "Renamed", "New Artist", "New Album"))
+
+        val edited = manager.queue[1]
+        assertEquals("Renamed", edited.title)
+        assertEquals("New Artist", edited.artist)
+        assertEquals("New Album", edited.album)
+        assertEquals("/b.mp3", edited.filePath)
+    }
+
+    @Test
+    fun updateMetadata_keepsTheOrderAndTheUserQueuedFlag() {
+        setupQueue(listOf("a", "b", "c"))
+        manager.addToQueueNext("c", mediaItem("c"), 0)
+        val order = queueIds()
+        val queuedByUser = manager.queue[manager.indexOf("c")].queuedByUser
+
+        manager.updateMetadata("c", "Renamed", "New Artist", null)
+
+        assertEquals(order, queueIds())
+        assertTrue(queuedByUser)
+        assertTrue(manager.queue[manager.indexOf("c")].queuedByUser)
+    }
+
+    @Test
+    fun updateMetadata_clearsTheAlbum_whenNoneIsGiven() {
+        setupQueue(listOf("a"))
+
+        manager.updateMetadata("a", "Renamed", "New Artist", null)
+
+        assertNull(manager.queue[0].album)
+    }
+
+    @Test
+    fun updateMetadata_returnsMinusOne_forASongThatIsNotQueued() {
+        setupQueue(listOf("a", "b"))
+
+        assertEquals(-1, manager.updateMetadata("z", "Renamed", "New Artist", null))
+        assertEquals(listOf("a", "b"), queueIds())
+    }
+
+    @Test
+    fun updateMetadata_survivesShuffleAndUnshuffle() {
+        setupQueue(listOf("a", "b", "c", "d"))
+        manager.shuffle()
+
+        manager.updateMetadata("c", "Renamed", "New Artist", "New Album")
+        manager.unshuffle()
+
+        val edited = manager.queue.first { it.songId == "c" }
+        assertEquals("Renamed", edited.title)
+        assertEquals("New Artist", edited.artist)
+        assertEquals("New Album", edited.album)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     //  getOrNull
     // ══════════════════════════════════════════════════════════════════════
 
