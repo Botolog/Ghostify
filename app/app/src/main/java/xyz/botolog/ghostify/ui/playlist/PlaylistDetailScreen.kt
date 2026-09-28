@@ -134,7 +134,7 @@ object PlaylistDetailTestTags {
      */
     fun trackStatus(status: SongStatus) = "track_status_$status"
 
-    fun sortOption(option: PlaylistSortOption) = "detail_sort_${option.name.lowercase()}"
+    fun sortOption(option: PlaylistSortOption) = "detail_sort_${option.storageValue}"
 }
 
 private val COVER_SIZE = 72.dp
@@ -181,11 +181,11 @@ fun PlaylistDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showSortSheet by remember { mutableStateOf(false) }
     var draftSortOptionName by rememberSaveable {
-        mutableStateOf(sortMode.option.name)
+        mutableStateOf(sortMode.option.storageValue)
     }
     var draftSortDescending by rememberSaveable { mutableStateOf(sortMode.descending) }
     val draftSortOption = remember(draftSortOptionName) {
-        PlaylistSortOption.entries.firstOrNull { it.name == draftSortOptionName }
+        PlaylistSortOption.fromStorageValue(draftSortOptionName)
             ?: sortMode.option
     }
 
@@ -228,7 +228,7 @@ fun PlaylistDetailScreen(
         PlaylistSortBottomSheet(
             selectedOption = draftSortOption,
             descending = draftSortDescending,
-            onOptionSelected = { draftSortOptionName = it.name },
+            onOptionSelected = { draftSortOptionName = it.storageValue },
             onDescendingChanged = { draftSortDescending = it },
             onDismiss = {
                 contract.commitSort(
@@ -281,7 +281,7 @@ fun PlaylistDetailScreen(
                             text = { Text("Sort") },
                             onClick = {
                                 showMenu = false
-                                draftSortOptionName = sortMode.option.name
+                                draftSortOptionName = sortMode.option.storageValue
                                 draftSortDescending = sortMode.descending
                                 showSortSheet = true
                             },

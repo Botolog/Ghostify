@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -208,6 +209,7 @@ private fun sortOptionIcon(option: PlaylistSortOption): ImageVector = when (opti
     PlaylistSortOption.TITLE -> Icons.Filled.Title
     PlaylistSortOption.ARTIST -> Icons.Filled.Person
     PlaylistSortOption.ALBUM -> Icons.Filled.Album
+    PlaylistSortOption.ARTIST_ALBUM_TITLE -> Icons.AutoMirrored.Filled.Sort
     PlaylistSortOption.DURATION -> Icons.Filled.AccessTime
     PlaylistSortOption.DATE_ADDED -> Icons.Filled.CalendarToday
     PlaylistSortOption.DOWNLOADED_STATUS -> Icons.Filled.DownloadDone
@@ -218,6 +220,7 @@ private fun sortOptionLabel(option: PlaylistSortOption): String = when (option) 
     PlaylistSortOption.TITLE -> "Title A–Z"
     PlaylistSortOption.ARTIST -> "Artist"
     PlaylistSortOption.ALBUM -> "Album"
+    PlaylistSortOption.ARTIST_ALBUM_TITLE -> "Artist – album – song"
     PlaylistSortOption.DURATION -> "Duration"
     PlaylistSortOption.DATE_ADDED -> "Date added"
     PlaylistSortOption.DOWNLOADED_STATUS -> "Downloaded status"

@@ -204,6 +204,23 @@ class PlaylistDetailSortPersistenceTest {
     }
 
     @Test
+    fun artistAlbumTitleSortPersistsGroupedPositions() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        viewModel = createViewModel()
+        songs.value = artistAlbumTitleSongs()
+        advanceUntilIdle()
+        appliedOrders.clear()
+
+        viewModel.commitSort(PlaylistSortSpec(option = PlaylistSortOption.ARTIST_ALBUM_TITLE))
+        advanceUntilIdle()
+
+        assertEquals(listOf(listOf("d", "c", "b", "a")), appliedOrders)
+        assertEquals(listOf("d" to 0, "c" to 1, "b" to 2, "a" to 3), storedPositions())
+        verify(exactly = 0) { player.addToQueueNext(any(), any()) }
+        verify(exactly = 0) { player.playPlaylistLazy(any(), any(), any(), any()) }
+    }
+
+    @Test
     fun manualReorderIsStillPersisted() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         viewModel = createViewModel()
@@ -245,12 +262,26 @@ class PlaylistDetailSortPersistenceTest {
         song("a", title = "Alpha", artist = "Zulu", position = 2),
     )
 
-    private fun song(id: String, title: String = id, artist: String = "Artist", position: Int) = SongEntity(
+    private fun artistAlbumTitleSongs(): List<SongEntity> = listOf(
+        song("a", title = "alpha", artist = "Beta", album = "One", position = 0),
+        song("b", title = "alpha", artist = "Alpha", album = "Two", position = 1),
+        song("c", title = "zeta", artist = "Alpha", album = "One", position = 2),
+        song("d", title = "alpha", artist = "Alpha", album = "One", position = 3),
+    )
+
+    private fun song(
+        id: String,
+        title: String = id,
+        artist: String = "Artist",
+        album: String? = null,
+        position: Int,
+    ) = SongEntity(
         id = id,
         playlistId = PLAYLIST_ID,
         spotifyId = "spotify-$id",
         title = title,
         artists = artist,
+        album = album,
         position = position,
     )
 

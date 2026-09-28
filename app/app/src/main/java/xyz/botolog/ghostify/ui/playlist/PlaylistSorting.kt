@@ -5,14 +5,42 @@ import xyz.botolog.ghostify.ui.model.TrackUi
 import java.text.Collator
 import java.util.Locale
 
-enum class PlaylistSortOption {
-    PLAYLIST_ORDER,
-    TITLE,
-    ARTIST,
-    ALBUM,
-    DURATION,
-    DATE_ADDED,
-    DOWNLOADED_STATUS,
+/**
+ * The orderings offered by the playlist sort sheet.
+ *
+ * [storageValue] is what is written to (and read back from) the saved sort
+ * state, so it is a stable snake_case token rather than the enum's ordinal: the
+ * declaration order can change without invalidating a saved draft.
+ *
+ * @property storageValue stable token identifying this option across saves.
+ */
+enum class PlaylistSortOption(val storageValue: String) {
+    PLAYLIST_ORDER("playlist_order"),
+    TITLE("title"),
+    ARTIST("artist"),
+    ALBUM("album"),
+    ARTIST_ALBUM_TITLE("artist_album_title"),
+    DURATION("duration"),
+    DATE_ADDED("date_added"),
+    DOWNLOADED_STATUS("downloaded_status"),
+    ;
+
+    companion object {
+
+        /**
+         * Resolves a [storageValue] back to its option.
+         *
+         * Unknown or missing values resolve to `null` so callers can fall back
+         * to the sort that is already committed instead of silently resetting it.
+         *
+         * @param raw the stored token, or `null` when unset.
+         * @return the matching option, or `null` when it is missing or unknown.
+         */
+        fun fromStorageValue(raw: String?): PlaylistSortOption? {
+            val normalized = raw?.trim()?.lowercase() ?: return null
+            return entries.firstOrNull { it.storageValue == normalized }
+        }
+    }
 }
 
 data class PlaylistSortSpec(
@@ -66,6 +94,17 @@ fun List<TrackUi>.orderedBy(order: List<String>): List<TrackUi> {
         }
 }
 
+/**
+ * Builds the comparator for a [PlaylistSortSpec].
+ *
+ * Text keys (title / artist / album, including the artist → album → song
+ * combination) are compared with a locale-aware [Collator] at
+ * [Collator.PRIMARY] strength, so case and accents do not affect the order.
+ * Missing metadata arrives as `null` / blank text and compares as empty text,
+ * exactly like the single-field options do, which keeps it grouped before
+ * titled entries; equal keys fall through to the next key and finally to the
+ * track id, so the result is deterministic and re-sorting is a no-op.
+ */
 fun playlistTrackComparator(specification: PlaylistSortSpec): Comparator<TrackUi> {
     val collator = Collator.getInstance(Locale.getDefault()).apply {
         strength = Collator.PRIMARY
@@ -82,6 +121,9 @@ fun playlistTrackComparator(specification: PlaylistSortSpec): Comparator<TrackUi
         }
         PlaylistSortOption.ALBUM -> Comparator<TrackUi> { first, second ->
             collator.compare(first.album, second.album)
+        }
+        PlaylistSortOption.ARTIST_ALBUM_TITLE -> Comparator<TrackUi> { first, second ->
+            compareTextKeys(collator, first, second, ARTIST_ALBUM_TITLE_KEYS)
         }
         PlaylistSortOption.DURATION -> Comparator<TrackUi> { first, second ->
             first.durationMs.compareTo(second.durationMs)
@@ -107,3 +149,31 @@ fun playlistTrackComparator(specification: PlaylistSortSpec): Comparator<TrackUi
 }
 
 private fun TrackUi.addedAtValue(): Long = addedAt ?: Long.MIN_VALUE
+
+/**
+ * The text keys of [PlaylistSortOption.ARTIST_ALBUM_TITLE], in priority order:
+ * artist, then album within that artist, then title within that album.
+ */
+private val ARTIST_ALBUM_TITLE_KEYS: Array<(TrackUi) -> String?> = arrayOf(
+    { it.artists },
+    { it.album },
+    { it.title },
+)
+
+/**
+ * Compares two tracks on each selector in turn, returning the first key that
+ * actually differs and `0` when every key is equal.
+ */
+private fun compareTextKeys(
+    collator: Collator,
+    first: TrackUi,
+    second: TrackUi,
+    selectors: Array<out (TrackUi) -> String?>,
+): Int {
+    for (selector in selectors) {
+        val result = collator.compare(selector(first), selector(second))
+        if (result != 0) return result
+    }
+    return 0
+}
+
