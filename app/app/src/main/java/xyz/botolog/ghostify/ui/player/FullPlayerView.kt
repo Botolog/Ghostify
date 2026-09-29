@@ -973,6 +973,29 @@ private fun PortraitPlayerContent(
 
 // ── Landscape Player Content ──────────────────────────────────────────
 
+/**
+ * One half of the landscape split. What a half draws is decided by which half it is: [CONTROLS]
+ * owns the top button bar — so the bar sits on the cover-art side of the split and is drawn
+ * exactly once in either controls-side variant — while [LYRICS] draws the lyrics and nothing else.
+ */
+internal enum class LandscapePanel(val drawsTopBar: Boolean) {
+    CONTROLS(drawsTopBar = true),
+    LYRICS(drawsTopBar = false),
+}
+
+/**
+ * The two halves of the landscape split, in the order they are drawn: the lyrics half takes the
+ * side the controls half is not on.
+ *
+ * @param controlsSide the stored landscape controls side, `"left"` or `"right"`.
+ */
+internal fun landscapePanels(controlsSide: String): List<LandscapePanel> =
+    if (controlsSide == "left") {
+        listOf(LandscapePanel.CONTROLS, LandscapePanel.LYRICS)
+    } else {
+        listOf(LandscapePanel.LYRICS, LandscapePanel.CONTROLS)
+    }
+
 @Composable
 private fun LandscapePlayerContent(
     state: PlayerUiState,
@@ -984,7 +1007,7 @@ private fun LandscapePlayerContent(
     controlsSide: String = "left",
     controlsOnCover: Boolean = false,
 ) {
-    val controlsOnLeft = controlsSide == "left"
+    val panels = landscapePanels(controlsSide)
 
     Row(
         modifier = Modifier
@@ -993,171 +1016,177 @@ private fun LandscapePlayerContent(
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
-        if (controlsOnLeft) {
-            // Left panel: Controls — Right panel: Lyrics
-            ControlsPanel(
-                state = state,
-                contract = contract,
-                controlsOnCover = controlsOnCover,
-                modifier = Modifier
-                    .widthIn(max = LANDSCAPE_LEFT_PANEL_MAX_WIDTH)
-                    .weight(0.45f),
-            )
-            VerticalDivider()
-            LyricsPanel(
-                state = state,
-                onBack = onBack,
-                onInfoTap = onInfoTap,
-                onQueueClick = onQueueClick,
-                onLyricsTap = onLyricsTap,
-                contract = contract,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            )
-        } else {
-            // Left panel: Lyrics — Right panel: Controls
-            LyricsPanel(
-                state = state,
-                onBack = onBack,
-                onInfoTap = onInfoTap,
-                onQueueClick = onQueueClick,
-                onLyricsTap = onLyricsTap,
-                contract = contract,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            )
-            VerticalDivider()
-            ControlsPanel(
-                state = state,
-                contract = contract,
-                controlsOnCover = controlsOnCover,
-                modifier = Modifier
-                    .widthIn(max = LANDSCAPE_LEFT_PANEL_MAX_WIDTH)
-                    .weight(0.45f),
-            )
+        panels.forEachIndexed { index, panel ->
+            if (index > 0) {
+                VerticalDivider()
+            }
+
+            when (panel) {
+                LandscapePanel.CONTROLS -> ControlsPanel(
+                    state = state,
+                    contract = contract,
+                    onBack = onBack,
+                    onInfoTap = onInfoTap,
+                    onQueueClick = onQueueClick,
+                    showTopBar = panel.drawsTopBar,
+                    controlsOnCover = controlsOnCover,
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .widthIn(max = LANDSCAPE_LEFT_PANEL_MAX_WIDTH)
+                        .weight(0.45f),
+                )
+
+                LandscapePanel.LYRICS -> LyricsPanel(
+                    state = state,
+                    contract = contract,
+                    onLyricsTap = onLyricsTap,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+            }
         }
     }
 }
 
-// ── Swipeable Cover Art ───────────────────────────────────────────────
+// ── Landscape Controls Panel ──────────────────────────────────────────
 
 @Composable
 private fun ControlsPanel(
     state: PlayerUiState,
     contract: PlayerContract,
+    onBack: () -> Unit,
+    onInfoTap: () -> Unit,
+    onQueueClick: () -> Unit,
     modifier: Modifier = Modifier,
+    showTopBar: Boolean = false,
     controlsOnCover: Boolean = false,
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .widthIn(max = LANDSCAPE_ARTWORK_MAX_WIDTH)
-                .aspectRatio(1f)
-                .padding(horizontal = 8.dp),
-        ) {
-            SwipeableCoverArt(
-                coverUrl = state.nowPlaying?.coverUrl,
-                onSwipeLeft = contract::next,
-                onSwipeRight = contract::previousTrack,
-                onSwipeDown = { },
+        if (showTopBar) {
+            LandscapeTopBar(
+                state = state,
+                contract = contract,
+                onBack = onBack,
+                onQueueClick = onQueueClick,
+                onInfoTap = onInfoTap,
             )
-
-            if (controlsOnCover) {
-                CompactCoverControls(
-                    state = state,
-                    contract = contract,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f),
-                )
-            }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Text(
-            text = state.nowPlaying?.title.orEmpty(),
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-        )
-
-        Text(
-            text = state.nowPlaying?.artist.orEmpty(),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-        )
-
-        // Seek bar, time labels and transport controls — omitted in compact mode,
-        // where they are drawn on top of the cover art instead.
-        if (!controlsOnCover) {
-            Spacer(modifier = Modifier.height(4.dp))
-
-            FullPlayerSeekBar(state = state, contract = contract)
-
-            Row(
+                .weight(1f)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = HORIZONTAL_PADDING),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                    .widthIn(max = LANDSCAPE_ARTWORK_MAX_WIDTH)
+                    .aspectRatio(1f)
+                    .padding(horizontal = 8.dp),
             ) {
-                Text(
-                    text = DurationFormat.format(state.positionMs),
-                    style = MaterialTheme.typography.labelSmall,
+                SwipeableCoverArt(
+                    coverUrl = state.nowPlaying?.coverUrl,
+                    onSwipeLeft = contract::next,
+                    onSwipeRight = contract::previousTrack,
+                    onSwipeDown = { },
                 )
-                Text(
-                    text = DurationFormat.format(state.durationMs),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
+                if (controlsOnCover) {
+                    CompactCoverControls(
+                        state = state,
+                        contract = contract,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f),
+                    )
+                }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = contract::previous) {
-                    Icon(
-                        Icons.Filled.SkipPrevious,
-                        contentDescription = "Previous",
-                        modifier = Modifier.size(TRANSPORT_ICON_SIZE),
-                    )
-                }
+            Spacer(modifier = Modifier.height(4.dp))
 
-                IconButton(
-                    onClick = contract::togglePlay,
-                    modifier = Modifier.size(PLAY_BUTTON_SIZE),
+            Text(
+                text = state.nowPlaying?.title.orEmpty(),
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+            )
+
+            Text(
+                text = state.nowPlaying?.artist.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+            )
+
+            // Seek bar, time labels and transport controls — omitted in compact mode,
+            // where they are drawn on top of the cover art instead.
+            if (!controlsOnCover) {
+                Spacer(modifier = Modifier.height(4.dp))
+
+                FullPlayerSeekBar(state = state, contract = contract)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = HORIZONTAL_PADDING),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Icon(
-                        imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (state.isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(PLAY_ICON_SIZE),
+                    Text(
+                        text = DurationFormat.format(state.positionMs),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        text = DurationFormat.format(state.durationMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
 
-                IconButton(onClick = contract::next) {
-                    Icon(
-                        Icons.Filled.SkipNext,
-                        contentDescription = "Next",
-                        modifier = Modifier.size(TRANSPORT_ICON_SIZE),
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = contract::previous) {
+                        Icon(
+                            Icons.Filled.SkipPrevious,
+                            contentDescription = "Previous",
+                            modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                        )
+                    }
+
+                    IconButton(
+                        onClick = contract::togglePlay,
+                        modifier = Modifier.size(PLAY_BUTTON_SIZE),
+                    ) {
+                        Icon(
+                            imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (state.isPlaying) "Pause" else "Play",
+                            modifier = Modifier.size(PLAY_ICON_SIZE),
+                        )
+                    }
+
+                    IconButton(onClick = contract::next) {
+                        Icon(
+                            Icons.Filled.SkipNext,
+                            contentDescription = "Next",
+                            modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+                        )
+                    }
                 }
             }
         }
@@ -1167,51 +1196,55 @@ private fun ControlsPanel(
 @Composable
 private fun LyricsPanel(
     state: PlayerUiState,
-    onBack: () -> Unit,
-    onInfoTap: () -> Unit,
-    onQueueClick: () -> Unit,
-    onLyricsTap: () -> Unit,
     contract: PlayerContract,
+    onLyricsTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.padding(start = 8.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Collapse player",
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-            SleepTimerControl(state = state, contract = contract)
-            Spacer(modifier = Modifier.weight(1f))
-            landscapeTopBarActions().forEach { action ->
-                LandscapeTopBarActionButton(
-                    action = action,
-                    onClick = when (action) {
-                        FullPlayerTopBarAction.QUEUE -> onQueueClick
-                        FullPlayerTopBarAction.INFO -> onInfoTap
-                    },
-                )
-            }
-        }
+    LyricsMiniView(
+        lyrics = state.lyrics,
+        positionMs = state.positionMs,
+        onTap = onLyricsTap,
+        onRetryLyrics = contract::retryLyrics,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp),
+    )
+}
 
-        LyricsMiniView(
-            lyrics = state.lyrics,
-            positionMs = state.positionMs,
-            onTap = onLyricsTap,
-            onRetryLyrics = contract::retryLyrics,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-        )
+// ── Landscape Top Bar ─────────────────────────────────────────────────
+
+@Composable
+private fun LandscapeTopBar(
+    state: PlayerUiState,
+    contract: PlayerContract,
+    onBack: () -> Unit,
+    onQueueClick: () -> Unit,
+    onInfoTap: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Collapse player",
+                modifier = Modifier.size(28.dp),
+            )
+        }
+        SleepTimerControl(state = state, contract = contract)
+        Spacer(modifier = Modifier.weight(1f))
+        landscapeTopBarActions().forEach { action ->
+            LandscapeTopBarActionButton(
+                action = action,
+                onClick = when (action) {
+                    FullPlayerTopBarAction.QUEUE -> onQueueClick
+                    FullPlayerTopBarAction.INFO -> onInfoTap
+                },
+            )
+        }
     }
 }
 

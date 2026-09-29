@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.ui.player
 
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import xyz.botolog.ghostify.ui.model.FullPlayerLayout
@@ -48,6 +49,65 @@ class FullPlayerRenderLayoutTest {
             fullPlayerRenderLayout(layout, isLandscape = true) == FullPlayerLayout.COMPACT
         }
         assertEquals(listOf(true, true, false), controlsOnCover)
+    }
+
+    // ── Landscape panel placement ───────────────────────────────────────────
+
+    @Test
+    fun theControlsHalfComesFirstWhenItSitsOnTheLeft() {
+        assertEquals(
+            listOf(LandscapePanel.CONTROLS, LandscapePanel.LYRICS),
+            landscapePanels("left"),
+        )
+    }
+
+    @Test
+    fun theLyricsHalfComesFirstWhenTheControlsSitOnTheRight() {
+        assertEquals(
+            listOf(LandscapePanel.LYRICS, LandscapePanel.CONTROLS),
+            landscapePanels("right"),
+        )
+    }
+
+    @Test
+    fun bothLandscapeVariantsDrawEachHalfExactlyOnce() {
+        listOf("left", "right").forEach { side ->
+            assertEquals(
+                "controls duplicated for $side",
+                1,
+                landscapePanels(side).count { it == LandscapePanel.CONTROLS },
+            )
+            assertEquals(
+                "lyrics duplicated for $side",
+                1,
+                landscapePanels(side).count { it == LandscapePanel.LYRICS },
+            )
+        }
+    }
+
+    // ── Top bar ownership ───────────────────────────────────────────────────
+
+    @Test
+    fun theTopBarBelongsToTheControlsHalfInBothLandscapeVariants() {
+        listOf("left", "right").forEach { side ->
+            val owners = landscapePanels(side).filter { panel -> panel.drawsTopBar }
+            assertEquals(
+                "the landscape top bar is not drawn exactly once for $side",
+                listOf(LandscapePanel.CONTROLS),
+                owners,
+            )
+        }
+    }
+
+    @Test
+    fun theLyricsHalfNeverDrawsTheTopBar() {
+        assertFalse(LandscapePanel.LYRICS.drawsTopBar)
+    }
+
+    @Test
+    fun anUnknownControlsSideStillLeavesTheTopBarOnTheControlsHalf() {
+        val owners = landscapePanels("up").filter { panel -> panel.drawsTopBar }
+        assertEquals(listOf(LandscapePanel.CONTROLS), owners)
     }
 
     // ── Landscape top bar ────────────────────────────────────────────────────
