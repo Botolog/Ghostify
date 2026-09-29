@@ -14,6 +14,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -72,6 +74,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -83,6 +86,10 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -105,6 +112,10 @@ import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import android.content.res.Configuration
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import xyz.botolog.ghostify.ui.contract.PlayerContract
@@ -151,6 +162,90 @@ private val COMPACT_TRANSPORT_GAP_MAX = 32.dp
 private val COMPACT_SEEK_MAX_HORIZONTAL_PADDING = 20.dp
 private val COMPACT_SEEK_MAX_BOTTOM_PADDING = 12.dp
 private val COMPACT_LYRICS_TOP_SPACING = 12.dp
+
+// ── Compact Overlay Interaction ─────────────────────────────────────────
+
+/** Milliseconds a visible Compact playback overlay stays up before it fades out on its own. */
+internal const val COMPACT_OVERLAY_AUTO_HIDE_MS = 5_000L
+
+/**
+ * Milliseconds a cover tap waits for a second tap before it is read as a single tap: long
+ * enough for a deliberate double tap, short enough that a single tap still feels immediate.
+ */
+internal const val COMPACT_DOUBLE_TAP_WINDOW_MS = 250L
+
+/** Milliseconds the Compact overlay takes to fade in and out. */
+internal const val COMPACT_OVERLAY_FADE_MS = 200
+
+/**
+ * Everything the Compact playback overlay reacts to. The overlay is transient UI, so these are
+ * the only inputs that can change it — nothing here is persisted anywhere.
+ */
+internal enum class CompactOverlayEvent {
+    /** A single tap on the cover art: shows the hidden overlay, hides a visible one. */
+    COVER_TAP,
+
+    /** A press of one of the overlay's own controls: play/pause, previous, next or the seek bar. */
+    CONTROL_INTERACTION,
+
+    /** The auto-hide delay ran out with nobody touching the overlay. */
+    AUTO_HIDE_ELAPSED,
+}
+
+/**
+ * The Compact playback overlay's state, as a value.
+ *
+ * @property visible whether the overlay is currently shown. It starts hidden, so opening the
+ * Compact screen never greets the user with controls they did not ask for.
+ * @property autoHideToken bumped by every interaction that restarts the auto-hide delay. It is
+ * the key the countdown effect watches, so a press can reset the timer without a second timer
+ * having to be started, stopped and cancelled.
+ */
+internal data class CompactOverlay(
+    val visible: Boolean = false,
+    val autoHideToken: Int = 0,
+) {
+    /**
+     * The overlay after [event]. A cover tap always toggles and always restarts the countdown;
+     * a control press only restarts it while the overlay is up, and the elapsed countdown only
+     * hides an overlay that is actually visible, so a countdown that lands on a hidden overlay
+     * is a no-op rather than a toggle.
+     */
+    fun reduce(event: CompactOverlayEvent): CompactOverlay = when (event) {
+        CompactOverlayEvent.COVER_TAP -> copy(
+            visible = !visible,
+            autoHideToken = autoHideToken + 1,
+        )
+
+        CompactOverlayEvent.CONTROL_INTERACTION ->
+            if (visible) copy(autoHideToken = autoHideToken + 1) else this
+
+        CompactOverlayEvent.AUTO_HIDE_ELAPSED ->
+            if (visible) copy(visible = false) else this
+    }
+
+    companion object {
+        /** The overlay as the Compact screen opens it: hidden, with no countdown running. */
+        fun hidden(): CompactOverlay = CompactOverlay()
+    }
+}
+
+/** What a settled cover-art tap does. */
+internal enum class CoverTapAction {
+    /** A single tap: show or hide the playback overlay. */
+    TOGGLE_OVERLAY,
+
+    /** A double tap: pause or resume playback, leaving the overlay exactly as it was. */
+    TOGGLE_PLAYBACK,
+}
+
+/**
+ * What the cover's tap handler does once its taps have been told apart. A double tap resolves to
+ * playback only, so it can never also toggle the overlay — the two gestures stay independent,
+ * and the single tap that was still waiting is discarded rather than fired late.
+ */
+internal fun coverTapAction(isDoubleTap: Boolean): CoverTapAction =
+    if (isDoubleTap) CoverTapAction.TOGGLE_PLAYBACK else CoverTapAction.TOGGLE_OVERLAY
 
 // ── Normal (portrait) Lyrics Spacing ─────────────────────────────────
 private val NORMAL_TRANSPORT_UP_OFFSET = 12.dp
@@ -700,6 +795,74 @@ private fun SuperCompactTransportRow(
 // ── Compact Player Content (controls on the cover art) ─────────────────
 
 /**
+ * The cover art of the Compact layout together with the playback overlay that is drawn on top of
+ * it, and the gestures that drive both.
+ *
+ * The overlay — the play/pause, previous and next controls, the seek bar and the half-black
+ * translucent mask — starts hidden, so the Compact screen opens on the bare cover art. A single
+ * tap anywhere on the cover toggles it and a double tap pauses or resumes playback; the two are
+ * told apart inside [COMPACT_DOUBLE_TAP_WINDOW_MS], and only the single tap may toggle the
+ * overlay. Tapping the mask of a visible overlay is just such a cover tap, so it hides the
+ * overlay at once instead of waiting out the countdown.
+ *
+ * While the overlay is up it fades out on its own after [COMPACT_OVERLAY_AUTO_HIDE_MS] of
+ * silence, and any interaction with it — a control press, a seek, or a cover tap that leaves it
+ * visible — restarts that countdown. The countdown is keyed on [CompactOverlay.autoHideToken],
+ * so a restart is a state change rather than a second timer to cancel.
+ *
+ * The mask is laid out but takes no pointer events of its own, which is what keeps the cover's
+ * swipe gestures alive under the overlay and keeps a press on a control from also reaching the
+ * cover's tap handler.
+ */
+@Composable
+private fun CompactCoverArea(
+    coverUrl: Any?,
+    state: PlayerUiState,
+    contract: PlayerContract,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
+    onSwipeDown: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var overlay by remember { mutableStateOf(CompactOverlay.hidden()) }
+
+    LaunchedEffect(overlay.visible, overlay.autoHideToken) {
+        if (!overlay.visible) return@LaunchedEffect
+        delay(COMPACT_OVERLAY_AUTO_HIDE_MS)
+        overlay = overlay.reduce(CompactOverlayEvent.AUTO_HIDE_ELAPSED)
+    }
+
+    Box(modifier = modifier.fillMaxWidth().aspectRatio(1f)) {
+        SwipeableCoverArt(
+            coverUrl = coverUrl,
+            onSwipeLeft = onSwipeLeft,
+            onSwipeRight = onSwipeRight,
+            onSwipeDown = onSwipeDown,
+            modifier = Modifier.fillMaxSize(),
+            square = false,
+            onTap = { overlay = overlay.reduce(CompactOverlayEvent.COVER_TAP) },
+            onDoubleTap = contract::togglePlay,
+        )
+
+        AnimatedVisibility(
+            visible = overlay.visible,
+            enter = fadeIn(tween(COMPACT_OVERLAY_FADE_MS)),
+            exit = fadeOut(tween(COMPACT_OVERLAY_FADE_MS)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            CompactCoverControls(
+                state = state,
+                contract = contract,
+                onControlInteraction = {
+                    overlay = overlay.reduce(CompactOverlayEvent.CONTROL_INTERACTION)
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+/**
  * Playback controls drawn on top of the cover art: play/pause exactly centered,
  * previous and next tucked close to it, and the seek bar hugging the bottom edge
  * of the cover. A theme-derived [MaterialTheme.colorScheme.scrim] at
@@ -708,11 +871,15 @@ private fun SuperCompactTransportRow(
  * tappable in both orientations. The scrim does not consume pointer events, so
  * swipe gestures on the cover art underneath still work, while the buttons and
  * the seek bar consume their own touches.
+ *
+ * @param onControlInteraction called on every press of the controls and of the seek bar, so
+ * the owner can count the press as activity and restart the overlay's auto-hide countdown.
  */
 @Composable
 private fun CompactCoverControls(
     state: PlayerUiState,
     contract: PlayerContract,
+    onControlInteraction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
@@ -746,7 +913,12 @@ private fun CompactCoverControls(
             horizontalArrangement = Arrangement.spacedBy(transportGap, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = contract::previous) {
+            IconButton(
+                onClick = {
+                    onControlInteraction()
+                    contract.previous()
+                },
+            ) {
                 Icon(
                     Icons.Filled.SkipPrevious,
                     contentDescription = "Previous",
@@ -754,7 +926,10 @@ private fun CompactCoverControls(
                 )
             }
             IconButton(
-                onClick = contract::togglePlay,
+                onClick = {
+                    onControlInteraction()
+                    contract.togglePlay()
+                },
                 modifier = Modifier.size(playButtonSize),
             ) {
                 Icon(
@@ -763,7 +938,12 @@ private fun CompactCoverControls(
                     modifier = Modifier.size(playIconSize),
                 )
             }
-            IconButton(onClick = contract::next) {
+            IconButton(
+                onClick = {
+                    onControlInteraction()
+                    contract.next()
+                },
+            ) {
                 Icon(
                     Icons.Filled.SkipNext,
                     contentDescription = "Next",
@@ -776,6 +956,7 @@ private fun CompactCoverControls(
             state = state,
             contract = contract,
             horizontalPadding = sidePadding,
+            onInteraction = onControlInteraction,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -843,20 +1024,21 @@ private fun PortraitPlayerContent(
                 .fillMaxWidth()
                 .padding(horizontal = HORIZONTAL_PADDING),
         ) {
-            SwipeableCoverArt(
-                coverUrl = state.nowPlaying?.coverUrl,
-                onSwipeLeft = contract::next,
-                onSwipeRight = contract::previousTrack,
-                onSwipeDown = onBack,
-            )
-
             if (controlsOnCover) {
-                CompactCoverControls(
+                CompactCoverArea(
+                    coverUrl = state.nowPlaying?.coverUrl,
                     state = state,
                     contract = contract,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f),
+                    onSwipeLeft = contract::next,
+                    onSwipeRight = contract::previousTrack,
+                    onSwipeDown = onBack,
+                )
+            } else {
+                SwipeableCoverArt(
+                    coverUrl = state.nowPlaying?.coverUrl,
+                    onSwipeLeft = contract::next,
+                    onSwipeRight = contract::previousTrack,
+                    onSwipeDown = onBack,
                 )
             }
         }
@@ -1089,20 +1271,21 @@ private fun ControlsPanel(
                     .aspectRatio(1f)
                     .padding(horizontal = 8.dp),
             ) {
-                SwipeableCoverArt(
-                    coverUrl = state.nowPlaying?.coverUrl,
-                    onSwipeLeft = contract::next,
-                    onSwipeRight = contract::previousTrack,
-                    onSwipeDown = { },
-                )
-
                 if (controlsOnCover) {
-                    CompactCoverControls(
+                    CompactCoverArea(
+                        coverUrl = state.nowPlaying?.coverUrl,
                         state = state,
                         contract = contract,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f),
+                        onSwipeLeft = contract::next,
+                        onSwipeRight = contract::previousTrack,
+                        onSwipeDown = { },
+                    )
+                } else {
+                    SwipeableCoverArt(
+                        coverUrl = state.nowPlaying?.coverUrl,
+                        onSwipeLeft = contract::next,
+                        onSwipeRight = contract::previousTrack,
+                        onSwipeDown = { },
                     )
                 }
             }
@@ -1304,6 +1487,65 @@ private fun VerticalDivider() {
 
 // ── Swipeable Cover Art ───────────────────────────────────────────────
 
+/**
+ * Waits for the current press to finish and reports whether it ended as a plain tap.
+ *
+ * A press that was taken over on the way — dragged past the touch slop, or consumed by a
+ * control drawn on top of the cover — is not a tap, so the cover leaves it alone. The
+ * consumption is read on the [PointerEventPass.Final] pass, after every other handler has had
+ * its say, which is why a swipe and a button press can both be told apart from a tap here.
+ */
+private suspend fun AwaitPointerEventScope.awaitUnconsumedTap(): Boolean {
+    awaitFirstDown(requireUnconsumed = false)
+    while (true) {
+        val event = awaitPointerEvent()
+        if (event.changes.all { it.changedToUp() }) return true
+        if (awaitPointerEvent(PointerEventPass.Final).changes.any { it.isConsumed }) return false
+    }
+}
+
+/**
+ * Tells a single cover tap apart from a double one.
+ *
+ * The first tap of a possible pair does nothing yet: it arms a countdown of
+ * [COMPACT_DOUBLE_TAP_WINDOW_MS] and waits. A second tap landing inside that window cancels
+ * the countdown and reports a double tap, so the first tap never fires and the overlay is not
+ * toggled on the way. A tap with no partner lets the countdown run out and reports a single
+ * tap. Dragged or already-consumed presses are ignored entirely, so they neither arm nor fire
+ * anything and the cover's swipe gestures keep working untouched.
+ */
+private suspend fun PointerInputScope.detectCoverTaps(
+    onSingleTap: () -> Unit,
+    onDoubleTap: () -> Unit,
+) {
+    coroutineScope {
+        val scope = this
+        var singleTapPending = false
+        var singleTapCountdown: Job? = null
+
+        awaitEachGesture {
+            if (!awaitUnconsumedTap()) return@awaitEachGesture
+
+            when (coverTapAction(isDoubleTap = singleTapPending)) {
+                CoverTapAction.TOGGLE_PLAYBACK -> {
+                    singleTapPending = false
+                    singleTapCountdown?.cancel()
+                    onDoubleTap()
+                }
+
+                CoverTapAction.TOGGLE_OVERLAY -> {
+                    singleTapPending = true
+                    singleTapCountdown = scope.launch {
+                        delay(COMPACT_DOUBLE_TAP_WINDOW_MS)
+                        singleTapPending = false
+                        onSingleTap()
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SwipeableCoverArt(
     coverUrl: Any?,
@@ -1314,39 +1556,61 @@ private fun SwipeableCoverArt(
     gesturesEnabled: Boolean = true,
     square: Boolean = true,
     shape: Shape = RoundedCornerShape(20.dp),
+    onTap: (() -> Unit)? = null,
+    onDoubleTap: (() -> Unit)? = null,
 ) {
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
 
+    // Read through the current value rather than keying the pointer input on the callbacks, so
+    // a position tick that hands us fresh lambdas cannot restart the gesture coroutine mid-tap.
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
+
     val gestureModifier = if (gesturesEnabled) {
-        Modifier.pointerInput(Unit) {
-            detectDragGestures(
-                onDragEnd = {
-                    val absX = kotlin.math.abs(dragOffsetX)
-                    val absY = kotlin.math.abs(dragOffsetY)
-                    if (absX > SWIPE_THRESHOLD || absY > SWIPE_THRESHOLD) {
-                        if (absX > absY) {
-                            // Horizontal swipe dominates
-                            if (dragOffsetX > 0) onSwipeRight() else onSwipeLeft()
-                        } else {
-                            // Vertical swipe dominates
-                            onSwipeDown()
+        // The drag handler comes first so it consumes a swipe before the tap handler ever
+        // looks at the same press, which is what keeps a swipe from reading as a tap.
+        Modifier
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = {
+                        val absX = kotlin.math.abs(dragOffsetX)
+                        val absY = kotlin.math.abs(dragOffsetY)
+                        if (absX > SWIPE_THRESHOLD || absY > SWIPE_THRESHOLD) {
+                            if (absX > absY) {
+                                // Horizontal swipe dominates
+                                if (dragOffsetX > 0) onSwipeRight() else onSwipeLeft()
+                            } else {
+                                // Vertical swipe dominates
+                                onSwipeDown()
+                            }
                         }
+                        dragOffsetX = 0f
+                        dragOffsetY = 0f
+                    },
+                    onDragCancel = {
+                        dragOffsetX = 0f
+                        dragOffsetY = 0f
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        dragOffsetX += amount.x
+                        dragOffsetY += amount.y
+                    },
+                )
+            }
+            .then(
+                if (onTap == null && onDoubleTap == null) {
+                    Modifier
+                } else {
+                    Modifier.pointerInput(Unit) {
+                        detectCoverTaps(
+                            onSingleTap = { currentOnTap?.invoke() },
+                            onDoubleTap = { currentOnDoubleTap?.invoke() },
+                        )
                     }
-                    dragOffsetX = 0f
-                    dragOffsetY = 0f
-                },
-                onDragCancel = {
-                    dragOffsetX = 0f
-                    dragOffsetY = 0f
-                },
-                onDrag = { change, amount ->
-                    change.consume()
-                    dragOffsetX += amount.x
-                    dragOffsetY += amount.y
                 },
             )
-        }
     } else {
         Modifier
     }
@@ -1379,6 +1643,7 @@ private fun FullPlayerSeekBar(
     thumbSize: Dp = 12.dp,
     activeTrackColor: Color = MaterialTheme.colorScheme.primary,
     inactiveTrackColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+    onInteraction: () -> Unit = {},
 ) {
     val maxMs = if (state.durationMs > 0) state.durationMs else 1L
     val interactionSource = remember { MutableInteractionSource() }
@@ -1393,6 +1658,7 @@ private fun FullPlayerSeekBar(
         interactionSource.interactions.collect { interaction ->
             when (interaction) {
                 is PressInteraction.Press -> {
+                    onInteraction()
                     isDragging = true
                     dragPosition = state.positionMs.coerceIn(0L, maxMs).toFloat()
                 }
@@ -1412,10 +1678,12 @@ private fun FullPlayerSeekBar(
     Slider(
         value = displayPosition,
         onValueChange = { value ->
+            onInteraction()
             isDragging = true
             dragPosition = value
         },
         onValueChangeFinished = {
+            onInteraction()
             contract.seekTo(dragPosition.toLong())
             isDragging = false
         },
