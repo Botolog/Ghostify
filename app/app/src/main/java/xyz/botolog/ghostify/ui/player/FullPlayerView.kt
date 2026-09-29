@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -124,6 +125,7 @@ private val SLIDER_MIN_TRACK_HEIGHT = 16.dp
 // ── Landscape Dimensions ──────────────────────────────────────────────
 private val LANDSCAPE_ARTWORK_MAX_WIDTH = 400.dp
 private val LANDSCAPE_LEFT_PANEL_MAX_WIDTH = 480.dp
+private val LANDSCAPE_TOP_BAR_ICON_SIZE = 22.dp
 
 // ── Super Compact Overlay Dimensions ────────────────────────────────────
 private const val SUPER_COMPACT_SCRIM_ALPHA = 0.6f
@@ -444,6 +446,26 @@ fun FullPlayerOverlay(
 
 // ── Full Player Content ───────────────────────────────────────────────
 
+/**
+ * The layout the full player actually renders, derived from the stored setting and the
+ * orientation. Presentation only: the setting itself is never rewritten.
+ *
+ * Landscape has no room for the normal layout's own controls section, so a stored
+ * [FullPlayerLayout.NORMAL] is drawn as [FullPlayerLayout.COMPACT] there — the same layout
+ * the landscape branch was already able to draw — while [FullPlayerLayout.COMPACT] and
+ * [FullPlayerLayout.SUPER_COMPACT] are rendered exactly as stored. Portrait keeps the stored
+ * layout unchanged.
+ *
+ * @param layout the stored full-player layout setting.
+ * @param isLandscape whether the player is rendered in landscape.
+ * @return the layout to render.
+ */
+internal fun fullPlayerRenderLayout(
+    layout: FullPlayerLayout,
+    isLandscape: Boolean,
+): FullPlayerLayout =
+    if (isLandscape && layout == FullPlayerLayout.NORMAL) FullPlayerLayout.COMPACT else layout
+
 @Composable
 private fun FullPlayerContent(
     state: PlayerUiState,
@@ -457,9 +479,10 @@ private fun FullPlayerContent(
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val controlsOnCover = layout == FullPlayerLayout.COMPACT
+    val renderLayout = fullPlayerRenderLayout(layout, isLandscape)
+    val controlsOnCover = renderLayout == FullPlayerLayout.COMPACT
 
-    when (layout) {
+    when (renderLayout) {
         FullPlayerLayout.SUPER_COMPACT -> SuperCompactPlayerContent(
             state = state,
             contract = contract,
@@ -985,6 +1008,7 @@ private fun LandscapePlayerContent(
                 state = state,
                 onBack = onBack,
                 onInfoTap = onInfoTap,
+                onQueueClick = onQueueClick,
                 onLyricsTap = onLyricsTap,
                 contract = contract,
                 modifier = Modifier
@@ -997,6 +1021,7 @@ private fun LandscapePlayerContent(
                 state = state,
                 onBack = onBack,
                 onInfoTap = onInfoTap,
+                onQueueClick = onQueueClick,
                 onLyricsTap = onLyricsTap,
                 contract = contract,
                 modifier = Modifier
@@ -1144,6 +1169,7 @@ private fun LyricsPanel(
     state: PlayerUiState,
     onBack: () -> Unit,
     onInfoTap: () -> Unit,
+    onQueueClick: () -> Unit,
     onLyricsTap: () -> Unit,
     contract: PlayerContract,
     modifier: Modifier = Modifier,
@@ -1166,12 +1192,13 @@ private fun LyricsPanel(
             }
             SleepTimerControl(state = state, contract = contract)
             Spacer(modifier = Modifier.weight(1f))
-            IconButton(onClick = onInfoTap) {
-                Icon(
-                    imageVector = Icons.Filled.Info,
-                    contentDescription = "Song info",
-                    modifier = Modifier.size(22.dp),
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            landscapeTopBarActions().forEach { action ->
+                LandscapeTopBarActionButton(
+                    action = action,
+                    onClick = when (action) {
+                        FullPlayerTopBarAction.QUEUE -> onQueueClick
+                        FullPlayerTopBarAction.INFO -> onInfoTap
+                    },
                 )
             }
         }
@@ -1184,6 +1211,49 @@ private fun LyricsPanel(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
+        )
+    }
+}
+
+// ── Landscape Top Bar Actions ─────────────────────────────────────────
+
+/**
+ * The trailing icon buttons of the landscape full-player top bar, in the order they are drawn.
+ *
+ * [description] is the button's accessible name, so it names the action the button performs
+ * rather than the icon that stands for it — the queue button is announced as "Queue", exactly
+ * like the one in the super-compact bar.
+ */
+internal enum class FullPlayerTopBarAction(
+    val description: String,
+    val icon: ImageVector,
+) {
+    QUEUE("Queue", Icons.AutoMirrored.Filled.QueueMusic),
+    INFO("Song info", Icons.Filled.Info),
+}
+
+/**
+ * The buttons the landscape top bar draws at its trailing edge, queue before song info.
+ *
+ * The queue button is present in every landscape layout — normal and compact alike — so the
+ * queue sheet is reachable in either orientation, and it sits ahead of the info button, where
+ * the super-compact bar puts it, without touching the collapse and sleep-timer controls at the
+ * leading edge.
+ */
+internal fun landscapeTopBarActions(): List<FullPlayerTopBarAction> =
+    listOf(FullPlayerTopBarAction.QUEUE, FullPlayerTopBarAction.INFO)
+
+@Composable
+private fun LandscapeTopBarActionButton(
+    action: FullPlayerTopBarAction,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick) {
+        Icon(
+            imageVector = action.icon,
+            contentDescription = action.description,
+            modifier = Modifier.size(LANDSCAPE_TOP_BAR_ICON_SIZE),
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         )
     }
 }
