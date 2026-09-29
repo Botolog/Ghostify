@@ -531,6 +531,8 @@ private fun SuperCompactPlayerContent(
                 .navigationBarsPadding(),
         ) {
             SuperCompactTopBar(
+                state = state,
+                contract = contract,
                 onBack = onBack,
                 onLyricsTap = onLyricsTap,
                 onQueueClick = onQueueClick,
@@ -565,6 +567,8 @@ private fun SuperCompactPlayerContent(
  */
 @Composable
 private fun SuperCompactTopBar(
+    state: PlayerUiState,
+    contract: PlayerContract,
     onBack: () -> Unit,
     onLyricsTap: () -> Unit,
     onQueueClick: () -> Unit,
@@ -584,6 +588,11 @@ private fun SuperCompactTopBar(
                 tint = Color.White,
             )
         }
+        SleepTimerControl(
+            state = state,
+            contract = contract,
+            idleTint = Color.White,
+        )
         Spacer(modifier = Modifier.weight(1f))
         IconButton(onClick = onLyricsTap) {
             Icon(
@@ -785,6 +794,7 @@ private fun PortraitPlayerContent(
                     modifier = Modifier.size(32.dp),
                 )
             }
+            SleepTimerControl(state = state, contract = contract)
             Spacer(modifier = Modifier.weight(1f))
             IconButton(onClick = onQueueClick) {
                 Icon(
@@ -1154,6 +1164,7 @@ private fun LyricsPanel(
                     modifier = Modifier.size(28.dp),
                 )
             }
+            SleepTimerControl(state = state, contract = contract)
             Spacer(modifier = Modifier.weight(1f))
             IconButton(onClick = onInfoTap) {
                 Icon(

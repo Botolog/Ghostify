@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.player
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -24,6 +25,7 @@ import xyz.botolog.ghostify.player.core.PlayerUiState
 import xyz.botolog.ghostify.player.core.QueueBuildResult
 import xyz.botolog.ghostify.player.core.QueueItem
 import xyz.botolog.ghostify.player.core.RepeatMode
+import xyz.botolog.ghostify.player.core.SleepTimerState
 import xyz.botolog.ghostify.player.core.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +87,19 @@ class PlayerController private constructor(
     private var tickerJob: Job? = null
     private var artworkBackfillJob: Job? = null
     private var saveJob: Job? = null
+
+    /** The running sleep timer, or [SleepTimerState.Inactive] when there is none. */
+    private var sleepTimer: SleepTimerState = SleepTimerState.Inactive
+
+    /**
+     * Bumped every time a sleep timer is started or cancelled.
+     *
+     * The ticker captures the value it was launched with and stops as soon as it no longer
+     * matches, so a ticker that is already queued on the main thread can never pause playback
+     * for a timer the user already cancelled.
+     */
+    private var sleepTimerGeneration = 0
+    private var sleepTimerJob: Job? = null
     val queueManager = PlayerQueueManager()
 
     /**
@@ -107,6 +122,13 @@ class PlayerController private constructor(
      * [MediaController]. Replaced in unit tests, which have no Android framework.
      */
     internal var startPlaybackService: () -> Unit = ::startForegroundPlayback
+
+    /**
+     * The monotonic clock the sleep timer counts down on. Replaced in unit tests, which have
+     * no Android framework; defaults to [SystemClock.elapsedRealtime], which keeps counting
+     * while the device is asleep, so a timer set before a long doze still fires on time.
+     */
+    internal var elapsedRealtimeMs: () -> Long = { SystemClock.elapsedRealtime() }
 
     var currentPlaylistId: String? = null
         private set
@@ -274,12 +296,16 @@ class PlayerController private constructor(
             artworkByMediaId.clear()
             queueManager.clear()
             exoPlayer.clearMediaItems()
+            val sleepNow = elapsedRealtimeMs()
             _state.update {
                 PlayerUiState(
                     nothingToPlay = true,
                     shuffleEnabled = queueManager.isShuffled,
                     repeatMode = RepeatMode.fromMedia3(exoPlayer.repeatMode),
                     volume = exoPlayer.volume,
+                    sleepTimerActive = sleepTimer.isActive,
+                    sleepTimerRemainingMs = sleepTimer.remainingMs(sleepNow),
+                    sleepTimerTotalMs = sleepTimer.totalMs,
                 )
             }
         }
@@ -791,12 +817,122 @@ class PlayerController private constructor(
         exoPlayer.volume = volume.coerceIn(0f, 1f)
     }
 
+    // --- Sleep timer ---------------------------------------------------------------
+
+    /**
+     * Starts a sleep timer that pauses playback once [durationMs] has elapsed, replacing any
+     * timer that is already running.
+     *
+     * The countdown lives on a monotonic deadline rather than on a tick counter, so it stays
+     * correct while the app is backgrounded or the screen is off, as long as the playback
+     * process stays alive. Nothing is written to disk: a process death clears the timer
+     * rather than resurrecting a stale one.
+     *
+     * A duration shorter than [SleepTimerState.MIN_DURATION_MS] is rejected and any running
+     * timer is cancelled, so a timer can never fire the instant it is started.
+     *
+     * @param durationMs how long playback may continue, in milliseconds.
+     */
+    fun startSleepTimer(durationMs: Long) {
+        val now = elapsedRealtimeMs()
+        val started = SleepTimerState.start(durationMs, now)
+        if (!started.isActive) {
+            Timber.w("PlayerController.startSleepTimer: rejected durationMs=$durationMs")
+            cancelSleepTimer()
+            return
+        }
+        Timber.i("PlayerController.startSleepTimer: durationMs=$durationMs")
+        sleepTimer = started
+        publishSnapshot()
+        startSleepTicker()
+    }
+
+    /**
+     * Cancels a running sleep timer and returns the player to the idle timer state.
+     *
+     * A no-op when no timer is running, so it never disturbs playback by itself.
+     *
+     * @return `true` when a timer was running and has now been cancelled.
+     */
+    fun cancelSleepTimer(): Boolean {
+        Timber.i("PlayerController.cancelSleepTimer")
+        val hadTimer = sleepTimer.isActive
+        cancelSleepTimerJob()
+        if (!hadTimer) return false
+        sleepTimer = SleepTimerState.Inactive
+        publishSnapshot()
+        return true
+    }
+
+    /**
+     * Counts the sleep timer down, publishing the remaining time as it goes.
+     *
+     * Ticks coarsely and derives every value from the deadline, so a slow or suspended
+     * process catches up in one step instead of drifting, and nothing is scheduled at all
+     * while no timer is running.
+     */
+    private fun startSleepTicker() {
+        cancelSleepTimerJob()
+        val generation = sleepTimerGeneration
+        sleepTimerJob = scope.launch {
+            while (isActive) {
+                delay(SLEEP_TIMER_TICK_MS)
+                ensureActive()
+                if (generation != sleepTimerGeneration) return@launch
+                val now = elapsedRealtimeMs()
+                if (sleepTimer.hasExpired(now)) {
+                    expireSleepTimer()
+                    return@launch
+                }
+                publishSleepTimer(now)
+            }
+        }
+    }
+
+    /**
+     * Fires the sleep timer: playback is paused and the timer resets to inactive.
+     *
+     * Playback is only paused — the queue, the position and the notification are left exactly
+     * as they are, so the listener can resume straight away.
+     */
+    private fun expireSleepTimer() {
+        Timber.i("PlayerController: sleep timer expired, pausing playback")
+        sleepTimer = SleepTimerState.Inactive
+        pause()
+        publishSnapshot()
+    }
+
+    /** Cancels the ticker and invalidates anything it may already have queued. */
+    private fun cancelSleepTimerJob() {
+        sleepTimerGeneration++
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+    }
+
+    /**
+     * Pushes the current countdown into the state flow without re-reading the whole player.
+     *
+     * Used by the ticker so the countdown is not written to persistent player state once a
+     * second; [publishSnapshot] carries the same fields for every other state change.
+     */
+    private fun publishSleepTimer(nowMs: Long) {
+        val remaining = sleepTimer.remainingMs(nowMs)
+        _state.update { current ->
+            current.copy(
+                sleepTimerActive = sleepTimer.isActive,
+                sleepTimerRemainingMs = remaining,
+                sleepTimerTotalMs = sleepTimer.totalMs,
+            )
+        }
+    }
+
     /** Releases all resources held by this controller. */
     fun release() {
         Timber.i("PlayerController.release: START")
         tickerJob?.cancel()
         saveJob?.cancel()
         backfillJob?.cancel()
+        cancelSleepTimerJob()
         cancelArtworkBackfill("controller released")
         exoPlayer.removeListener(this)
         mediaController?.release()
@@ -1200,12 +1336,16 @@ class PlayerController private constructor(
         if (isSyncingExoPlayer) return
         Timber.d("PlayerController.publishSnapshot: START")
         val snapshot = buildPlayerSnapshot()
+        val now = elapsedRealtimeMs()
         _state.update { current ->
             PlayerStateMapper.toUiState(
                 snapshot = snapshot,
                 queue = queueManager.queue,
                 nothingToPlay = nothingToPlay,
                 lastError = lastError,
+                sleepTimerActive = sleepTimer.isActive,
+                sleepTimerRemainingMs = sleepTimer.remainingMs(now),
+                sleepTimerTotalMs = sleepTimer.totalMs,
             )
         }
         saveState()
@@ -1257,6 +1397,15 @@ class PlayerController private constructor(
 
         /** Interval in milliseconds between position-ticker updates. */
         private const val TICK_INTERVAL_MS = 250L
+
+        /**
+         * Interval in milliseconds between sleep-ticker updates.
+         *
+         * Coarse on purpose: the countdown is a whole number of seconds, so anything finer
+         * than this only wakes the main thread without changing what the user sees, and the
+         * remaining time is recomputed from the deadline on every tick anyway.
+         */
+        private const val SLEEP_TIMER_TICK_MS = 500L
 
         /** Delay in milliseconds before persisting state (debounce). */
         private const val SAVE_DEBOUNCE_MS = 2000L

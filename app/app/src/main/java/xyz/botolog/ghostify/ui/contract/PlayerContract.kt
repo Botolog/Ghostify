@@ -127,6 +127,23 @@ interface PlayerContract {
     fun refetchLyrics(provider: String, onResult: (String?) -> Unit)
 
     /**
+     * Starts a sleep timer that pauses playback once the given time has elapsed.
+     *
+     * Replaces a timer that is already running. A duration below one second is rejected and
+     * cancels any running timer instead, so a timer never fires the moment it is started.
+     *
+     * @param durationMs how long playback may continue, in milliseconds.
+     */
+    fun startSleepTimer(durationMs: Long)
+
+    /**
+     * Cancels a running sleep timer, leaving playback untouched.
+     *
+     * @return `true` when a timer was running and has now been cancelled.
+     */
+    fun cancelSleepTimer(): Boolean
+
+    /**
      * Immutable UI state for the Player screen.
      *
      * @property empty `true` when there is nothing to play.
@@ -139,6 +156,9 @@ interface PlayerContract {
      * @property volume playback volume in the range `0f..1f`.
      * @property queue the ordered list of tracks in the queue.
      * @property queueOpen `true` when the queue drawer is visible.
+     * @property sleepTimerActive `true` while the sleep timer is counting down.
+     * @property sleepTimerRemainingMs time left on the sleep timer, in milliseconds.
+     * @property sleepTimerTotalMs duration the running sleep timer was started with.
      */
     data class PlayerUiState(
         val empty: Boolean = true,
@@ -155,5 +175,8 @@ interface PlayerContract {
         val lyricsSource: String? = null,
         val lyricsEdited: Boolean = false,
         val showQueueCovers: Boolean = true,
+        val sleepTimerActive: Boolean = false,
+        val sleepTimerRemainingMs: Long = 0L,
+        val sleepTimerTotalMs: Long = 0L,
     )
 }

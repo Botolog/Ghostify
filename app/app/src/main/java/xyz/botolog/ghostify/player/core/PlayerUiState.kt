@@ -55,6 +55,9 @@ data class PlayerError(
  * @property shuffleEnabled Whether shuffle mode is active.
  * @property repeatMode Current repeat mode setting.
  * @property volume Current playback volume (0.0 to 1.0).
+ * @property sleepTimerActive `true` while the sleep timer is counting down.
+ * @property sleepTimerRemainingMs Time left on the sleep timer, in milliseconds.
+ * @property sleepTimerTotalMs Duration the running sleep timer was started with.
  * @property lastError Last non-recoverable error, or `null` if the player is healthy.
  */
 data class PlayerUiState(
@@ -71,5 +74,8 @@ data class PlayerUiState(
     val shuffleEnabled: Boolean = false,
     val repeatMode: RepeatMode = RepeatMode.OFF,
     val volume: Float = 1f,
+    val sleepTimerActive: Boolean = false,
+    val sleepTimerRemainingMs: Long = 0L,
+    val sleepTimerTotalMs: Long = 0L,
     val lastError: PlayerError? = null,
 )

@@ -330,6 +330,16 @@ class PlayerViewModel(
         }
     }
 
+    override fun startSleepTimer(durationMs: Long) {
+        Timber.i("PlayerViewModel.startSleepTimer: durationMs=$durationMs")
+        player.startSleepTimer(durationMs)
+    }
+
+    override fun cancelSleepTimer(): Boolean {
+        Timber.i("PlayerViewModel.cancelSleepTimer: START")
+        return player.cancelSleepTimer()
+    }
+
     /**
      * Maps the raw core player state and queue-open flag to a render-ready [PlayerUiState].
      *
@@ -356,6 +366,9 @@ class PlayerViewModel(
             queue = mapQueueItems(core),
             queueOpen = open,
             showQueueCovers = showQueueCovers,
+            sleepTimerActive = core.sleepTimerActive,
+            sleepTimerRemainingMs = core.sleepTimerRemainingMs,
+            sleepTimerTotalMs = core.sleepTimerTotalMs,
         )
     }
 

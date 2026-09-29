@@ -17,6 +17,9 @@ object PlayerStateMapper {
      * @param queue Current playback queue of [QueueItem]s.
      * @param nothingToPlay Whether the playlist has zero playable songs.
      * @param lastError Last non-recoverable player error, or `null` if healthy.
+     * @param sleepTimerActive Whether a sleep-timer countdown is running.
+     * @param sleepTimerRemainingMs Time left on the sleep timer, in milliseconds.
+     * @param sleepTimerTotalMs Duration the running sleep timer was started with.
      * @return Fully resolved [PlayerUiState] for the UI layer.
      */
     fun toUiState(
@@ -24,6 +27,9 @@ object PlayerStateMapper {
         queue: List<QueueItem>,
         nothingToPlay: Boolean,
         lastError: PlayerError?,
+        sleepTimerActive: Boolean = false,
+        sleepTimerRemainingMs: Long = 0L,
+        sleepTimerTotalMs: Long = 0L,
     ): PlayerUiState {
         Timber.i("PlayerStateMapper.toUiState: START")
         val playbackStatus = PlaybackStatus.fromPlayerState(snapshot.playbackState)
@@ -48,6 +54,9 @@ object PlayerStateMapper {
             shuffleEnabled = snapshot.shuffleEnabled,
             repeatMode = RepeatMode.fromMedia3(snapshot.repeatMode),
             volume = snapshot.volume,
+            sleepTimerActive = sleepTimerActive,
+            sleepTimerRemainingMs = sleepTimerRemainingMs.coerceAtLeast(0L),
+            sleepTimerTotalMs = sleepTimerTotalMs.coerceAtLeast(0L),
             lastError = lastError,
         )
         Timber.i(
