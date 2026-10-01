@@ -83,16 +83,20 @@ object UpdateChecker {
      */
     suspend fun checkForUpdate(context: Context, includePreReleases: Boolean = false): UpdateInfo? {
         return withContext(Dispatchers.IO) {
+            val packageInfo = try {
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            } catch (_: Exception) {
+                null
+            }
             val currentVersionCode = try {
                 @Suppress("DEPRECATION")
-                context.packageManager
-                    .getPackageInfo(context.packageName, 0)
-                    .longVersionCode
+                packageInfo?.longVersionCode ?: 0L
             } catch (_: Exception) {
                 0L
             }
+            val currentVersionName = packageInfo?.versionName
 
-            Timber.d(TAG, "Current version code: %d", currentVersionCode)
+            Timber.d(TAG, "Current version: %s (code %d)", currentVersionName, currentVersionCode)
 
             val url = URL(if (includePreReleases) GITHUB_RELEASES_URL else GITHUB_API_URL)
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -117,10 +121,22 @@ object UpdateChecker {
                 } catch (_: Exception) { false }
 
                 val info = if (includePreReleases) {
-                    selectRelease(body, currentVersionCode, includePreReleases = true, preferDebug = isDebug)
+                    selectRelease(
+                        body,
+                        currentVersionName,
+                        currentVersionCode,
+                        includePreReleases = true,
+                        preferDebug = isDebug,
+                    )
                 } else {
                     val release = parseRelease(body, isDebug)
-                    if (!shouldOfferUpdate(currentVersionCode, release.versionCode)) {
+                    if (!shouldOfferUpdate(
+                            currentVersionName = currentVersionName,
+                            currentVersionCode = currentVersionCode,
+                            latestVersionName = release.versionName,
+                            latestVersionCode = release.versionCode,
+                        )
+                    ) {
                         Timber.d(TAG, "Already up to date")
                         return@withContext null
                     }
@@ -187,10 +203,11 @@ object UpdateChecker {
      * that fail to parse (e.g. no APK asset) are skipped rather than failing
      * the whole check.
      *
-     * @return the first release newer than [currentVersionCode], or `null`.
+     * @return the first release newer than the installed build, or `null`.
      */
     internal fun selectRelease(
         releasesJson: String,
+        currentVersionName: String?,
         currentVersionCode: Long,
         includePreReleases: Boolean,
         preferDebug: Boolean? = null,
@@ -203,7 +220,15 @@ object UpdateChecker {
             } catch (_: IOException) {
                 continue
             }
-            if (shouldOfferUpdate(currentVersionCode, info.versionCode)) return info
+            if (shouldOfferUpdate(
+                    currentVersionName = currentVersionName,
+                    currentVersionCode = currentVersionCode,
+                    latestVersionName = info.versionName,
+                    latestVersionCode = info.versionCode,
+                )
+            ) {
+                return info
+            }
         }
         return null
     }
@@ -306,12 +331,50 @@ object UpdateChecker {
     // ── Private JSON helpers ──────────────────────────────────────────────
 
     /**
-     * Returns `true` when [latestVersionCode] is strictly greater than
-     * [currentVersionCode].  Equal or lower values never trigger an update
-     * so the app never offers a downgrade.
+     * Decides whether the latest published release is strictly newer than the
+     * installed build.
+     *
+     * Version names are compared semantically: `0.4.8` vs the installed `0.4.8` is
+     * not an update, `0.4.9` is, and `0.4.7` never is. Build metadata is ignored
+     * and a stable release outranks a prerelease of the same numbers.
+     *
+     * The numeric codes are only carried for logging: the release code is derived from
+     * the release tag while the installed code is the Android `versionCode`, so the two
+     * are not the same numbering scheme and must never drive the decision. If either
+     * version name is unparseable, no update is offered — an unknown version is never
+     * treated as newer.
+     *
+     * @return `true` only when the latest version is strictly newer.
      */
-    internal fun shouldOfferUpdate(currentVersionCode: Long, latestVersionCode: Long): Boolean {
-        return latestVersionCode > currentVersionCode
+    internal fun shouldOfferUpdate(
+        currentVersionName: String?,
+        currentVersionCode: Long,
+        latestVersionName: String?,
+        latestVersionCode: Long,
+    ): Boolean {
+        val current = SemanticVersion.parse(currentVersionName)
+        val latest = SemanticVersion.parse(latestVersionName)
+        val decision = current != null && latest != null && latest > current
+        if (decision) {
+            Timber.d(
+                TAG,
+                "Update available: latest %s (code %d) is newer than installed %s (code %d)",
+                latestVersionName,
+                latestVersionCode,
+                currentVersionName,
+                currentVersionCode,
+            )
+        } else {
+            Timber.d(
+                TAG,
+                "No update: latest %s (code %d) is not newer than installed %s (code %d)",
+                latestVersionName,
+                latestVersionCode,
+                currentVersionName,
+                currentVersionCode,
+            )
+        }
+        return decision
     }
 
     /**

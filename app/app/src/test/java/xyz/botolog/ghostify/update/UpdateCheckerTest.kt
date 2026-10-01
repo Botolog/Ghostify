@@ -248,57 +248,151 @@ class UpdateCheckerTest {
         assertEquals(300L, versionCode)
     }
 
-    // ── shouldOfferUpdate: anti-downgrade ─────────────────────────────
-
-    @Test
-    fun shouldOfferUpdate_latestHigher_returnsTrue() {
-        assertTrue(UpdateChecker.shouldOfferUpdate(currentVersionCode = 59, latestVersionCode = 60))
-    }
+    // ── shouldOfferUpdate: version-name precedence ────────────────────
 
     @Test
     fun shouldOfferUpdate_sameVersion_returnsFalse() {
-        assertFalse(UpdateChecker.shouldOfferUpdate(currentVersionCode = 59, latestVersionCode = 59))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "0.4.8"))
     }
 
     @Test
-    fun shouldOfferUpdate_latestLower_returnsFalse() {
-        assertFalse(UpdateChecker.shouldOfferUpdate(currentVersionCode = 59, latestVersionCode = 58))
+    fun shouldOfferUpdate_equalWithVPrefix_returnsFalse() {
+        assertFalse(shouldOffer(current = "0.4.8", latest = "v0.4.8"))
     }
 
     @Test
-    fun shouldOfferUpdate_latestMuchLower_returnsFalse() {
-        assertFalse(UpdateChecker.shouldOfferUpdate(currentVersionCode = 300, latestVersionCode = 1))
+    fun shouldOfferUpdate_equalPatchBump_returnsTrue() {
+        assertTrue(shouldOffer(current = "0.4.8", latest = "0.4.9"))
     }
 
     @Test
-    fun shouldOfferUpdate_currentZero_returnsTrue() {
-        assertTrue(UpdateChecker.shouldOfferUpdate(currentVersionCode = 0, latestVersionCode = 1))
+    fun shouldOfferUpdate_latestMinorNewer_returnsTrue() {
+        assertTrue(shouldOffer(current = "0.4.8", latest = "0.5.0"))
     }
 
     @Test
-    fun shouldOfferUpdate_bothZero_returnsFalse() {
-        assertFalse(UpdateChecker.shouldOfferUpdate(currentVersionCode = 0, latestVersionCode = 0))
+    fun shouldOfferUpdate_latestMajorNewer_returnsTrue() {
+        assertTrue(shouldOffer(current = "0.9.9", latest = "1.0.0"))
     }
 
     @Test
-    fun shouldOfferUpdate_currentHigherByOne_returnsFalse() {
-        assertFalse(UpdateChecker.shouldOfferUpdate(currentVersionCode = 60, latestVersionCode = 59))
+    fun shouldOfferUpdate_latestOlder_returnsFalse() {
+        assertFalse(shouldOffer(current = "0.4.8", latest = "0.4.7"))
     }
 
     @Test
-    fun shouldOfferUpdate_latestHigherByOne_returnsTrue() {
-        assertTrue(UpdateChecker.shouldOfferUpdate(currentVersionCode = 59, latestVersionCode = 60))
+    fun shouldOfferUpdate_latestMuchOlder_returnsFalse() {
+        assertFalse(shouldOffer(current = "1.0.0", latest = "0.1.0"))
     }
 
     @Test
-    fun shouldOfferUpdate_largeGap_downgradeBlocked() {
-        assertFalse(UpdateChecker.shouldOfferUpdate(currentVersionCode = 999, latestVersionCode = 1))
+    fun shouldOfferUpdate_shortenedCurrent_returnsFalse() {
+        assertFalse(shouldOffer(current = "0.4", latest = "0.4.0"))
     }
 
     @Test
-    fun shouldOfferUpdate_largeGap_upgradeAllowed() {
-        assertTrue(UpdateChecker.shouldOfferUpdate(currentVersionCode = 1, latestVersionCode = 999))
+    fun shouldOfferUpdate_twoSegmentLatest_returnsTrue() {
+        assertTrue(shouldOffer(current = "0.4.8", latest = "0.5"))
     }
+
+    @Test
+    fun shouldOfferUpdate_ignoresBuildMetadata() {
+        assertFalse(shouldOffer(current = "0.4.8+build.7", latest = "0.4.8"))
+        assertTrue(shouldOffer(current = "0.4.8", latest = "0.4.8+build.9"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_multiDigitComponents_compareNumerically() {
+        assertTrue(shouldOffer(current = "0.4.9", latest = "0.4.10"))
+        assertFalse(shouldOffer(current = "0.4.10", latest = "0.4.9"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_versionCodeMismatch_doesNotOfferEqualVersion() {
+        // Installed code 85 vs release-derived code 408 for the same 0.4.8 name.
+        assertFalse(
+            UpdateChecker.shouldOfferUpdate(
+                currentVersionName = "0.4.8",
+                currentVersionCode = 85L,
+                latestVersionName = "0.4.8",
+                latestVersionCode = 408L,
+            ),
+        )
+    }
+
+    @Test
+    fun shouldOfferUpdate_versionCodeMismatch_newerNameStillOffered() {
+        assertTrue(
+            UpdateChecker.shouldOfferUpdate(
+                currentVersionName = "0.4.8",
+                currentVersionCode = 408L,
+                latestVersionName = "0.4.9",
+                latestVersionCode = 409L,
+            ),
+        )
+    }
+
+    // ── shouldOfferUpdate: prerelease precedence ─────────────────────
+
+    @Test
+    fun shouldOfferUpdate_stableOutranksItsPrerelease() {
+        assertFalse(shouldOffer(current = "0.5.0", latest = "0.5.0-beta"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_newerPrereleaseOverOlderStable() {
+        assertTrue(shouldOffer(current = "0.4.8", latest = "0.5.0-beta"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_prereleaseChainFollowsSemver() {
+        assertTrue(shouldOffer(current = "0.5.0-alpha", latest = "0.5.0-beta"))
+        assertFalse(shouldOffer(current = "0.5.0-beta", latest = "0.5.0-alpha"))
+        assertTrue(shouldOffer(current = "0.5.0-rc.1", latest = "0.5.0-rc.2"))
+        assertTrue(shouldOffer(current = "0.5.0-rc.9", latest = "0.5.0-rc.10"))
+        assertTrue(shouldOffer(current = "0.5.0-beta", latest = "0.5.0-rc.1"))
+    }
+
+    // ── shouldOfferUpdate: malformed / unknown versions ───────────────
+
+    @Test
+    fun shouldOfferUpdate_malformedLatest_returnsFalse() {
+        assertFalse(shouldOffer(current = "0.4.8", latest = "nightly"))
+        assertFalse(shouldOffer(current = "0.4.8", latest = ""))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "1.2.3.4.5.x"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_malformedCurrent_returnsFalse() {
+        assertFalse(shouldOffer(current = "unknown", latest = "0.4.9"))
+        assertFalse(shouldOffer(current = null, latest = "0.4.9"))
+        assertFalse(shouldOffer(current = "", latest = "0.4.9"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_bothMalformed_returnsFalse() {
+        assertFalse(shouldOffer(current = "nightly", latest = "snapshot"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_zeroCodeDoesNotForceOffer() {
+        assertFalse(
+            UpdateChecker.shouldOfferUpdate(
+                currentVersionName = "0.4.8",
+                currentVersionCode = 0L,
+                latestVersionName = "0.4.8",
+                latestVersionCode = 0L,
+            ),
+        )
+    }
+
+    private fun shouldOffer(current: String?, latest: String?): Boolean =
+        UpdateChecker.shouldOfferUpdate(
+            currentVersionName = current,
+            currentVersionCode = 0L,
+            latestVersionName = latest,
+            latestVersionCode = 0L,
+        )
 
     // ── extractJsonBoolean ────────────────────────────────────────────
 
@@ -347,29 +441,54 @@ class UpdateCheckerTest {
 
     @Test
     fun selectRelease_stableOnly_skipsPreReleaseAndDraft() {
-        val info = UpdateChecker.selectRelease(releasesListJson, 30, includePreReleases = false)
+        val info = select(releasesListJson, current = "0.3.0", includePreReleases = false)
         assertEquals("0.4.0", info?.versionName)
         assertEquals(40L, info?.versionCode)
     }
 
     @Test
     fun selectRelease_includePreReleases_picksNewestEligible() {
-        val info = UpdateChecker.selectRelease(releasesListJson, 30, includePreReleases = true)
+        val info = select(releasesListJson, current = "0.3.0", includePreReleases = true)
         assertEquals("0.5.0-beta", info?.versionName)
         assertEquals(50L, info?.versionCode)
     }
 
     @Test
     fun selectRelease_nothingNewer_returnsNull() {
-        assertNull(UpdateChecker.selectRelease(releasesListJson, 50, includePreReleases = true))
-        assertNull(UpdateChecker.selectRelease(releasesListJson, 40, includePreReleases = false))
+        assertNull(select(releasesListJson, current = "0.5.0", includePreReleases = true))
+        assertNull(select(releasesListJson, current = "0.4.0", includePreReleases = false))
+    }
+
+    @Test
+    fun selectRelease_sameAsLatest_returnsNull() {
+        assertNull(select(releasesListJson, current = "0.4.0", includePreReleases = false))
+        assertNull(select(releasesListJson, current = "0.5.0-beta", includePreReleases = true))
+    }
+
+    @Test
+    fun selectRelease_newerThanLatestOnGitHub_returnsNull() {
+        // A locally built version ahead of every published release must not be
+        // offered an "update" back down to the latest published one.
+        assertNull(select(releasesListJson, current = "9.9.9", includePreReleases = false))
+        assertNull(select(releasesListJson, current = "9.9.9", includePreReleases = true))
     }
 
     @Test
     fun selectRelease_releaseWithoutApk_isSkipped() {
         val json = """[{"tag_name":"v0.9.0","prerelease":false,"draft":false,"body":"","assets":[]},
             |${releaseJson("v0.4.0", false, false, 40)}]""".trimMargin()
-        val info = UpdateChecker.selectRelease(json, 30, includePreReleases = false)
+        val info = select(json, current = "0.3.0", includePreReleases = false)
         assertEquals(40L, info?.versionCode)
     }
+
+    private fun select(
+        json: String,
+        current: String?,
+        includePreReleases: Boolean,
+    ): UpdateInfo? = UpdateChecker.selectRelease(
+        releasesJson = json,
+        currentVersionName = current,
+        currentVersionCode = 0L,
+        includePreReleases = includePreReleases,
+    )
 }
