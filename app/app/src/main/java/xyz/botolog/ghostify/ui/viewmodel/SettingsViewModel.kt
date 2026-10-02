@@ -13,6 +13,7 @@ import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.CacheStats
 import xyz.botolog.ghostify.ui.model.FullPlayerLayout
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,6 +50,7 @@ class SettingsViewModel(
     private val songRepo: SongRepository,
     private val musicStore: MusicStore,
     private val diagnostics: PythonDiagnosticsBridge = PythonDiagnosticsBridge(),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ContractViewModel(), SettingsContract {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -348,7 +350,7 @@ class SettingsViewModel(
                     pythonImplementation = null,
                 )
             }
-            val report = withContext(Dispatchers.IO) { diagnostics.reportBlocking() }
+            val report = withContext(ioDispatcher) { diagnostics.reportBlocking() }
             Timber.i("SettingsViewModel.showPythonLibraries: got ${report.libraries.size} libraries")
             _state.update {
                 it.copy(

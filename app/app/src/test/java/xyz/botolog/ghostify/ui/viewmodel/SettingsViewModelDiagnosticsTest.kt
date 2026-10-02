@@ -7,7 +7,10 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -27,7 +30,6 @@ import xyz.botolog.ghostify.python.PythonDiagnosticsBridge
 import xyz.botolog.ghostify.python.PythonLibraryInfo
 import xyz.botolog.ghostify.ui.contract.SettingsContract.SettingsUiState
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelDiagnosticsTest {
@@ -149,7 +151,7 @@ class SettingsViewModelDiagnosticsTest {
         viewModel.clear()
     }
 
-    private fun readReport(
+    private suspend fun TestScope.readReport(
         viewModel: SettingsViewModel,
         report: PythonDiagnostics,
     ): SettingsUiState {
@@ -159,27 +161,18 @@ class SettingsViewModelDiagnosticsTest {
         return awaitSettledReport(viewModel)
     }
 
-    private fun awaitSettledReport(viewModel: SettingsViewModel): SettingsUiState {
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(REPORT_TIMEOUT_MS)
-        while (System.nanoTime() < deadline) {
-            val current = viewModel.state.value
-            if (current.showPythonLibraries && !current.isLoadingPythonLibraries) return current
-            Thread.sleep(POLL_INTERVAL_MS)
-        }
+    private suspend fun TestScope.awaitSettledReport(viewModel: SettingsViewModel): SettingsUiState {
+        advanceUntilIdle()
         return viewModel.state.value
     }
 
-    private fun createViewModel(): SettingsViewModel = SettingsViewModel(
+    private fun TestScope.createViewModel(): SettingsViewModel = SettingsViewModel(
         context = context,
         settings = settings,
         playlistRepo = playlistRepo,
         songRepo = songRepo,
         musicStore = musicStore,
         diagnostics = diagnostics,
+        ioDispatcher = StandardTestDispatcher(testScheduler),
     )
-
-    private companion object {
-        private const val REPORT_TIMEOUT_MS = 5_000L
-        private const val POLL_INTERVAL_MS = 5L
-    }
 }

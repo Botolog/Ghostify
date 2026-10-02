@@ -89,7 +89,7 @@ class PlayerControllerPlaylistDeletionTest {
             QueueBuildResult.Ready(
                 items = listOf(queueItem("song-0"), queueItem("song-1"), queueItem("song-2")),
                 startIndex = 0,
-                startSongId = firstArg<String?>(),
+                startSongId = secondArg<String?>(),
             )
         }
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
@@ -186,6 +186,11 @@ class PlayerControllerPlaylistDeletionTest {
             startSongId = ids.first(),
             playlistId = playlistId,
         )
+        // playPlaylist builds the queue on Dispatchers.IO; wait for the background
+        // handleQueueReady to land before establishing deterministic state. Otherwise
+        // it can overwrite the manual queue (or a user-queued add) after we set it,
+        // making the tests flaky once the queueBuilder mock actually succeeds.
+        verify(timeout = 2_000) { exoPlayer.setMediaItems(any<List<MediaItem>>(), any<Int>(), any<Long>()) }
         controller.queueManager.setQueue(ids.map(::queueItem))
         mediaItems = ids.map(::mediaItem).toMutableList()
         cleared = false
