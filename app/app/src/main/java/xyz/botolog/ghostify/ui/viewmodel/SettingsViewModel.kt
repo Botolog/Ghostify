@@ -417,7 +417,18 @@ class SettingsViewModel(
                 uiState.copy(includePreReleaseUpdates = includePreReleaseUpdates)
             }
             .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
-            .collect { uiState -> _state.value = uiState }
+            .collect { uiState ->
+                _state.update { current ->
+                    uiState.copy(
+                        isLoadingPythonLibraries = current.isLoadingPythonLibraries,
+                        showPythonLibraries = current.showPythonLibraries,
+                        pythonLibraries = current.pythonLibraries,
+                        pythonLibrariesError = current.pythonLibrariesError,
+                        pythonVersion = current.pythonVersion,
+                        pythonImplementation = current.pythonImplementation,
+                    )
+                }
+            }
     }
 
     /**

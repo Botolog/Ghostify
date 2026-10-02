@@ -298,7 +298,7 @@ class UpdateCheckerTest {
     @Test
     fun shouldOfferUpdate_ignoresBuildMetadata() {
         assertFalse(shouldOffer(current = "0.4.8+build.7", latest = "0.4.8"))
-        assertTrue(shouldOffer(current = "0.4.8", latest = "0.4.8+build.9"))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "0.4.8+build.9"))
     }
 
     @Test

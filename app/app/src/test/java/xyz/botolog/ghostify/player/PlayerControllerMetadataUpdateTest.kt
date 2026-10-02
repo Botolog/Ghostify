@@ -5,13 +5,16 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import io.mockk.clearMocks
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -38,6 +41,8 @@ class PlayerControllerMetadataUpdateTest {
 
     private lateinit var exoPlayer: ExoPlayer
     private lateinit var controller: PlayerController
+    private lateinit var controllerScope: CoroutineScope
+    private val uncaughtInSetup = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
     private lateinit var mediaItems: MutableList<MediaItem>
     private var currentIndex = 0
     private var playWhenReady = true
@@ -81,9 +86,15 @@ class PlayerControllerMetadataUpdateTest {
             QueueBuildResult.Ready(
                 items = ids().map(::queueItem),
                 startIndex = 0,
-                startSongId = firstArg<String?>(),
+                startSongId = secondArg<String?>(),
             )
         }
+        uncaughtInSetup.clear()
+        controllerScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.Unconfined + CoroutineExceptionHandler { _, e ->
+                uncaughtInSetup.add(e)
+            },
+        )
         val constructor = PlayerController::class.java.declaredConstructors
             .first { it.parameterCount == 8 }
             .apply { isAccessible = true }
@@ -93,7 +104,7 @@ class PlayerControllerMetadataUpdateTest {
             queueBuilder,
             ArtworkExtractor { null },
             null,
-            CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+            controllerScope,
             persistence,
             flowOf(true),
         ) as PlayerController
@@ -104,12 +115,28 @@ class PlayerControllerMetadataUpdateTest {
             playlistId = PLAYLIST_ID,
         )
         controller.queueManager.setQueue(ids().map(::queueItem))
+        verify(timeout = 2_000) { exoPlayer.setMediaItems(any<List<MediaItem>>(), any(), any()) }
+        clearMocks(exoPlayer, answers = false)
+        if (uncaughtInSetup.isNotEmpty()) {
+            throw AssertionError(uncaughtInSetup.first())
+        }
     }
 
     @After
     fun tearDown() {
-        controller.release()
-        Dispatchers.resetMain()
+        try {
+            if (::controller.isInitialized) {
+                controller.release()
+            }
+            if (::controllerScope.isInitialized) {
+                controllerScope.cancel()
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
+        if (uncaughtInSetup.isNotEmpty()) {
+            throw AssertionError(uncaughtInSetup.first())
+        }
     }
 
     @Test

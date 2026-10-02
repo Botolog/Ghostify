@@ -107,7 +107,7 @@ class PlayerControllerShuffleTest {
             controller.setShuffleEnabled(false)
             controller.setShuffleEnabled(true)
             attempts++
-        } while (controller.queueManager.queue.map { it.songId } != canonicalIds && attempts < 100)
+        } while (controller.queueManager.queue.map { it.songId } == canonicalIds && attempts < 100)
         assertNotEquals(canonicalIds, controller.queueManager.queue.map { it.songId })
 
         controller.setShuffleEnabled(false)
