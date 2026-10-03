@@ -111,6 +111,8 @@ class UpdateDownloadWorker(
                 return Result.failure(workDataOf(KEY_ERROR to "Could not finalize downloaded update"))
             }
             Result.success(workDataOf(KEY_FILE to finalFile.absolutePath))
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (e: Exception) {
             Timber.e("UpdateDownloadWorker: failed: ${e.message}")
             Result.failure(workDataOf(KEY_ERROR to (e.message ?: "download failed")))

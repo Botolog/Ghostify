@@ -128,6 +128,11 @@ interface SettingsContract {
     fun pauseUpdate()
 
     /**
+     * Cancels an active update download and discards partial progress.
+     */
+    fun cancelUpdate()
+
+    /**
      * Dismisses the update dialog and clears the update info.
      */
     fun dismissUpdate()

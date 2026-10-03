@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
@@ -870,19 +871,35 @@ private fun UpdateSetting(state: SettingsUiState, contract: SettingsContract) {
         Spacer(modifier = Modifier.width(INNER_SPACING))
         when {
             state.downloadState is DownloadState.Downloading -> {
-                OutlinedButton(
-                    onClick = contract::pauseUpdate,
-                    modifier = Modifier.testTag("setting_pause_update"),
-                ) {
-                    Text("Pause")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = contract::pauseUpdate,
+                        modifier = Modifier.testTag("setting_pause_update"),
+                    ) {
+                        Text("Pause")
+                    }
+                    IconButton(
+                        onClick = contract::cancelUpdate,
+                        modifier = Modifier.testTag("setting_cancel_update"),
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "Cancel update download")
+                    }
                 }
             }
             state.downloadState is DownloadState.Paused -> {
-                OutlinedButton(
-                    onClick = contract::resumeUpdate,
-                    modifier = Modifier.testTag("setting_resume_update"),
-                ) {
-                    Text("Resume")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = contract::resumeUpdate,
+                        modifier = Modifier.testTag("setting_resume_update"),
+                    ) {
+                        Text("Resume")
+                    }
+                    IconButton(
+                        onClick = contract::cancelUpdate,
+                        modifier = Modifier.testTag("setting_cancel_update"),
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "Cancel update download")
+                    }
                 }
             }
             state.downloadState is DownloadState.Downloaded -> {
@@ -894,11 +911,19 @@ private fun UpdateSetting(state: SettingsUiState, contract: SettingsContract) {
                 }
             }
             state.downloadState is DownloadState.Error && state.downloadState.resumable -> {
-                OutlinedButton(
-                    onClick = contract::resumeUpdate,
-                    modifier = Modifier.testTag("setting_resume_update"),
-                ) {
-                    Text("Retry")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = contract::resumeUpdate,
+                        modifier = Modifier.testTag("setting_resume_update"),
+                    ) {
+                        Text("Retry")
+                    }
+                    IconButton(
+                        onClick = contract::cancelUpdate,
+                        modifier = Modifier.testTag("setting_cancel_update"),
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "Cancel update download")
+                    }
                 }
             }
             else -> {

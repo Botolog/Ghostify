@@ -49,6 +49,7 @@ class UpdateDownloadManager(
     private var activeUpdatesDir: File? = null
     private var workManager: WorkManager? = null
     private var workerCollectJob: Job? = null
+    private var cancelPending: Boolean = false
 
     fun currentState(): DownloadState = _state.value
 
@@ -85,6 +86,7 @@ class UpdateDownloadManager(
             return startViaWorker(wm, updatesDir, info)
         }
         synchronized(lock) {
+            cancelPending = false
             val current = _state.value
             if (current is DownloadState.Downloading && activeUrl == info.apkDownloadUrl) {
                 return false
@@ -123,6 +125,7 @@ class UpdateDownloadManager(
             return startViaWorker(wm, updatesDir, info)
         }
         synchronized(lock) {
+            cancelPending = false
             if (_state.value is DownloadState.Downloading && activeUrl == info.apkDownloadUrl) {
                 return false
             }
@@ -175,20 +178,63 @@ class UpdateDownloadManager(
         return true
     }
 
-    suspend fun cancelAndJoin() {
+    suspend fun cancelAndJoin(updatesDir: File? = null) {
+        cancel(updatesDir)
+        val job = synchronized(lock) { activeJob }
+        job?.cancelAndJoin()
+    }
+
+    fun cancel(updatesDir: File? = null): Boolean {
         val wm = synchronized(lock) { workManager }
+        val dir = updatesDir ?: synchronized(lock) { activeUpdatesDir }
+        val current = _state.value
+        val isActive = current is DownloadState.Downloading ||
+            current is DownloadState.Paused ||
+            current is DownloadState.Error
+        if (!isActive) {
+            if (dir != null) {
+                try {
+                    File(dir, UpdateDownloadHelper.partName()).delete()
+                } catch (_: Exception) {
+                }
+                try {
+                    File(dir, UpdateDownloadHelper.META_NAME).delete()
+                } catch (_: Exception) {
+                }
+            }
+            return false
+        }
+        synchronized(lock) { cancelPending = true }
         if (wm != null) {
             try {
                 wm.cancelUniqueWork(UpdateDownloadWorker.UNIQUE_WORK)
             } catch (_: Exception) {
             }
         }
-        val job = synchronized(lock) { activeJob }
-        job?.cancelAndJoin()
+        synchronized(lock) { activeJob }?.cancel()
+        if (dir != null) {
+            try {
+                File(dir, UpdateDownloadHelper.partName()).delete()
+            } catch (_: Exception) {
+            }
+            try {
+                File(dir, UpdateDownloadHelper.META_NAME).delete()
+            } catch (_: Exception) {
+            }
+        }
+        _state.value = DownloadState.Idle
+        synchronized(lock) {
+            activeJob = null
+            activeUrl = null
+            activeVersion = null
+            activeUpdatesDir = null
+        }
+        return true
     }
 
     private fun startViaWorker(wm: WorkManager, updatesDir: File, info: UpdateInfo): Boolean {
         synchronized(lock) {
+            cancelPending = false
             val current = _state.value
             if (current is DownloadState.Downloading && activeUrl == info.apkDownloadUrl) {
                 return false
@@ -286,6 +332,17 @@ class UpdateDownloadManager(
                     synchronized(lock) { activeJob = null }
                 }
                 WorkInfo.State.CANCELLED -> {
+                    val wasCancel = synchronized(lock) { cancelPending }
+                    if (wasCancel) {
+                        _state.value = DownloadState.Idle
+                        synchronized(lock) {
+                            activeJob = null
+                            activeUrl = null
+                            activeVersion = null
+                            activeUpdatesDir = null
+                        }
+                        return
+                    }
                     val current = _state.value
                     if (current is DownloadState.Downloaded) return
                     _state.value = DownloadState.Paused(currentProgressOrZero(dir))
@@ -308,6 +365,7 @@ class UpdateDownloadManager(
     }
 
     fun restore(updatesDir: File): DownloadState {
+        synchronized(lock) { cancelPending = false }
         return try {
             val restored = computeRestoredState(updatesDir)
             _state.value = restored
@@ -443,6 +501,25 @@ class UpdateDownloadManager(
                 activeUpdatesDir = null
             }
         } catch (ce: kotlinx.coroutines.CancellationException) {
+            val wasCancel = synchronized(lock) { cancelPending }
+            if (wasCancel) {
+                try {
+                    File(updatesDir, UpdateDownloadHelper.partName()).delete()
+                } catch (_: Exception) {
+                }
+                try {
+                    File(updatesDir, UpdateDownloadHelper.META_NAME).delete()
+                } catch (_: Exception) {
+                }
+                _state.value = DownloadState.Idle
+                synchronized(lock) {
+                    activeJob = null
+                    activeUrl = null
+                    activeVersion = null
+                    activeUpdatesDir = null
+                }
+                throw ce
+            }
             val dir = synchronized(lock) { activeUpdatesDir } ?: updatesDir
             val progress = computePausedProgress(dir)
             _state.value = DownloadState.Paused(progress)

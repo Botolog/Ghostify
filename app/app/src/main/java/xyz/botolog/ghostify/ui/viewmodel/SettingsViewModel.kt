@@ -80,7 +80,7 @@ class SettingsViewModel(
 
     private suspend fun restoreUpdateDownload() {
         try {
-            val restored = withContext(ioDispatcher) { updateDownloads.restore(updatesDir()) }
+            val restored = updateDownloads.restore(updatesDir())
             _state.update { it.copy(downloadState = restored) }
         } catch (_: Exception) {
         }
@@ -385,6 +385,36 @@ class SettingsViewModel(
             updateDownloads.pause()
         } catch (e: Exception) {
             Timber.e(e, "SettingsViewModel.pauseUpdate: FAILED")
+        }
+    }
+
+    override fun cancelUpdate() {
+        Timber.i("SettingsViewModel.cancelUpdate: START")
+        try {
+            val dir = try {
+                updatesDir()
+            } catch (_: Exception) {
+                null
+            }
+            updateDownloads.cancel(dir)
+        } catch (e: Exception) {
+            Timber.e(e, "SettingsViewModel.cancelUpdate: FAILED")
+        }
+        _state.update { current ->
+            val downloadState = current.downloadState
+            val isActive = downloadState is DownloadState.Downloading ||
+                downloadState is DownloadState.Paused ||
+                downloadState is DownloadState.Error
+            if (isActive) {
+                current.copy(
+                    downloadState = DownloadState.Idle,
+                    showUpdateDialog = false,
+                )
+            } else if (current.showUpdateDialog) {
+                current.copy(showUpdateDialog = false)
+            } else {
+                current
+            }
         }
     }
 
