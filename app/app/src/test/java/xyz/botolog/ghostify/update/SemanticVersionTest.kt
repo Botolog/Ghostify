@@ -1,6 +1,7 @@
 package xyz.botolog.ghostify.update
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,5 +86,65 @@ class SemanticVersionTest {
     @Test
     fun compare_prereleaseNumberBeatsMoreFields() {
         assertTrue(SemanticVersion.parse("1.0.0-beta")!! < SemanticVersion.parse("1.0.0-beta.1")!!)
+    }
+
+    @Test
+    fun parse_trailingLetterExtraSegment() {
+        assertEquals(listOf(0L, 4L, 10L, 1L), SemanticVersion.parse("0.4.10a")!!.numbers)
+        assertEquals(listOf(0L, 4L, 10L, 2L), SemanticVersion.parse("0.4.10b")!!.numbers)
+        assertEquals(listOf(0L, 4L, 10L, 26L), SemanticVersion.parse("0.4.10z")!!.numbers)
+        assertEquals(emptyList<String>(), SemanticVersion.parse("0.4.10a")!!.prerelease)
+    }
+
+    @Test
+    fun compare_trailingLetterOrdering() {
+        assertTrue(SemanticVersion.parse("0.4.10a")!! > SemanticVersion.parse("0.4.10")!!)
+        assertTrue(SemanticVersion.parse("0.4.10b")!! > SemanticVersion.parse("0.4.10a")!!)
+        assertTrue(SemanticVersion.parse("0.4.11")!! > SemanticVersion.parse("0.4.10b")!!)
+        assertTrue(SemanticVersion.parse("0.4.10")!! < SemanticVersion.parse("0.4.10a")!!)
+        assertTrue(SemanticVersion.parse("0.4.10a")!! < SemanticVersion.parse("0.4.10b")!!)
+        assertTrue(SemanticVersion.parse("0.4.10b")!! < SemanticVersion.parse("0.4.11")!!)
+    }
+
+    @Test
+    fun compare_trailingLetterUppercaseAndVariants() {
+        assertEquals(0, SemanticVersion.parse("0.4.10a")!!.compareTo(SemanticVersion.parse("0.4.10A")!!))
+        assertEquals(0, SemanticVersion.parse("0.4.10B")!!.compareTo(SemanticVersion.parse("0.4.10b")!!))
+        assertTrue(SemanticVersion.parse("0.4.10A")!! < SemanticVersion.parse("0.4.10B")!!)
+        assertTrue(SemanticVersion.parse("0.4.10a")!! < SemanticVersion.parse("0.4.10z")!!)
+        assertTrue(SemanticVersion.parse("0.4.10Z")!! > SemanticVersion.parse("0.4.10a")!!)
+        assertTrue(SemanticVersion.parse("v0.4.10a")!! > SemanticVersion.parse("0.4.10")!!)
+    }
+
+    @Test
+    fun compare_equalAndNumericEdge() {
+        assertEquals(0, SemanticVersion.parse("0.4.8")!!.compareTo(SemanticVersion.parse("0.4.8")!!))
+        assertTrue(SemanticVersion.parse("0.4.9")!! < SemanticVersion.parse("0.4.10")!!)
+        assertTrue(SemanticVersion.parse("0.4.10")!! > SemanticVersion.parse("0.4.9")!!)
+        assertFalse(SemanticVersion.parse("0.4.8")!! > SemanticVersion.parse("0.4.8")!!)
+    }
+
+    @Test
+    fun parse_trailingLetterMalformed() {
+        assertNull(SemanticVersion.parse("0.4.10ab"))
+        assertNull(SemanticVersion.parse("0.4.10aa"))
+        assertNull(SemanticVersion.parse("1.2.3.4.5.x"))
+        assertNull(SemanticVersion.parse("nightly"))
+        assertNull(SemanticVersion.parse("unknown"))
+        assertNull(SemanticVersion.parse("1.2.x"))
+    }
+
+    @Test
+    fun compare_trailingLetterWithPrereleaseAndBuild() {
+        val withPrerelease = SemanticVersion.parse("0.4.10a-beta")!!
+        assertEquals(listOf(0L, 4L, 10L, 1L), withPrerelease.numbers)
+        assertEquals(listOf("beta"), withPrerelease.prerelease)
+        val withBuild = SemanticVersion.parse("0.4.10a+build.1")!!
+        assertEquals(listOf(0L, 4L, 10L, 1L), withBuild.numbers)
+        assertEquals(emptyList<String>(), withBuild.prerelease)
+        assertEquals(0, withBuild.compareTo(SemanticVersion.parse("0.4.10a")!!))
+        assertTrue(SemanticVersion.parse("0.4.10a-beta")!! < SemanticVersion.parse("0.4.10a")!!)
+        assertTrue(SemanticVersion.parse("0.4.10a-beta")!! > SemanticVersion.parse("0.4.10")!!)
+        assertTrue(SemanticVersion.parse("0.4.10b-rc.1")!! > SemanticVersion.parse("0.4.10a")!!)
     }
 }

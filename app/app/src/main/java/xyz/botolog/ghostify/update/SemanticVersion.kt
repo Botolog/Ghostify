@@ -26,7 +26,7 @@ internal data class SemanticVersion(
     companion object {
 
         private val PATTERN = Regex(
-            """^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?(?:\+[0-9A-Za-z.-]+)?$""",
+            """^v?(\d+[A-Za-z]?(?:\.\d+[A-Za-z]?)*)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?(?:\+[0-9A-Za-z.-]+)?$""",
             RegexOption.IGNORE_CASE,
         )
 
@@ -42,8 +42,21 @@ internal data class SemanticVersion(
             if (text.isEmpty()) return null
             val match = PATTERN.matchEntire(text) ?: return null
 
-            val numbers = match.groupValues[1].split('.').map { part ->
-                part.toLongOrNull() ?: return null
+            val numbers = mutableListOf<Long>()
+            for (part in match.groupValues[1].split('.')) {
+                if (part.isEmpty()) return null
+                val last = part.last()
+                if (last.isLetter()) {
+                    if (part.length < 2) return null
+                    val digits = part.dropLast(1)
+                    val value = digits.toLongOrNull() ?: return null
+                    val letter = last.lowercaseChar()
+                    if (letter !in 'a'..'z') return null
+                    numbers.add(value)
+                    numbers.add((letter - 'a' + 1).toLong())
+                } else {
+                    numbers.add(part.toLongOrNull() ?: return null)
+                }
             }
             val prereleaseGroup = match.groupValues[2]
             val prerelease = if (prereleaseGroup.isEmpty()) {

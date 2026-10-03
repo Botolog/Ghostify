@@ -386,6 +386,71 @@ class UpdateCheckerTest {
         )
     }
 
+    @Test
+    fun shouldOfferUpdate_newerEqualOlder() {
+        assertTrue(shouldOffer(current = "0.4.8", latest = "0.4.9"))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "0.4.8"))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "0.4.7"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_letterSuffixChain() {
+        assertTrue(shouldOffer(current = "0.4.10", latest = "0.4.10a"))
+        assertTrue(shouldOffer(current = "0.4.10a", latest = "0.4.10b"))
+        assertTrue(shouldOffer(current = "0.4.10b", latest = "0.4.11"))
+        assertFalse(shouldOffer(current = "0.4.10a", latest = "0.4.10"))
+        assertFalse(shouldOffer(current = "0.4.10b", latest = "0.4.10a"))
+        assertFalse(shouldOffer(current = "0.4.11", latest = "0.4.10b"))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "0.4.8"))
+        assertFalse(shouldOffer(current = "0.4.10a", latest = "0.4.10a"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_letterUppercaseAndVariants() {
+        assertFalse(shouldOffer(current = "0.4.10a", latest = "0.4.10A"))
+        assertFalse(shouldOffer(current = "0.4.10A", latest = "0.4.10a"))
+        assertTrue(shouldOffer(current = "0.4.10a", latest = "0.4.10B"))
+        assertTrue(shouldOffer(current = "0.4.10a", latest = "0.4.10z"))
+        assertTrue(shouldOffer(current = "0.4.10A", latest = "0.4.10b"))
+        assertFalse(shouldOffer(current = "0.4.10z", latest = "0.4.10a"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_letterNumericEdge() {
+        assertTrue(shouldOffer(current = "0.4.9", latest = "0.4.10"))
+        assertFalse(shouldOffer(current = "0.4.10", latest = "0.4.9"))
+        assertTrue(shouldOffer(current = "0.4.9", latest = "0.4.10a"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_letterMalformed() {
+        assertFalse(shouldOffer(current = "0.4.10", latest = "0.4.10ab"))
+        assertFalse(shouldOffer(current = "0.4.10ab", latest = "0.4.11"))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "nightly"))
+        assertFalse(shouldOffer(current = "unknown", latest = "0.4.10a"))
+        assertFalse(shouldOffer(current = "0.4.8", latest = "1.2.3.4.5.x"))
+    }
+
+    @Test
+    fun shouldOfferUpdate_letterWithPrereleaseAndBuild() {
+        assertTrue(shouldOffer(current = "0.4.10", latest = "0.4.10a-beta"))
+        assertTrue(shouldOffer(current = "0.4.10a-beta", latest = "0.4.10a"))
+        assertFalse(shouldOffer(current = "0.4.10a", latest = "0.4.10a-beta"))
+        assertFalse(shouldOffer(current = "0.4.10a", latest = "0.4.10a+build.1"))
+        assertFalse(shouldOffer(current = "0.4.10a+build.1", latest = "0.4.10a"))
+        assertTrue(shouldOffer(current = "0.4.10a", latest = "0.4.10b-rc.1"))
+    }
+
+    @Test
+    fun selectRelease_letterSuffix() {
+        val json = "[" + releaseJson("v0.4.10b", false, false, 41) + "," +
+            releaseJson("v0.4.10a", false, false, 40) + "]"
+        val info = select(json, current = "0.4.10", includePreReleases = false)
+        assertEquals("0.4.10b", info?.versionName)
+        assertNull(select(json, current = "0.4.10b", includePreReleases = false))
+        assertNull(select(json, current = "0.4.11", includePreReleases = false))
+    }
+
     private fun shouldOffer(current: String?, latest: String?): Boolean =
         UpdateChecker.shouldOfferUpdate(
             currentVersionName = current,
