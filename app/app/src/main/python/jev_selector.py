@@ -1,5 +1,14 @@
 """Advisory OpenRouter/JEV selector for the YouTube video-per-song decision.
 
+INTENTIONALLY DISABLED: the JEV runtime gate below forces every decision
+to ``inactive`` and every transport to refuse, so no OpenRouter request can
+be made from production or from the demo tooling. The module stays in-tree
+for its deterministic helpers (shortlist, payload, validation) and for the
+demo display, but ``decide``/``select_video_id`` never reach the network.
+Re-enabling requires an intentional code change here AND in
+``ghostify_dl``; setting ``OPENROUTER_API_KEY``/``GHOSTIFY_JEV_ENABLED``
+alone must not re-enable it.
+
 ``ghostify_dl._resolve_yt_id`` historically returned the *first* search result
 that carried a video id. That is a sane default but it cannot tell an official
 recording from a cover, a live bootleg or a sped-up edit, which is the most
@@ -98,6 +107,24 @@ __all__ = [
 ]
 
 logger = logging.getLogger("ghostify_dl.jev")
+
+# ---------------------------------------------------------------------------
+# JEV runtime gate (intentionally disabled).
+# ---------------------------------------------------------------------------
+# Master switch: False means no OpenRouter request may be made. ``decide``
+# returns ``inactive`` without touching ``transport``, ``JevConfig.from_env``
+# forces ``enabled`` to False regardless of the environment, and
+# ``_post_json`` refuses outright. This covers production
+# (``ghostify_dl._select_yt_id``/``compare_yt_selection``) and the demo
+# tooling (which only reaches JEV through those entry points or through
+# ``_post_json``).
+_JEV_RUNTIME_ENABLED = False
+
+
+def _is_jev_runtime_enabled() -> bool:
+    """Master JEV gate — always False while JEV is intentionally disabled."""
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Constants.
@@ -334,8 +361,10 @@ class JevConfig:
     ) -> "JevConfig":
         """Build a config from *env* (defaults to ``os.environ``).
 
-        Never raises: an unreadable or nonsense value falls back to its
-        default, and a missing key simply leaves the selector disabled.
+        JEV is intentionally disabled: ``enabled`` is always False,
+        regardless of ``OPENROUTER_API_KEY``/``GHOSTIFY_JEV_ENABLED``. Other
+        knobs are still parsed so shortlist/display behaviour stays
+        deterministic. Never raises.
         """
         source: Any = os.environ if env is None else env
         try:
@@ -349,7 +378,8 @@ class JevConfig:
             except Exception:  # noqa: BLE001
                 return None
 
-        enabled = _parse_bool(_get(ENV_ENABLED), default=bool(api_key))
+        # Intentionally disabled: ignore GHOSTIFY_JEV_ENABLED entirely.
+        # (Previously: enabled = _parse_bool(_get(ENV_ENABLED), default=bool(api_key)))
         model = _clean_str(_get(ENV_MODEL)) or DEFAULT_MODEL
         endpoint = _clean_str(_get(ENV_ENDPOINT)) or DEFAULT_ENDPOINT
         timeout = _clamped_float(
@@ -369,6 +399,9 @@ class JevConfig:
         min_confidence = _clamped_float(
             _get(ENV_MIN_CONFIDENCE), DEFAULT_MIN_CONFIDENCE, 0.0, 1.0
         )
+        # Intentionally disabled: never enable via environment. The key is
+        # still parsed (secret hygiene/tests) but the selector stays off.
+        enabled = False
         return cls(
             api_key=api_key,
             enabled=enabled,
@@ -657,23 +690,13 @@ def _provider_error_code(response: Any) -> Optional[str]:
 def _post_json(
     url: str, payload: Dict[str, Any], headers: Dict[str, str], timeout: float
 ) -> Any:
-    """POST the decision request. ``requests`` is imported lazily on purpose.
+    """Refuse to POST: JEV is intentionally disabled, so no OpenRouter request
+    may be made — including from demo/verbose tooling that wraps this sender.
 
-    A non-2xx response becomes a :class:`JevTransportError` holding the integer
-    status and - when the body offers one - a short provider error code. The
-    body itself is dropped here, so nothing downstream can print it.
+    Defense-in-depth alongside the ``decide``/``ghostify_dl`` gates: raises
+    without importing ``requests`` and without touching the network.
     """
-    import requests
-
-    response = requests.post(url, json=payload, headers=headers, timeout=timeout)
-    status = _safe_status(getattr(response, "status_code", None))
-    if status is None or not 200 <= status < 300:
-        raise JevTransportError(
-            "HTTP %s" % ("unknown" if status is None else status),
-            status=status,
-            code=_provider_error_code(response),
-        )
-    return response.json()
+    raise JevTransportError("JEV disabled by runtime kill-switch")
 
 
 def _check_answer(
@@ -858,16 +881,22 @@ def decide(
 ) -> Decision:
     """Ask JEV which shortlisted video is the right one and explain the result.
 
-    Same safety contract as :func:`select_video_id`: every failure mode yields
-    a :class:`Decision` with ``video_id=None`` and never raises, so the caller
-    keeps the deterministic candidate. ``reason`` is an actionable but *safe*
-    explanation - a rejection label, numbers (shortlist size, confidence,
-    probability), a short provider error code, an integer HTTP status or an
-    exception class name - and never candidate text, headers, the API key,
-    ``str(exc)`` or a response body.
+    JEV is intentionally disabled: always returns ``inactive`` without
+    calling ``transport`` and without any network I/O, so callers keep the
+    deterministic candidate. Never raises.
     """
     config = config or JevConfig()
     considered = len(shortlist.candidates)
+    if not _is_jev_runtime_enabled():
+        logger.debug(
+            "JEV disabled by runtime kill-switch; keeping deterministic candidate"
+        )
+        return Decision(
+            outcome=OUTCOME_INACTIVE,
+            reason="JEV disabled by runtime kill-switch "
+            "(GHOSTIFY_JEV_ENABLED forced off); deterministic candidate kept",
+            candidates_considered=considered,
+        )
     if not shortlist.candidates:
         return Decision(
             outcome=OUTCOME_NO_CANDIDATES, reason="no shortlisted candidates"
@@ -969,8 +998,9 @@ def select_video_id(
 ) -> Optional[str]:
     """Ask JEV which shortlisted video is the right one, or return ``None``.
 
-    ``None`` means "no advice" and the caller must keep its deterministic
-    candidate. This function never raises.
+    JEV is intentionally disabled: always returns ``None`` without calling
+    ``transport``. ``None`` means "no advice" and the caller must keep its
+    deterministic candidate. This function never raises.
     """
     return decide(song, shortlist, config, transport).video_id
 

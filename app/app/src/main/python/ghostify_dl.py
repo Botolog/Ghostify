@@ -17,10 +17,10 @@ Design notes
 * ``prepend_path`` extends ``os.environ["PATH"]`` so the bundled static
   ``ffmpeg`` (see ``FfmpegLocator``) is found by the ``subprocess`` calls
   spotdl makes (T-025).
-* ``_select_yt_id`` asks the advisory ``jev_selector`` (OpenRouter JEV) which
-  shortlisted video is the canonical recording. It is a no-op unless
-  ``OPENROUTER_API_KEY`` is present, and every failure keeps the deterministic
-  first-result id, so downloads are unaffected when it is off or broken.
+* ``_select_yt_id`` keeps the deterministic first-result id. The advisory
+  ``jev_selector`` (OpenRouter JEV) is intentionally disabled via the
+  ``_JEV_RUNTIME_ENABLED`` master gate, so no OpenRouter request is ever
+  made and downloads never depend on it.
 * Every failure is surfaced as a typed exception whose ``str()`` is
   ``"<CODE>: <message>"`` (``GhostifyError`` for fetches,
   ``TrackDownloadError`` for downloads) so the Kotlin bridges can recover a
@@ -292,21 +292,24 @@ _PLAYLIST_REF_PATTERN = re.compile(
 _VIDEO_ID_PATTERN = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
 
 # ---------------------------------------------------------------------------
-# JEV runtime kill-switch (disabled everywhere, reversible).
+# JEV runtime gate (intentionally disabled).
 # ---------------------------------------------------------------------------
 # JEV stays fully in-tree (jev_selector.py, helpers, tests, demo display)
-# but is never consulted at runtime while this is False. To re-enable:
-#   1. Set _JEV_RUNTIME_ENABLED = True below, and
-#   2. Provide OPENROUTER_API_KEY (GHOSTIFY_JEV_ENABLED defaults to key
-#      presence).
-# No other change is needed; _select_yt_id / compare_yt_selection resume
-# their advisory calls once the flag is True.
+# but is never consulted: the master gate below is False and
+# _is_jev_runtime_enabled() always returns False, so _select_yt_id and
+# compare_yt_selection keep the deterministic first-result id without
+# importing/calling jev_selector and without any network I/O. This also
+# covers the demo tooling, which reaches JEV only through
+# compare_yt_selection. Re-enabling requires an intentional code change
+# here AND in jev_selector (see its own _JEV_RUNTIME_ENABLED gate);
+# setting OPENROUTER_API_KEY / GHOSTIFY_JEV_ENABLED alone must not
+# re-enable it.
 _JEV_RUNTIME_ENABLED = False
 
 
 def _is_jev_runtime_enabled() -> bool:
-    """Master JEV gate — False forces deterministic fallback everywhere."""
-    return bool(_JEV_RUNTIME_ENABLED)
+    """Master JEV gate — always False while JEV is intentionally disabled."""
+    return False
 
 # ---------------------------------------------------------------------------
 # Module-level state (guarded).
@@ -788,12 +791,11 @@ def _first_result_video_id(results: Any) -> Optional[str]:
 def _select_yt_id(
     song: Any, results: Any, per_track_timeout: float
 ) -> Optional[str]:
-    """Pick a YouTube id from ``results`` (deterministic order + advisory JEV).
+    """Pick a YouTube id from ``results`` (deterministic first-result).
 
-    The deterministic candidate is always computed first. JEV is consulted
-    only for genuinely ambiguous result sets, only when it is enabled, and its
-    answer is used only when it names one of the shortlisted video ids. Every
-    other outcome keeps the deterministic candidate.
+    JEV is intentionally disabled: the deterministic candidate is computed
+    and returned verbatim. The advisory selector is never imported or
+    called, so no OpenRouter request can be made.
     """
     if results is None:
         results = ()
@@ -804,8 +806,9 @@ def _select_yt_id(
     if not fallback:
         return None
 
-    # JEV runtime kill-switch: never import/call jev_selector while disabled.
-    # Reversible via _JEV_RUNTIME_ENABLED above. Keeps deterministic fallback.
+    # JEV runtime gate (intentionally disabled): never import/call
+    # jev_selector. Always keeps the deterministic fallback; no OpenRouter
+    # request can be made, even when a key is configured.
     if not _is_jev_runtime_enabled():
         logger.debug(
             "JEV disabled by runtime kill-switch; using deterministic candidate"
@@ -847,15 +850,12 @@ def compare_yt_selection(
     """Report the original and the JEV decision for one song, side by side.
 
     Read-only counterpart of :func:`_select_yt_id`: it reuses the very same
-    deterministic candidate, the same ``jev_selector`` config/shortlist and the
-    same advisory call, but returns a dict describing *both* outcomes instead
-    of a single id, so the two decisions can be compared (see
-    ``tools/jev_selection_demo.py``). ``effective_video_id`` is exactly what
-    :func:`_select_yt_id` would return for the same inputs, which is what makes
-    this safe to use as a live comparison entry point.
+    deterministic candidate and reports it as both the original and the
+    effective pick. JEV is intentionally disabled, so ``jev_video_id`` stays
+    ``None``, ``effective_video_id`` always equals the deterministic
+    candidate, and ``transport`` is never called (no OpenRouter request can
+    be made, including from the demo tooling).
 
-    ``transport`` is forwarded to ``jev_selector`` (tests inject a stub; the
-    default is the real OpenRouter call and only happens when a key is set).
     Never raises, and never returns the API key.
     """
     if results is None:
@@ -889,10 +889,10 @@ def compare_yt_selection(
     if not original:
         return report
 
-    # JEV runtime kill-switch: report inactive/fallback without calling decide
-    # or transport (no network, no API key use). Shortlist is still built
-    # locally so the demo keeps its 3-column display. Reversible via
-    # _JEV_RUNTIME_ENABLED above.
+    # JEV runtime gate (intentionally disabled): report inactive/fallback
+    # without calling decide or transport (no network, no API key use).
+    # Shortlist is still built locally so the demo keeps its 3-column
+    # display. Intentional; re-enabling requires a code change.
     if not _is_jev_runtime_enabled():
         logger.debug(
             "JEV disabled by runtime kill-switch; using deterministic candidate"
@@ -1077,8 +1077,8 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
 
     Tries YouTube Music first; if no results, falls back to plain YouTube
     search (ytsearch) before giving up. Both paths hand their full result set
-    to ``_select_yt_id``, which keeps the first usable id unless the advisory
-    JEV selector validates a better shortlist candidate.
+    to ``_select_yt_id``, which returns the deterministic first usable id
+    (JEV is intentionally disabled).
     """
     if per_track_timeout <= 0:
         return None

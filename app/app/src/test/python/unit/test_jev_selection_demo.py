@@ -387,53 +387,60 @@ class TestFallbackWithoutKey:
 
 
 class TestCompareWithMockedCandidates:
+    """JEV disabled: every run keeps the deterministic pick, no transport."""
+
     def test_jev_choice_overrides_original(self, monkeypatch):
+        # Disabled: even a valid JEV answer is ignored, transport untouched.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(4)
         target = results[3].result_id
         transport = stub_transport(choice_response(target, confidence=0.93))
         report = collect(results=results, search=make_search(results), transport=transport)
-        assert report["outcome"] == jev_selector.OUTCOME_CHOSE
-        assert report["jev_video_id"] == target
-        assert report["changed"] is True
-        assert report["agree"] is False
-        assert report["effective_video_id"] == target
-        assert report["confidence"] == pytest.approx(0.93)
-        assert len(transport.calls) == 1
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert report["jev_video_id"] is None
+        assert report["changed"] is False
+        assert report["agree"] is True
+        assert report["effective_video_id"] == results[0].result_id
+        assert transport.calls == []
 
     def test_agreement_keeps_top_result(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
         transport = stub_transport(choice_response(results[0].result_id, confidence=0.8))
         report = collect(results=results, search=make_search(results), transport=transport)
-        assert report["jev_video_id"] == results[0].result_id
+        assert report["jev_video_id"] is None
         assert report["agree"] is True
         assert report["changed"] is False
         assert report["effective_video_id"] == results[0].result_id
-        assert "top result" in report["reason"]
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
 
     def test_hallucinated_id_falls_back(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
+        transport = stub_transport(choice_response("zzzzzzzzzzz", 1.0))
         report = collect(
             results=results,
             search=make_search(results),
-            transport=stub_transport(choice_response("zzzzzzzzzzz", 1.0)),
+            transport=transport,
         )
-        assert report["outcome"] == jev_selector.OUTCOME_REJECTED
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         assert report["jev_video_id"] is None
         assert report["effective_video_id"] == results[0].result_id
+        assert transport.calls == []
 
     def test_low_confidence_falls_back(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
+        transport = stub_transport(choice_response(results[2].result_id, 0.1))
         report = collect(
             results=results,
             search=make_search(results),
-            transport=stub_transport(choice_response(results[2].result_id, 0.1)),
+            transport=transport,
         )
-        assert report["outcome"] == jev_selector.OUTCOME_REJECTED
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         assert report["effective_video_id"] == results[0].result_id
+        assert transport.calls == []
 
     def test_transport_failure_falls_back(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -443,8 +450,7 @@ class TestCompareWithMockedCandidates:
             raise TimeoutError("read timed out")
 
         report = collect(results=results, search=make_search(results), transport=boom)
-        assert report["outcome"] == jev_selector.OUTCOME_REQUEST_FAILED
-        assert "TimeoutError" in report["reason"]
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         assert report["effective_video_id"] == results[0].result_id
 
     def test_unambiguous_shortlist_is_not_queried(self, monkeypatch):
@@ -452,7 +458,7 @@ class TestCompareWithMockedCandidates:
         results = make_results(1)
         transport = stub_transport(choice_response(results[0].result_id))
         report = collect(results=results, search=make_search(results), transport=transport)
-        assert report["outcome"] == jev_selector.OUTCOME_UNAMBIGUOUS
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         assert transport.calls == []
         assert report["agree"] is True
 
@@ -470,13 +476,15 @@ class TestCompareWithMockedCandidates:
         assert report["shortlist_ids"] == [results[0].result_id, results[1].result_id]
 
     def test_effective_matches_production_selection(self, monkeypatch):
+        # Disabled: production is the deterministic first result.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(4)
         target = results[2].result_id
+        transport = stub_transport(choice_response(target, confidence=0.9))
         report = collect(
             results=results,
             search=make_search(results),
-            transport=stub_transport(choice_response(target, confidence=0.9)),
+            transport=transport,
         )
         config = jev_selector.JevConfig.from_env(timeout_cap=8.0)
         shortlist = jev_selector.build_shortlist(results, FakeSong(), config)
@@ -486,8 +494,10 @@ class TestCompareWithMockedCandidates:
             config,
             stub_transport(choice_response(target, confidence=0.9)),
         )
-        assert production == target
-        assert report["effective_video_id"] == production
+        assert production is None
+        assert transport.calls == []
+        assert report["effective_video_id"] == results[0].result_id
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         assert report["original_video_id"] == ghostify_dl._first_result_video_id(results)
 
     def test_report_never_contains_the_key(self, monkeypatch):
@@ -504,19 +514,20 @@ class TestCompareWithMockedCandidates:
 
 class TestReportFormatting:
     def test_contains_both_ids_and_agreement(self, monkeypatch):
+        # Disabled: deterministic pick kept, no JEV override.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
+        transport = stub_transport(choice_response(results[2].result_id, 0.77))
         report = collect(
             results=results,
             search=make_search(results),
-            transport=stub_transport(choice_response(results[2].result_id, 0.77)),
+            transport=transport,
         )
         text = demo.format_report(report)
         assert results[0].result_id in text
-        assert results[2].result_id in text
-        assert "0.77" in text
-        assert "NO - JEV overrides the original pick" in text
-        assert "typesafe/jev-1.13" in text
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert report["effective_video_id"] == results[0].result_id
+        assert transport.calls == []
         assert report["effective_video_id"] in text.split("effective")[1]
 
     def test_sections_present(self):
@@ -700,7 +711,7 @@ class TestMainGuards:
 
 
 class TestActionableStatus:
-    """The status explains what happened, without ever printing a secret."""
+    """Disabled: status is inactive/deterministic, without ever printing a secret."""
 
     def _report(self, monkeypatch, transport):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -709,23 +720,22 @@ class TestActionableStatus:
 
     def test_rejection_reason_is_actionable(self, monkeypatch):
         results = make_results(3)
-        report = self._report(
-            monkeypatch, stub_transport(choice_response(results[2].result_id, 0.1))
-        )
-        assert report["outcome"] == jev_selector.OUTCOME_REJECTED
+        transport = stub_transport(choice_response(results[2].result_id, 0.1))
+        report = self._report(monkeypatch, transport)
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
         text = demo.format_report(report)
-        assert "enabled (OPENROUTER_API_KEY set)" in text
-        assert jev_selector.REJECTION_LOW_CONFIDENCE in text
-        assert "confidence=0.10 < 0.60" in text
-        assert report["effective_url"] in text
+        assert report["original_url"] in text
         assert FAKE_KEY not in text
 
     def test_hallucinated_id_is_actionable(self, monkeypatch):
-        report = self._report(monkeypatch, stub_transport(choice_response("zzzzzzzzzzz", 1.0)))
+        transport = stub_transport(choice_response("zzzzzzzzzzz", 1.0))
+        report = self._report(monkeypatch, transport)
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
         text = demo.format_report(report)
-        assert jev_selector.REJECTION_UNKNOWN_ID in text
-        assert "shortlist=3" in text
-        assert report["effective_url"] in text
+        assert report["original_url"] in text
+        assert FAKE_KEY not in text
 
     def test_wrong_answer_type_is_actionable(self, monkeypatch):
         def transport(url, payload, headers, timeout):
@@ -736,9 +746,10 @@ class TestActionableStatus:
             }
 
         report = self._report(monkeypatch, transport)
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         text = demo.format_report(report)
-        assert jev_selector.REJECTION_ANSWER_TYPE in text
-        assert "type=noul" in text
+        assert report["original_url"] in text
+        assert FAKE_KEY not in text
 
     def test_http_status_is_reported_sanitised(self, monkeypatch):
         def transport(url, payload, headers, timeout):
@@ -749,13 +760,11 @@ class TestActionableStatus:
             )
 
         report = self._report(monkeypatch, transport)
-        assert report["outcome"] == jev_selector.OUTCOME_REQUEST_FAILED
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         text = demo.format_report(report)
-        assert "HTTP 429" in text
-        assert "rate_limit_error" in text
         assert "Authorization" not in text
         assert FAKE_KEY not in text
-        assert report["effective_url"] in text
+        assert report["original_url"] in text
 
     def test_disabled_flag_is_not_reported_as_enabled(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -767,13 +776,13 @@ class TestActionableStatus:
 
     def test_accepted_answer_status(self, monkeypatch):
         results = make_results(3)
-        report = self._report(
-            monkeypatch, stub_transport(choice_response(results[2].result_id, 0.93))
-        )
+        transport = stub_transport(choice_response(results[2].result_id, 0.93))
+        report = self._report(monkeypatch, transport)
         text = demo.format_report(report)
-        assert report["outcome"] == jev_selector.OUTCOME_CHOSE
-        assert "enabled (OPENROUTER_API_KEY set) - JEV picked an alternate" in text
-        assert report["effective_url"] in text
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
+        assert report["original_url"] in text
+        assert FAKE_KEY not in text
 
     def test_status_line_stays_bounded(self, monkeypatch):
         report = self._report(
@@ -892,16 +901,21 @@ class TestColorOutput:
         assert demo.STYLES["label"] + "title         " + demo.RESET in text
         assert demo.STYLES["original"] in text
         assert demo.STYLES["jev"] + "JEV / OpenRouter" + demo.RESET in text
+        # Disabled: no effective_url is reported; the original URL is styled.
+        url = report.get("effective_url") or report.get("original_url")
+        assert url is not None
         assert (
-            demo.STYLES["url"] + report["effective_url"] + demo.RESET in text
+            demo.STYLES["url"] + url + demo.RESET in text
         ), "the effective url is wrapped, never split"
 
     @pytest.mark.parametrize(
         "name,style",
-        [("accepted", "success"), ("rejected", "fallback"), ("failed", "error")],
+        [("accepted", "fallback"), ("rejected", "fallback"), ("failed", "fallback")],
     )
     def test_status_colour_follows_the_outcome(self, monkeypatch, name, style):
+        # Disabled: every live run is inactive -> fallback style.
         report = self._reports(monkeypatch)[name]
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         text = demo.format_report(report, color=True)
         status = [line for line in text.splitlines() if "JEV status" in line][0]
         assert demo.STYLES[style] in status
@@ -1160,7 +1174,7 @@ class TestVerboseRedaction:
 
 
 class TestVerboseRequestDump:
-    """``-v`` prints the request the selector really sends, and nothing more."""
+    """JEV disabled: ``-v`` says no request was sent, and nothing more."""
 
     @pytest.fixture(autouse=True)
     def _restore_root_logging(self):
@@ -1170,37 +1184,29 @@ class TestVerboseRequestDump:
         root.handlers, root.level = handlers, level
 
     def test_dumps_method_endpoint_headers_and_body(self, monkeypatch, capsys):
+        # Disabled: no request is dumped; the skipped block is shown instead.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         out = run_verbose(monkeypatch, capsys, [TRACK_URL, "-v"])
-        assert demo.VERBOSE_REQUEST_HEADING in out
-        assert "POST" in out
-        assert jev_selector.DEFAULT_ENDPOINT in out
-        assert "Authorization" in out
-        assert "application/json" in out
-        assert "request body" in out
-        assert jev_selector.DEFAULT_MODEL in out
-        assert '"criteria"' in out
+        assert demo.VERBOSE_SKIPPED_HEADING in out
+        assert demo.VERBOSE_REQUEST_HEADING not in out
+        assert "no request was sent" in out or "never called" in out
 
     def test_body_is_the_complete_payload(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         sent = []
         out = run_verbose(monkeypatch, capsys, [TRACK_URL, "-v"], sent=sent)
-        assert len(sent) == 1
-        block = out.split(demo.VERBOSE_RULE)[1]
-        body = body_of(block)
-        assert body == sent[0]["payload"]
-        assert body["model"] == jev_selector.DEFAULT_MODEL
-        for result in make_results(3):
-            assert result.result_id in body["questions"]["recording"]["criteria"]
+        assert sent == []
+        assert demo.VERBOSE_SKIPPED_HEADING in out
+        assert demo.VERBOSE_REQUEST_HEADING not in out
 
     def test_payload_is_exactly_the_selector_payload(self, monkeypatch, capsys):
+        # Disabled: nothing is sent, but the deterministic payload shape
+        # (shortlist + model) is still built locally for the display.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         sent = []
         run_verbose(monkeypatch, capsys, [TRACK_URL, "-v"], sent=sent)
-        request = sent[0]
-        assert request["url"] == jev_selector.DEFAULT_ENDPOINT
-        assert request["headers"]["Authorization"] == "Bearer %s" % FAKE_KEY
-        assert request["payload"] == jev_selector.build_payload(
+        assert sent == []
+        payload = jev_selector.build_payload(
             FakeSong(),
             jev_selector.build_shortlist(
                 make_results(3),
@@ -1209,20 +1215,23 @@ class TestVerboseRequestDump:
             ).candidates,
             jev_selector.DEFAULT_MODEL,
         )
+        assert payload["model"] == jev_selector.DEFAULT_MODEL
+        assert set(payload["questions"]["recording"]["criteria"]) == {
+            r.result_id for r in make_results(3)
+        }
 
     def test_timeout_is_shown(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         sent = []
         out = run_verbose(monkeypatch, capsys, [TRACK_URL, "-v"], sent=sent)
-        assert "%.1fs" % sent[0]["timeout"] in out
+        assert sent == []
+        assert demo.VERBOSE_SKIPPED_HEADING in out
 
     def test_authorization_is_redacted(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         out = run_verbose(monkeypatch, capsys, [TRACK_URL, "-v"])
-        assert "Authorization" in out
-        assert "Bearer %s" % demo.REDACTED in out
         assert FAKE_KEY not in out
-        assert FAKE_KEY not in json.dumps(body_of(out.split(demo.VERBOSE_RULE)[1]))
+        assert demo.VERBOSE_SKIPPED_HEADING in out
 
     def test_response_body_is_never_dumped(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -1230,17 +1239,17 @@ class TestVerboseRequestDump:
             monkeypatch, capsys, [TRACK_URL, "-v"], extra_response=RESPONSE_SENTINEL
         )
         assert RESPONSE_SENTINEL not in out
-        assert "answers" not in body_of(out.split(demo.VERBOSE_RULE)[1])
+        assert demo.VERBOSE_SKIPPED_HEADING in out
+        assert demo.VERBOSE_OPTIONS_HEADING not in out
 
     def test_block_precedes_and_separates_the_report(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         out = run_verbose(monkeypatch, capsys, [TRACK_URL, "-v"])
-        assert out.index(demo.VERBOSE_REQUEST_HEADING) < out.index(
+        assert out.index(demo.VERBOSE_SKIPPED_HEADING) < out.index(
             "Ghostify - YouTube selection"
         )
         head = out.split(demo.VERBOSE_RULE, 1)[1]
-        assert "method" in head
-        assert "request body" in head
+        assert "POST (not sent)" in head or "not sent" in head
         report = out[out.index("Ghostify - YouTube selection"):]
         assert out[: out.index(report)].endswith("\n\n")
         assert demo.VERBOSE_OPTIONS_HEADING not in out
@@ -1274,21 +1283,26 @@ class TestVerboseRequestDump:
             verbose=log,
         )
         assert quiet == loud
-        assert loud["outcome"] == jev_selector.OUTCOME_CHOSE
-        assert loud["effective_video_id"] == target
+        assert loud["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert loud["effective_video_id"] == results[0].result_id
         assert len(log.blocks) == 1
+        assert demo.VERBOSE_SKIPPED_HEADING in log.blocks[0]
 
     def test_verbose_still_uses_the_selector_sender(self, monkeypatch):
+        # Disabled: the verbose wrapper never reaches the sender.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
         target = results[2].result_id
+        log = demo.VerboseJev(stream=io.StringIO())
         report = collect(
             results=results,
             search=make_search(results),
             transport=stub_transport(choice_response(target, 0.9)),
-            verbose=demo.VerboseJev(stream=io.StringIO()),
+            verbose=log,
         )
-        assert report["jev_video_id"] == target
+        assert report["jev_video_id"] is None
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert len(log.blocks) == 1
 
     def test_broken_output_stream_cannot_change_the_decision(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -1299,8 +1313,8 @@ class TestVerboseRequestDump:
             transport=stub_transport(choice_response(results[2].result_id, 0.9)),
             verbose=demo.VerboseJev(stream=BrokenStream()),
         )
-        assert report["outcome"] == jev_selector.OUTCOME_CHOSE
-        assert report["effective_video_id"] == results[2].result_id
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert report["effective_video_id"] == results[0].result_id
 
     def test_short_and_long_flag_agree(self):
         assert demo.build_parser().parse_args([TRACK_URL, "-v"]).verbose is True
@@ -1392,13 +1406,14 @@ class TestVerboseWithoutARequest:
         assert sent == []
 
     def test_unambiguous_shortlist_explains_itself(self, monkeypatch, capsys):
+        # Disabled: even a single-candidate run reports the kill-switch.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         sent = []
         out = run_verbose(
             monkeypatch, capsys, [TRACK_URL, "-v"], results=make_results(1), sent=sent
         )
         self._skipped(out)
-        assert "only one candidate shortlisted" in out
+        assert "configured but disabled" in out or "JEV is inactive" in out
         assert sent == []
 
     def test_no_candidates_explains_itself(self):
@@ -1992,7 +2007,7 @@ class TestVerboseOptionTable:
 
 
 class TestVerboseOptionTableInARealRun:
-    """The table is built from the live answer, through the live code path."""
+    """Disabled: ``-v`` never sends a request, so no option table appears."""
 
     def test_every_option_is_shown_after_the_request_dump(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -2009,17 +2024,9 @@ class TestVerboseOptionTableInARealRun:
             results=results,
             response=options_response(results[2].result_id, probabilities),
         )
-        block = options_from(out)
-        assert block
-        assert out.index(demo.VERBOSE_REQUEST_HEADING) < out.index(
-            demo.VERBOSE_OPTIONS_HEADING
-        )
-        for result in results:
-            assert result.result_id in block
-            assert "Song %s" % result.result_id[-1] in block
-        assert "55.0%" in block
-        assert "35.0%" in block
-        assert "10.0%" in block
+        assert demo.VERBOSE_SKIPPED_HEADING in out
+        assert options_from(out) == ""
+        assert demo.VERBOSE_REQUEST_HEADING not in out
 
     def test_the_request_was_really_sent(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -2033,12 +2040,8 @@ class TestVerboseOptionTableInARealRun:
             sent=sent,
             response=options_response(results[0].result_id, spread(results)),
         )
-        assert len(sent) == 1
-        assert body_of(out.split(demo.VERBOSE_RULE)[1]) == sent[0]["payload"]
-        for result in results:
-            assert result.result_id in sent[0]["payload"]["questions"]["recording"][
-                "criteria"
-            ]
+        assert sent == []
+        assert demo.VERBOSE_SKIPPED_HEADING in out
 
     def test_the_report_still_comes_last_and_is_unchanged(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -2058,13 +2061,8 @@ class TestVerboseOptionTableInARealRun:
         assert plain in verbose
         assert verbose.endswith(plain)
         assert verbose.count("Ghostify - YouTube selection") == 1
-        assert options_from(verbose) != ""
-        assert verbose[: verbose.index(demo.VERBOSE_OPTIONS_HEADING)].startswith(
-            demo.VERBOSE_REQUEST_HEADING
-        )
-        assert verbose[verbose.index(demo.VERBOSE_OPTIONS_HEADING) :] == (
-            options_from(verbose) + "\n\n" + plain
-        )
+        assert options_from(verbose) == ""
+        assert verbose.startswith(demo.VERBOSE_SKIPPED_HEADING)
 
     def test_the_short_and_long_flag_agree(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -2079,7 +2077,7 @@ class TestVerboseOptionTableInARealRun:
             monkeypatch, capsys, [TRACK_URL, "--verbose"], results=results, response=response
         )
         assert short == long
-        assert options_from(short) != ""
+        assert options_from(short) == ""
 
     def test_the_table_does_not_change_the_decision(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -2099,10 +2097,10 @@ class TestVerboseOptionTableInARealRun:
             verbose=log,
         )
         assert quiet == loud
-        assert loud["outcome"] == jev_selector.OUTCOME_CHOSE
-        assert loud["effective_video_id"] == target
-        assert len(log.blocks) == 2
-        assert log.responses == [response]
+        assert loud["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert loud["effective_video_id"] == results[0].result_id
+        assert len(log.blocks) == 1
+        assert log.responses == []
 
     def test_the_key_never_reaches_the_table(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -2114,11 +2112,8 @@ class TestVerboseOptionTableInARealRun:
             results=results,
             response=options_response(results[0].result_id, spread(results)),
         )
-        block = options_from(out)
-        assert block
+        assert options_from(out) == ""
         assert FAKE_KEY not in out
-        assert "Bearer" not in block
-        assert "Authorization" not in block
 
     def test_no_response_body_is_printed(self, monkeypatch, capsys):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
@@ -2129,7 +2124,7 @@ class TestVerboseOptionTableInARealRun:
         out = run_verbose(
             monkeypatch, capsys, [TRACK_URL, "-v"], results=results, response=response
         )
-        assert options_from(out)
+        assert options_from(out) == ""
         assert RESPONSE_SENTINEL not in out
 
     def test_an_unusable_response_still_prints_the_report(self, monkeypatch, capsys):
@@ -2138,15 +2133,13 @@ class TestVerboseOptionTableInARealRun:
             monkeypatch, capsys, [TRACK_URL, "-v"], response="not a response"
         )
         assert code == demo.EXIT_OK
-        assert demo.VERBOSE_REQUEST_HEADING in out
+        assert demo.VERBOSE_SKIPPED_HEADING in out
         assert options_from(out) == ""
         assert out.count("Ghostify - YouTube selection") == 1
-        assert "answer rejected: the response carried no usable answer" in out
-        last = out.rstrip().splitlines()[-1]
-        assert last.startswith("  JEV status")
-        assert "answer rejected" in last
+        assert "JEV disabled by runtime kill-switch" in out
 
     def test_a_rejected_answer_still_lists_its_options(self, monkeypatch, capsys):
+        # Disabled: no live answer is ever read, so no option table appears.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
         out = run_verbose(
@@ -2156,9 +2149,8 @@ class TestVerboseOptionTableInARealRun:
             results=results,
             response=options_response(results[2].result_id, spread(results, 2), 0.2),
         )
-        block = options_from(out)
-        assert "chosen        : none - the deterministic result was kept" in block
-        assert "answer rejected" in out
+        assert options_from(out) == ""
+        assert demo.VERBOSE_SKIPPED_HEADING in out
 
     def test_no_table_when_nothing_was_sent(self, monkeypatch, capsys):
         out = run_verbose(monkeypatch, capsys, [TRACK_URL, "-v"])
@@ -2188,7 +2180,7 @@ class TestVerboseOptionTableInARealRun:
             monkeypatch, capsys, [TRACK_URL, "-v"], results=results, response=response
         )
         assert "\033[" in coloured
-        assert options_from(coloured) != ""
+        assert options_from(coloured) == ""
         assert demo.strip_ansi(coloured) == plain
 
     def test_a_broken_stream_cannot_break_the_decision(self, monkeypatch):
@@ -2205,5 +2197,5 @@ class TestVerboseOptionTableInARealRun:
             ),
             verbose=demo.VerboseJev(stream=BrokenStream()),
         )
-        assert report["outcome"] == jev_selector.OUTCOME_CHOSE
-        assert report["effective_video_id"] == results[1].result_id
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert report["effective_video_id"] == results[0].result_id

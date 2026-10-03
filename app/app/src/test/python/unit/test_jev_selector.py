@@ -1,8 +1,9 @@
 """Offline tests for the advisory OpenRouter/JEV video selector.
 
-No test here performs network I/O: the selector accepts an injectable
-``transport`` callable, and the one test that exercises the default transport
-substitutes a stub ``requests`` module in ``sys.modules``.
+JEV is intentionally disabled: no test here performs network I/O, and the
+runtime gates force every decision to ``inactive`` with the deterministic
+candidate kept. ``transport`` callables are injected only to prove they are
+never called.
 """
 
 import inspect
@@ -143,9 +144,10 @@ class TestConfigFromEnv:
         assert config.enabled is False
 
     def test_key_enables_by_default(self):
+        # JEV intentionally disabled: a key alone must not enable it.
         config = JevConfig.from_env(env={"OPENROUTER_API_KEY": FAKE_KEY})
         assert config.api_key == FAKE_KEY
-        assert config.enabled is True
+        assert config.enabled is False
 
     def test_explicit_disable_overrides_key(self):
         config = JevConfig.from_env(
@@ -156,16 +158,17 @@ class TestConfigFromEnv:
     @pytest.mark.parametrize(
         "raw,expected",
         [
-            ("1", True),
-            ("true", True),
-            ("YES", True),
-            ("on", True),
+            ("1", False),
+            ("true", False),
+            ("YES", False),
+            ("on", False),
             ("0", False),
             ("off", False),
-            ("nonsense", True),
+            ("nonsense", False),
         ],
     )
     def test_flag_parsing(self, raw, expected):
+        # JEV intentionally disabled: GHOSTIFY_JEV_ENABLED is ignored.
         env = {"OPENROUTER_API_KEY": FAKE_KEY, "GHOSTIFY_JEV_ENABLED": raw}
         assert JevConfig.from_env(env=env).enabled is expected
 
@@ -613,10 +616,12 @@ class TestSelectVideoId:
         return build_shortlist(make_results(count), FakeSong(), make_config())
 
     def test_valid_choice_returned(self):
+        # JEV intentionally disabled: transport is never called, None kept.
         shortlist = self._shortlist()
         target = shortlist.candidates[-1].video_id
         transport = recording_transport(choice_response(target, confidence=0.95))
-        assert select_video_id(FakeSong(), shortlist, make_config(), transport) == target
+        assert select_video_id(FakeSong(), shortlist, make_config(), transport) is None
+        assert transport.calls == []
 
     def test_no_key_falls_back(self):
         shortlist = self._shortlist()
@@ -675,18 +680,14 @@ class TestSelectVideoId:
         assert select_video_id(FakeSong(), shortlist, make_config(), transport) is None
 
     def test_request_shape(self):
+        # JEV intentionally disabled: no OpenRouter request may be made.
         shortlist = self._shortlist()
         transport = recording_transport(choice_response(shortlist.candidates[0].video_id))
-        select_video_id(FakeSong(), shortlist, make_config(timeout=2.5), transport)
-        call = transport.calls[0]
-        assert call["url"] == "https://openrouter.ai/api/alpha/decisions"
-        assert call["timeout"] == pytest.approx(2.5)
-        assert call["headers"]["Content-Type"] == "application/json"
-        assert call["headers"]["Authorization"] == "Bearer %s" % FAKE_KEY
-        criteria = call["payload"]["questions"]["recording"]["criteria"]
-        assert set(criteria) == shortlist.ids
-        assert "candidates" not in call["payload"]["state"]
-        assert set(call["payload"]["state"]) == {"requested_song"}
+        assert (
+            select_video_id(FakeSong(), shortlist, make_config(timeout=2.5), transport)
+            is None
+        )
+        assert transport.calls == []
 
     def test_default_config_never_raises(self):
         shortlist = self._shortlist()
@@ -719,16 +720,18 @@ class TestDefaultTransport:
         return recorded
 
     def test_posts_and_parses(self, monkeypatch):
+        # JEV intentionally disabled: _post_json refuses, no request is sent.
         shortlist = build_shortlist(make_results(2), FakeSong(), make_config())
         target = shortlist.candidates[-1].video_id
         recorded = self._install_stub(
             monkeypatch, response=choice_response(target, confidence=0.99)
         )
-        chosen = select_video_id(FakeSong(), shortlist, make_config())
-        assert chosen == target
-        assert recorded["url"] == "https://openrouter.ai/api/alpha/decisions"
-        assert recorded["timeout"] == pytest.approx(4.0)
-        assert recorded["headers"]["Authorization"] == "Bearer %s" % FAKE_KEY
+        assert select_video_id(FakeSong(), shortlist, make_config()) is None
+        assert recorded == {}
+        with pytest.raises(jev_selector.JevTransportError):
+            jev_selector._post_json(
+                jev_selector.DEFAULT_ENDPOINT, {}, {"Authorization": "Bearer x"}, 4.0
+            )
 
     def test_http_error_falls_back(self, monkeypatch):
         shortlist = build_shortlist(make_results(2), FakeSong(), make_config())
@@ -879,13 +882,14 @@ class TestGhostifyDlHandoff:
         assert ghostify_dl._select_yt_id(FakeSong(), results, 8.0) == results[0].result_id
 
     def test_valid_choice_overrides_first_result(self, monkeypatch):
+        # JEV intentionally disabled: deterministic first result is kept.
         results = make_results(4)
         target = results[3].result_id
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         self._stub_requests(
             monkeypatch, response=choice_response(target, confidence=0.95)
         )
-        assert ghostify_dl._select_yt_id(FakeSong(), results, 8.0) == target
+        assert ghostify_dl._select_yt_id(FakeSong(), results, 8.0) == results[0].result_id
 
     def test_hallucinated_id_returns_first_result(self, monkeypatch):
         results = make_results(4)
@@ -938,13 +942,14 @@ class TestGhostifyDlHandoff:
         assert ghostify_dl._first_result_video_id(results) == results[0].result_id
 
     def test_iterator_results_are_consumed_once(self, monkeypatch):
+        # JEV intentionally disabled: iterator still yields deterministic pick.
         results = make_results(4)
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         self._stub_requests(
             monkeypatch, response=choice_response(results[2].result_id, confidence=0.9)
         )
         chosen = ghostify_dl._select_yt_id(FakeSong(), iter(results), 8.0)
-        assert chosen == results[2].result_id
+        assert chosen == results[0].result_id
 
     def test_resolve_yt_id_rejects_zero_budget(self):
         assert ghostify_dl._resolve_yt_id(FakeSong(), 0) is None
@@ -952,33 +957,37 @@ class TestGhostifyDlHandoff:
 
 
 class TestDecide:
-    """``decide`` is ``select_video_id`` plus an explanation; same outcomes."""
+    """``decide`` is intentionally disabled: always inactive, no transport."""
 
     def _shortlist(self, count=3):
         return build_shortlist(make_results(count), FakeSong(), make_config())
 
     def test_returns_id_and_confidence(self):
+        # Disabled: transport never called, deterministic candidate kept.
         shortlist = self._shortlist()
         target = shortlist.candidates[-1].video_id
+        transport = recording_transport(choice_response(target, 0.83))
         decision = decide(
-            FakeSong(), shortlist, make_config(), recording_transport(choice_response(target, 0.83))
+            FakeSong(), shortlist, make_config(), transport
         )
-        assert decision.video_id == target
-        assert decision.accepted is True
-        assert decision.outcome == jev_selector.OUTCOME_CHOSE
-        assert decision.confidence == pytest.approx(0.83)
+        assert decision.video_id is None
+        assert decision.accepted is False
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert decision.candidates_considered == 3
-        assert "alternate" in decision.reason
+        assert transport.calls == []
+        assert "kill-switch" in decision.reason
 
     def test_top_pick_reason_mentions_top_result(self):
         shortlist = self._shortlist()
+        transport = recording_transport(choice_response(shortlist.fallback_id, 0.7))
         decision = decide(
             FakeSong(),
             shortlist,
             make_config(),
-            recording_transport(choice_response(shortlist.fallback_id, 0.7)),
+            transport,
         )
-        assert "top result" in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
 
     def test_no_key_outcome(self):
         decision = decide(
@@ -986,51 +995,59 @@ class TestDecide:
         )
         assert decision.video_id is None
         assert decision.outcome == jev_selector.OUTCOME_INACTIVE
-        assert "OPENROUTER_API_KEY" in decision.reason
+        assert "kill-switch" in decision.reason
 
     def test_empty_shortlist_outcome(self):
         decision = decide(
             FakeSong(), Shortlist((), None), make_config()
         )
-        assert decision.outcome == jev_selector.OUTCOME_NO_CANDIDATES
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
 
     def test_unambiguous_outcome(self):
         shortlist = build_shortlist(make_results(1), FakeSong(), make_config())
+        transport = recording_transport(choice_response(shortlist.fallback_id))
         decision = decide(
-            FakeSong(), shortlist, make_config()
+            FakeSong(), shortlist, make_config(), transport
         )
-        assert decision.outcome == jev_selector.OUTCOME_UNAMBIGUOUS
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
 
     def test_rejected_outcome(self):
+        transport = recording_transport(choice_response("zzzzzzzzzzz", 1.0))
         decision = decide(
             FakeSong(),
             self._shortlist(),
             make_config(),
-            recording_transport(choice_response("zzzzzzzzzzz", 1.0)),
+            transport,
         )
-        assert decision.outcome == jev_selector.OUTCOME_REJECTED
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert decision.video_id is None
         assert decision.confidence is None
+        assert transport.calls == []
 
     def test_request_failure_outcome_names_only_the_exception_class(self):
+        transport = recording_transport(TimeoutError("Bearer %s rejected" % FAKE_KEY))
         decision = decide(
             FakeSong(),
             self._shortlist(),
             make_config(),
-            recording_transport(TimeoutError("Bearer %s rejected" % FAKE_KEY)),
+            transport,
         )
-        assert decision.outcome == jev_selector.OUTCOME_REQUEST_FAILED
-        assert decision.reason == "request failed (TimeoutError)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert FAKE_KEY not in decision.reason
+        assert transport.calls == []
 
     def test_missing_confidence_reports_none(self):
         shortlist = self._shortlist()
         response = {"answers": {"recording": {"type": "choice", "choice": shortlist.fallback_id}}}
+        transport = recording_transport(response)
         decision = decide(
-            FakeSong(), shortlist, make_config(), recording_transport(response)
+            FakeSong(), shortlist, make_config(), transport
         )
-        assert decision.accepted is True
+        assert decision.accepted is False
         assert decision.confidence is None
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
 
     def test_select_video_id_matches_decide(self):
         shortlist = self._shortlist()
@@ -1046,7 +1063,13 @@ class TestDecide:
 
 
 class TestRejectionReasons:
-    """``decide`` names *why* an answer was refused, from safe scalars only."""
+    """Validation still names *why* an answer was refused; decide stays off.
+
+    JEV is intentionally disabled: ``decide`` always returns ``inactive``
+    without touching ``transport``. The rejection taxonomy itself
+    (``_check_answer``/``parse_choice``) stays deterministic and is tested
+    directly.
+    """
 
     IDS = frozenset({"aaaaaaaaaaa", "bbbbbbbbbbb"})
 
@@ -1056,12 +1079,23 @@ class TestRejectionReasons:
         )
 
     def _decide(self, response, results=None, config=None):
+        # Disabled path: decide is inactive and never calls transport.
         shortlist = self._shortlist(results)
-        return shortlist, decide(
+        transport = recording_transport(response)
+        decision = decide(
             FakeSong(),
             shortlist,
             config or make_config(),
-            recording_transport(response),
+            transport,
+        )
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
+        return shortlist, decision
+
+    def _check(self, response, allowed=None):
+        ids = allowed if allowed is not None else frozenset(self._ids())
+        return jev_selector._check_answer(
+            response, ids, 0.6
         )
 
     def _ids(self, results=None):
@@ -1082,41 +1116,65 @@ class TestRejectionReasons:
     )
     def test_missing_answers_is_named(self, response):
         _, decision = self._decide(response)
-        assert decision.outcome == jev_selector.OUTCOME_REJECTED
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert decision.video_id is None
         assert decision.accepted is False
-        assert jev_selector.REJECTION_NO_ANSWER in decision.reason
+        chosen, label, _ = self._check(response)
+        assert chosen is None
+        assert label == jev_selector.REJECTION_NO_ANSWER
         assert parse_choice(response, self.IDS) is None
 
     def test_unexpected_question_is_named(self):
         _, decision = self._decide({"answers": {"other": {}}})
-        assert jev_selector.REJECTION_NO_ANSWER in decision.reason
-        assert "recording" in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        chosen, label, _ = self._check({"answers": {"other": {}}})
+        assert label == jev_selector.REJECTION_NO_ANSWER
 
     def test_wrong_answer_type_is_named(self):
         first = self._ids()[0]
         _, decision = self._decide(choice_response(first, qtype="noul"))
-        assert decision.outcome == jev_selector.OUTCOME_REJECTED
-        assert jev_selector.REJECTION_ANSWER_TYPE in decision.reason
-        assert "type=noul" in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        chosen, label, details = self._check(choice_response(first, qtype="noul"))
+        assert chosen is None
+        assert label == jev_selector.REJECTION_ANSWER_TYPE
+        assert "type=noul" in jev_selector._rejection_reason(label, details)
 
     def test_hostile_answer_type_is_classified_not_echoed(self):
         hostile = "T" * 300
         _, decision = self._decide(choice_response(self._ids()[0], qtype=hostile))
-        assert jev_selector.REJECTION_ANSWER_TYPE in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert hostile not in decision.reason
-        assert "type=other" in decision.reason
+        chosen, label, details = self._check(
+            choice_response(self._ids()[0], qtype=hostile)
+        )
+        assert label == jev_selector.REJECTION_ANSWER_TYPE
+        reason = jev_selector._rejection_reason(label, details)
+        assert hostile not in reason
+        assert "type=other" in reason
 
     def test_id_outside_the_shortlist_is_named(self):
         _, decision = self._decide(choice_response("zzzzzzzzzzz", confidence=1.0))
-        assert jev_selector.REJECTION_UNKNOWN_ID in decision.reason
-        assert "shortlist=3" in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert "zzzzzzzzzzz" not in decision.reason
+        chosen, label, details = self._check(
+            choice_response("zzzzzzzzzzz", confidence=1.0)
+        )
+        assert chosen is None
+        assert label == jev_selector.REJECTION_UNKNOWN_ID
+        reason = jev_selector._rejection_reason(label, details)
+        assert "shortlist=3" in reason
+        assert "zzzzzzzzzzz" not in reason
 
     def test_low_confidence_is_named(self):
         _, decision = self._decide(choice_response(self._ids()[0], confidence=0.21))
-        assert jev_selector.REJECTION_LOW_CONFIDENCE in decision.reason
-        assert "confidence=0.21 < 0.60" in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        chosen, label, details = self._check(
+            choice_response(self._ids()[0], confidence=0.21)
+        )
+        assert label == jev_selector.REJECTION_LOW_CONFIDENCE
+        assert "confidence=0.21 < 0.60" in jev_selector._rejection_reason(
+            label, details
+        )
 
     def test_probability_disagreement_is_named(self):
         first, second = self._ids()[:2]
@@ -1124,9 +1182,12 @@ class TestRejectionReasons:
             first, confidence=0.9, probabilities={first: 0.2, second: 0.8}
         )
         _, decision = self._decide(response)
-        assert jev_selector.REJECTION_PROBABILITIES in decision.reason
-        assert "p=0.20" in decision.reason
-        assert "best p=0.80" in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        chosen, label, details = self._check(response)
+        assert label == jev_selector.REJECTION_PROBABILITIES
+        reason = jev_selector._rejection_reason(label, details)
+        assert "p=0.20" in reason
+        assert "best p=0.80" in reason
 
     def test_probability_below_threshold_counts_as_low_confidence(self):
         first, second = self._ids()[:2]
@@ -1134,8 +1195,12 @@ class TestRejectionReasons:
             second, confidence=0.9, probabilities={first: 0.1, second: 0.3}
         )
         _, decision = self._decide(response)
-        assert jev_selector.REJECTION_LOW_CONFIDENCE in decision.reason
-        assert "probability=0.30 < 0.60" in decision.reason
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        chosen, label, details = self._check(response)
+        assert label == jev_selector.REJECTION_LOW_CONFIDENCE
+        assert "probability=0.30 < 0.60" in jev_selector._rejection_reason(
+            label, details
+        )
 
     def test_every_refusal_gets_its_own_reason(self):
         first, second = self._ids()[:2]
@@ -1149,21 +1214,30 @@ class TestRejectionReasons:
                 first, confidence=0.9, probabilities={first: 0.2, second: 0.8}
             ),
         ):
+            # Validation still distinguishes the five refusals ...
+            chosen, label, details = self._check(response)
+            assert chosen is None
+            reasons.add(jev_selector._rejection_reason(label, details))
+            # ... while decide itself stays inactive.
             _, decision = self._decide(response)
-            assert decision.outcome == jev_selector.OUTCOME_REJECTED
+            assert decision.outcome == jev_selector.OUTCOME_INACTIVE
             assert decision.video_id is None
-            reasons.add(decision.reason)
         assert len(reasons) == 5
 
     def test_accepted_answer_carries_no_rejection_label(self):
+        # Validation accepts a good answer; decide still stays inactive.
         shortlist = build_shortlist(make_results(3), FakeSong(), make_config())
+        valid = choice_response(shortlist.fallback_id, 0.9)
+        assert parse_choice(valid, shortlist.ids) == shortlist.fallback_id
+        transport = recording_transport(valid)
         decision = decide(
             FakeSong(),
             shortlist,
             make_config(),
-            recording_transport(choice_response(shortlist.fallback_id, 0.9)),
+            transport,
         )
-        assert decision.outcome == jev_selector.OUTCOME_CHOSE
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
         for label in (
             jev_selector.REJECTION_NO_ANSWER,
             jev_selector.REJECTION_ANSWER_TYPE,
@@ -1202,7 +1276,8 @@ class TestRejectionReasons:
                 make_config(),
                 recording_transport(choice_response("aaaaaaaaaaa", 0.1)),
             )
-        assert jev_selector.REJECTION_LOW_CONFIDENCE in decision.reason
+        # Disabled: inactive, but still leak-free.
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert secret_title not in decision.reason
         assert FAKE_KEY not in decision.reason
         assert secret_title not in caplog.text
@@ -1223,7 +1298,7 @@ class TestRejectionReasons:
 
 
 class TestSanitizedHttpErrors:
-    """Request failures keep the status/provider code and drop the body."""
+    """JEV disabled: no request is sent; transport refuses; helpers stay safe."""
 
     SECRET_BODY = "No auth credentials found for Bearer %s" % FAKE_KEY
 
@@ -1245,6 +1320,7 @@ class TestSanitizedHttpErrors:
         monkeypatch.setitem(sys.modules, "requests", StubRequests)
 
     def _decision(self, monkeypatch, status_code, body=None, raise_json=False, caplog=None):
+        # Disabled: decide never reaches the transport, even with a stub.
         shortlist = build_shortlist(make_results(3), FakeSong(), make_config())
         self._stub(monkeypatch, status_code, body, raise_json)
         if caplog is None:
@@ -1252,28 +1328,34 @@ class TestSanitizedHttpErrors:
         with caplog.at_level(logging.DEBUG, logger="ghostify_dl.jev"):
             return decide(FakeSong(), shortlist, make_config())
 
+    def test_post_json_refuses_without_network(self):
+        with pytest.raises(jev_selector.JevTransportError) as excinfo:
+            jev_selector._post_json(
+                jev_selector.DEFAULT_ENDPOINT, {}, {"Authorization": "Bearer x"}, 4.0
+            )
+        assert "kill-switch" in str(excinfo.value)
+
     @pytest.mark.parametrize("status", [401, 402, 429, 500, 503])
     def test_status_is_reported(self, monkeypatch, status):
         decision = self._decision(monkeypatch, status)
-        assert decision.outcome == jev_selector.OUTCOME_REQUEST_FAILED
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert decision.video_id is None
-        assert decision.reason == "request failed (HTTP %d)" % status
+        assert "kill-switch" in decision.reason
 
     def test_provider_code_is_reported(self, monkeypatch):
         decision = self._decision(
             monkeypatch, 401, {"error": {"code": "auth_error", "message": self.SECRET_BODY}}
         )
-        assert decision.reason == "request failed (HTTP 401, provider code auth_error)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert FAKE_KEY not in decision.reason
 
     def test_error_type_field_is_used_as_a_code(self, monkeypatch):
         decision = self._decision(monkeypatch, 429, {"error": {"type": "rate_limit_error"}})
-        assert decision.reason == "request failed (HTTP 429, provider code rate_limit_error)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
 
     def test_string_error_is_used_as_a_code(self, monkeypatch):
         decision = self._decision(monkeypatch, 402, {"error": "insufficient_credits"})
-        assert decision.reason == (
-            "request failed (HTTP 402, provider code insufficient_credits)"
-        )
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
 
     def test_body_message_is_never_quoted(self, monkeypatch, caplog):
         decision = self._decision(
@@ -1282,6 +1364,7 @@ class TestSanitizedHttpErrors:
             {"error": {"code": "auth_error", "message": self.SECRET_BODY}},
             caplog=caplog,
         )
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert FAKE_KEY not in decision.reason
         assert "No auth credentials" not in decision.reason
         assert self.SECRET_BODY not in decision.reason
@@ -1304,18 +1387,17 @@ class TestSanitizedHttpErrors:
     )
     def test_unsafe_provider_codes_are_dropped(self, monkeypatch, code):
         decision = self._decision(monkeypatch, 401, {"error": {"code": code}})
-        assert decision.outcome == jev_selector.OUTCOME_REQUEST_FAILED
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert FAKE_KEY not in decision.reason
-        assert decision.reason == "request failed (HTTP 401)"
 
     def test_unparsable_error_body_reports_the_status_only(self, monkeypatch):
         decision = self._decision(monkeypatch, 503, raise_json=True)
-        assert decision.reason == "request failed (HTTP 503)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert FAKE_KEY not in decision.reason
 
     def test_unparsable_success_body_names_only_the_exception_class(self, monkeypatch):
         decision = self._decision(monkeypatch, 200, raise_json=True)
-        assert decision.reason == "request failed (ValueError)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert FAKE_KEY not in decision.reason
 
     def test_missing_status_code_is_reported_as_a_transport_error(self, monkeypatch):
@@ -1332,7 +1414,7 @@ class TestSanitizedHttpErrors:
 
         monkeypatch.setitem(sys.modules, "requests", StubRequests)
         decision = decide(FakeSong(), shortlist, make_config())
-        assert decision.outcome == jev_selector.OUTCOME_REQUEST_FAILED
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert decision.video_id is None
         assert FAKE_KEY not in decision.reason
 
@@ -1346,49 +1428,61 @@ class TestSanitizedHttpErrors:
     )
     def test_other_exceptions_name_only_their_class(self, error):
         shortlist = build_shortlist(make_results(3), FakeSong(), make_config())
+        transport = recording_transport(error)
         decision = decide(
-            FakeSong(), shortlist, make_config(), recording_transport(error)
+            FakeSong(), shortlist, make_config(), transport
         )
-        assert decision.outcome == jev_selector.OUTCOME_REQUEST_FAILED
-        assert decision.reason == "request failed (%s)" % type(error).__name__
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
 
     def test_raw_exception_message_is_never_reported(self, caplog):
         shortlist = build_shortlist(make_results(3), FakeSong(), make_config())
+        transport = recording_transport(
+            ConnectionError("401 Client Error: %s" % FAKE_KEY)
+        )
         with caplog.at_level(logging.DEBUG, logger="ghostify_dl.jev"):
             decision = decide(
                 FakeSong(),
                 shortlist,
                 make_config(),
-                recording_transport(
-                    ConnectionError("401 Client Error: %s" % FAKE_KEY)
-                ),
+                transport,
             )
-        assert decision.reason == "request failed (ConnectionError)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
         assert FAKE_KEY not in decision.reason
         assert "401 Client Error" not in decision.reason
         assert FAKE_KEY not in caplog.text
+        assert transport.calls == []
 
     def test_hand_raised_transport_error_uses_only_its_scalars(self):
+        # _failure_detail still sanitises a hand-raised error, even though
+        # decide never reaches the transport while disabled.
         shortlist = build_shortlist(make_results(3), FakeSong(), make_config())
         error = jev_selector.JevTransportError(
             "Authorization: Bearer %s" % FAKE_KEY, status=401, code="auth_error"
         )
-        decision = decide(
-            FakeSong(), shortlist, make_config(), recording_transport(error)
+        assert jev_selector._failure_detail(error) == (
+            "HTTP 401, provider code auth_error"
         )
-        assert decision.reason == "request failed (HTTP 401, provider code auth_error)"
+        transport = recording_transport(error)
+        decision = decide(
+            FakeSong(), shortlist, make_config(), transport
+        )
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
         assert FAKE_KEY not in decision.reason
         assert "Authorization" not in decision.reason
 
     def test_transport_error_without_scalars_falls_back_to_the_class_name(self):
         shortlist = build_shortlist(make_results(3), FakeSong(), make_config())
+        transport = recording_transport(jev_selector.JevTransportError("HTTP 401"))
         decision = decide(
             FakeSong(),
             shortlist,
             make_config(),
-            recording_transport(jev_selector.JevTransportError("HTTP 401")),
+            transport,
         )
-        assert decision.reason == "request failed (JevTransportError)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
+        assert transport.calls == []
 
     def test_select_video_id_still_fails_closed_on_http_errors(self, monkeypatch):
         shortlist = build_shortlist(make_results(3), FakeSong(), make_config())
@@ -1434,7 +1528,7 @@ class TestSanitizedHttpErrors:
 
     def test_numeric_provider_code_is_reported(self, monkeypatch):
         decision = self._decision(monkeypatch, 402, {"error": {"code": 402}})
-        assert decision.reason == "request failed (HTTP 402, provider code 402)"
+        assert decision.outcome == jev_selector.OUTCOME_INACTIVE
 
     def test_transport_error_detail(self):
         error = jev_selector.JevTransportError(
@@ -1495,14 +1589,16 @@ class TestCompareYtSelection:
         assert report["candidate_count"] == 3
 
     def test_transport_receives_key_but_report_does_not(self, monkeypatch):
+        # Disabled: transport is never called, even with a key configured.
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
         target = results[2].result_id
         transport = recording_transport(choice_response(target, 0.88))
         report = ghostify_dl.compare_yt_selection(FakeSong(), results, 8.0, transport=transport)
-        assert transport.calls[0]["headers"]["Authorization"] == "Bearer %s" % FAKE_KEY
-        assert report["jev_video_id"] == target
-        assert report["confidence"] == pytest.approx(0.88)
+        assert transport.calls == []
+        assert report["jev_video_id"] is None
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
+        assert report["effective_video_id"] == results[0].result_id
         assert FAKE_KEY not in repr(report)
 
     def test_effective_matches_select_yt_id(self, monkeypatch):
@@ -1510,31 +1606,37 @@ class TestCompareYtSelection:
         results = make_results(4)
         target = results[3].result_id
         response = choice_response(target, 0.95)
+        transport = recording_transport(response)
         report = ghostify_dl.compare_yt_selection(
-            FakeSong(), results, 8.0, transport=recording_transport(response)
+            FakeSong(), results, 8.0, transport=transport
         )
-        assert report["effective_video_id"] == target
-        assert report["changed"] is True
-        assert report["agree"] is False
+        assert transport.calls == []
+        assert report["effective_video_id"] == results[0].result_id
+        assert report["changed"] is False
+        assert report["agree"] is True
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
 
     def test_transport_failure_keeps_deterministic(self, monkeypatch):
         monkeypatch.setenv(jev_selector.ENV_API_KEY, FAKE_KEY)
         results = make_results(3)
+        transport = recording_transport(ConnectionError("no network"))
         report = ghostify_dl.compare_yt_selection(
             FakeSong(),
             results,
             8.0,
-            transport=recording_transport(ConnectionError("no network")),
+            transport=transport,
         )
-        assert report["outcome"] == jev_selector.OUTCOME_REQUEST_FAILED
+        assert transport.calls == []
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         assert report["effective_video_id"] == results[0].result_id
 
     def test_selector_import_failure_is_reported(self, monkeypatch):
+        # Disabled gate short-circuits before any import, so the report is
+        # inactive rather than selector_unavailable.
         results = make_results(3)
         monkeypatch.setitem(sys.modules, "jev_selector", None)
         report = ghostify_dl.compare_yt_selection(FakeSong(), results, 8.0)
-        assert report["outcome"] == "selector_unavailable"
-        assert report["selector_error"]
+        assert report["outcome"] == jev_selector.OUTCOME_INACTIVE
         assert report["effective_video_id"] == results[0].result_id
 
 
@@ -1583,7 +1685,10 @@ class TestSearchYtCandidates:
         assert report["results"] == results
         assert "youtube-music" in (report["provider"] or "")
         assert report["error"] is None
-        assert report["query"] == "Artist - Song"
+        # create_song_title(..., for_lyrics=False) is "Song - Artist"
+        # (matches spotdl AudioProvider.search); for_lyrics=True would be
+        # "Artist - Song" (lyrics providers only).
+        assert report["query"] == "Song - Artist"
 
     def test_youtube_music_search_arguments(self, monkeypatch):
         # Pooled YT+YTM: YTM is queried for songs AND videos, and plain
@@ -1607,13 +1712,15 @@ class TestSearchYtCandidates:
         ghostify_dl.search_yt_candidates(FakeSong(), limit=5)
         ytm_calls = [c for c in seen if c[0] == "ytm"]
         yt_calls = [c for c in seen if c[0] == "yt"]
+        # Pooled query mirrors production _resolve_yt_id:
+        # create_song_title(..., for_lyrics=False) == "Song - Artist".
         assert any(
-            c[1] == "Artist - Song"
+            c[1] == "Song - Artist"
             and c[2] == {"filter": "songs", "ignore_spelling": True, "limit": 5}
             for c in ytm_calls
         )
         assert any(
-            c[1] == "Artist - Song"
+            c[1] == "Song - Artist"
             and c[2] == {"filter": "videos", "ignore_spelling": True, "limit": 5}
             for c in ytm_calls
         )
