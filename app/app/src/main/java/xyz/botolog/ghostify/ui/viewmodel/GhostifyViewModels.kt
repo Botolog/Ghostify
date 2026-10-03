@@ -51,6 +51,7 @@ class GhostifyViewModels(
     private val musicStore: MusicStore,
     private val deletePlaylist: DeletePlaylistUseCase,
     private val diagnostics: PythonDiagnosticsBridge = PythonDiagnosticsBridge(),
+    private val updateDownloads: xyz.botolog.ghostify.update.UpdateDownloadManager = xyz.botolog.ghostify.update.UpdateDownloadManager(),
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
@@ -75,6 +76,7 @@ class GhostifyViewModels(
         songRepo = songRepo,
         musicStore = musicStore,
         diagnostics = diagnostics,
+        updateDownloads = updateDownloads,
     )
 
     private val searchVm = SearchViewModel(

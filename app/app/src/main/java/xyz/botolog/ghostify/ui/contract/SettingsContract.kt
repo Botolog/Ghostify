@@ -118,6 +118,16 @@ interface SettingsContract {
     fun confirmUpdate()
 
     /**
+     * Resumes a paused or failed update download from preserved progress.
+     */
+    fun resumeUpdate()
+
+    /**
+     * Pauses an active update download while preserving partial progress.
+     */
+    fun pauseUpdate()
+
+    /**
      * Dismisses the update dialog and clears the update info.
      */
     fun dismissUpdate()

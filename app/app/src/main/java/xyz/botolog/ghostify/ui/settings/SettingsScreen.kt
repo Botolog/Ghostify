@@ -817,6 +817,16 @@ private fun UpdateSetting(state: SettingsUiState, contract: SettingsContract) {
                             .testTag("setting_update_progress"),
                     )
                 }
+                state.downloadState is DownloadState.Paused -> {
+                    Text("Download paused", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { state.downloadState.progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("setting_update_progress"),
+                    )
+                }
                 state.downloadState is DownloadState.Downloaded -> {
                     Text("Download complete", style = MaterialTheme.typography.bodyLarge)
                     Text(
@@ -824,6 +834,22 @@ private fun UpdateSetting(state: SettingsUiState, contract: SettingsContract) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                state.downloadState is DownloadState.Error -> {
+                    Text(
+                        text = state.downloadState.message,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    if (state.downloadState.resumable && state.downloadState.progress > 0f) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = { state.downloadState.progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("setting_update_progress"),
+                        )
+                    }
                 }
                 state.updateError != null -> {
                     Text(
@@ -844,7 +870,20 @@ private fun UpdateSetting(state: SettingsUiState, contract: SettingsContract) {
         Spacer(modifier = Modifier.width(INNER_SPACING))
         when {
             state.downloadState is DownloadState.Downloading -> {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                OutlinedButton(
+                    onClick = contract::pauseUpdate,
+                    modifier = Modifier.testTag("setting_pause_update"),
+                ) {
+                    Text("Pause")
+                }
+            }
+            state.downloadState is DownloadState.Paused -> {
+                OutlinedButton(
+                    onClick = contract::resumeUpdate,
+                    modifier = Modifier.testTag("setting_resume_update"),
+                ) {
+                    Text("Resume")
+                }
             }
             state.downloadState is DownloadState.Downloaded -> {
                 OutlinedButton(
@@ -852,6 +891,14 @@ private fun UpdateSetting(state: SettingsUiState, contract: SettingsContract) {
                     modifier = Modifier.testTag("setting_install_update"),
                 ) {
                     Text("Install")
+                }
+            }
+            state.downloadState is DownloadState.Error && state.downloadState.resumable -> {
+                OutlinedButton(
+                    onClick = contract::resumeUpdate,
+                    modifier = Modifier.testTag("setting_resume_update"),
+                ) {
+                    Text("Retry")
                 }
             }
             else -> {

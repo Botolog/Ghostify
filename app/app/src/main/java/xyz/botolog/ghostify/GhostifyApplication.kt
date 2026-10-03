@@ -233,6 +233,15 @@ class GhostifyContainer(private val context: Application) {
     val viewModels: xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels
         get() = viewModelsBundle ?: buildViewModels().also { viewModelsBundle = it }
 
+    val updateDownloadManager: xyz.botolog.ghostify.update.UpdateDownloadManager by lazy {
+        xyz.botolog.ghostify.update.UpdateDownloadManager().also {
+            try {
+                it.bindWorkManager(androidx.work.WorkManager.getInstance(context))
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     private fun buildViewModels(): xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels =
         xyz.botolog.ghostify.ui.viewmodel.GhostifyViewModels(
             context = context,
@@ -246,6 +255,7 @@ class GhostifyContainer(private val context: Application) {
             musicStore = musicStore,
             deletePlaylist = deletePlaylist,
             diagnostics = pythonDiagnosticsBridge,
+            updateDownloads = updateDownloadManager,
         )
 
     /** Tears down activity-scoped ViewModels when the activity is destroyed. */

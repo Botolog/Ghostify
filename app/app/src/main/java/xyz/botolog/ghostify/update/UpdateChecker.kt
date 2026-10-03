@@ -39,11 +39,14 @@ sealed class DownloadState {
     /** Download is in progress. [progress] is a value in `0.0..1.0`. */
     data class Downloading(val progress: Float) : DownloadState()
 
+    /** Download is paused by interruption. [progress] preserves downloaded fraction. */
+    data class Paused(val progress: Float, val resumable: Boolean = true) : DownloadState()
+
     /** Download completed successfully. [file] is the local APK. */
     data class Downloaded(val file: File) : DownloadState()
 
     /** Download failed. [message] describes the error. */
-    data class Error(val message: String) : DownloadState()
+    data class Error(val message: String, val progress: Float = 0f, val resumable: Boolean = false) : DownloadState()
 }
 
 /**
@@ -247,46 +250,189 @@ object UpdateChecker {
         onProgress: (Float) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val destDir = File(context.cacheDir, "updates").also { it.mkdirs() }
-        val destFile = File(destDir, "ghostify-update.apk")
+        downloadApkResumable(destDir, url, null, onProgress)
+    }
 
+    fun updatesDir(context: Context): File {
+        return File(context.cacheDir, "updates").also { it.mkdirs() }
+    }
+
+    suspend fun downloadApkResumable(
+        destDir: File,
+        url: String,
+        versionName: String?,
+        onProgress: (Float) -> Unit,
+    ): File = withContext(Dispatchers.IO) {
+        destDir.mkdirs()
+        val partFile = File(destDir, UpdateDownloadHelper.partName())
+        val destFile = File(destDir, UpdateDownloadHelper.FINAL_NAME)
+        val metaFile = File(destDir, UpdateDownloadHelper.META_NAME)
         Timber.d(TAG, "Downloading APK from %s", url)
-
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
+        var offset = try {
+            if (partFile.exists()) partFile.length() else 0L
+        } catch (_: Exception) {
+            0L
         }
-
-        try {
-            val responseCode = conn.responseCode
-            if (responseCode != 200) {
-                throw IOException("Download failed: HTTP $responseCode")
+        val metaTotal = try {
+            if (metaFile.exists()) {
+                UpdateDownloadHelper.decodeMeta(metaFile.readText())
+                    ?.takeIf { UpdateDownloadHelper.metaMatches(it, url, versionName) }?.totalBytes
+            } else {
+                null
             }
-
-            val totalBytes = conn.contentLength.toLong()
-            var downloadedBytes = 0L
-
-            conn.inputStream.use { input ->
-                destFile.outputStream().use { output ->
-                    val buffer = ByteArray(8192)
-                    var bytesRead: Int
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        downloadedBytes += bytesRead
-                        if (totalBytes > 0) {
-                            onProgress(downloadedBytes.toFloat() / totalBytes)
+        } catch (_: Exception) {
+            null
+        }
+        if (offset > 0 && !UpdateDownloadHelper.shouldResume(offset, metaTotal)) {
+            if (metaTotal != null && metaTotal > 0 && offset >= metaTotal) {
+                offset = 0L
+                try {
+                    partFile.delete()
+                } catch (_: Exception) {
+                }
+            }
+        }
+        onProgress(UpdateDownloadHelper.progress(offset, metaTotal))
+        var attempt = 0
+        var result: File? = null
+        var finished = false
+        while (!finished) {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                if (offset > 0) {
+                    setRequestProperty("Range", UpdateDownloadHelper.rangeHeader(offset))
+                }
+            }
+            try {
+                val responseCode = conn.responseCode
+                if (responseCode == 416 && offset > 0 && attempt == 0) {
+                    attempt++
+                    try {
+                        partFile.delete()
+                    } catch (_: Exception) {
+                    }
+                    offset = 0L
+                    continue
+                }
+                if (responseCode != 200 && responseCode != 206) {
+                    throw IOException("Download failed: HTTP $responseCode")
+                }
+                val isPartial = responseCode == 206
+                if (!isPartial && offset > 0) {
+                    offset = 0L
+                    try {
+                        partFile.delete()
+                    } catch (_: Exception) {
+                    }
+                }
+                val contentLength = conn.contentLength.toLong()
+                val contentRange = conn.getHeaderField("Content-Range")
+                var total: Long? = UpdateDownloadHelper.resolveTotal(offset, contentLength, contentRange)
+                if (total == null) total = metaTotal
+                var downloadedBytes = offset
+                onProgress(UpdateDownloadHelper.progress(downloadedBytes, total))
+                conn.inputStream.use { input ->
+                    java.io.FileOutputStream(partFile, offset > 0).use { output ->
+                        val buffer = ByteArray(8192)
+                        var bytesRead: Int
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            downloadedBytes += bytesRead
+                            val snapshot = total
+                            if (snapshot == null && contentLength > 0) {
+                                total = downloadedBytes + contentLength - (downloadedBytes - offset)
+                            }
+                            val fraction = UpdateDownloadHelper.progress(downloadedBytes, total)
+                            onProgress(fraction)
+                            val currentTotal = total
+                            if (currentTotal != null && currentTotal > 0) {
+                                try {
+                                    metaFile.writeText(UpdateDownloadHelper.encodeMeta(url, versionName, currentTotal))
+                                } catch (_: Exception) {
+                                }
+                            }
                         }
                     }
                 }
+                try {
+                    metaFile.writeText(UpdateDownloadHelper.encodeMeta(url, versionName, total))
+                } catch (_: Exception) {
+                }
+                val completedLen = try {
+                    if (partFile.exists()) partFile.length() else downloadedBytes
+                } catch (_: Exception) {
+                    downloadedBytes
+                }
+                val finalTotal = total
+                if (finalTotal != null && finalTotal > 0 && completedLen < finalTotal) {
+                    throw IOException("Download incomplete: $completedLen of $finalTotal bytes")
+                }
+                if (!isValidApkFile(partFile)) {
+                    try {
+                        partFile.delete()
+                    } catch (_: Exception) {
+                    }
+                    throw IOException("Downloaded file is not a valid APK")
+                }
+                try {
+                    destFile.delete()
+                } catch (_: Exception) {
+                }
+                val renamed = try {
+                    if (partFile.renameTo(destFile)) true
+                    else {
+                        partFile.copyTo(destFile, overwrite = true)
+                        partFile.delete()
+                        true
+                    }
+                } catch (_: Exception) {
+                    false
+                }
+                if (!renamed || !destFile.exists()) {
+                    throw IOException("Could not finalize downloaded update")
+                }
+                Timber.d(TAG, "APK downloaded to %s", destFile.absolutePath)
+                result = destFile
+                finished = true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(TAG, "APK download failed", e)
+                throw e
+            } finally {
+                try {
+                    conn.disconnect()
+                } catch (_: Exception) {
+                }
             }
+        }
+        result ?: throw IOException("Download failed")
+    }
 
-            Timber.d(TAG, "APK downloaded to %s", destFile.absolutePath)
-            destFile
-        } catch (e: Exception) {
-            Timber.e(TAG, "APK download failed", e)
-            destFile.delete()
-            throw e
-        } finally {
-            conn.disconnect()
+    internal fun isValidApkFile(file: File): Boolean {
+        return try {
+            if (!file.exists() || file.length() < 4) return false
+            val header = ByteArray(4)
+            file.inputStream().use { input ->
+                var read = 0
+                while (read < 4) {
+                    val n = input.read(header, read, 4 - read)
+                    if (n == -1) break
+                    read += n
+                }
+                if (read < 4) return false
+            }
+            if (!UpdateDownloadHelper.isZipMagic(header)) return false
+            try {
+                java.util.zip.ZipFile(file).use { zip ->
+                    zip.getEntry("AndroidManifest.xml") != null || zip.entries().hasMoreElements()
+                }
+            } catch (_: Exception) {
+                false
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 

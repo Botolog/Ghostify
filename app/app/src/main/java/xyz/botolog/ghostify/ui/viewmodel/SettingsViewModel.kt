@@ -29,6 +29,7 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import xyz.botolog.ghostify.update.DownloadState
 import xyz.botolog.ghostify.update.UpdateChecker
+import xyz.botolog.ghostify.update.UpdateDownloadManager
 
 /**
  * Backs the Settings screen. It is the single place that talks to the settings
@@ -51,6 +52,7 @@ class SettingsViewModel(
     private val musicStore: MusicStore,
     private val diagnostics: PythonDiagnosticsBridge = PythonDiagnosticsBridge(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val updateDownloads: UpdateDownloadManager = UpdateDownloadManager(),
 ) : ContractViewModel(), SettingsContract {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -64,6 +66,31 @@ class SettingsViewModel(
         launch { observeSettings() }
         launch { refreshCacheStats() }
         launch { initStorageFromSettings() }
+        launch { restoreUpdateDownload() }
+        launch { observeUpdateDownloads() }
+    }
+
+    private fun updatesDir(): java.io.File {
+        return try {
+            java.io.File(context.cacheDir, "updates")
+        } catch (_: Exception) {
+            java.io.File(context.filesDir, "updates")
+        }
+    }
+
+    private suspend fun restoreUpdateDownload() {
+        try {
+            val restored = withContext(ioDispatcher) { updateDownloads.restore(updatesDir()) }
+            _state.update { it.copy(downloadState = restored) }
+        } catch (_: Exception) {
+        }
+    }
+
+    private suspend fun observeUpdateDownloads() {
+        updateDownloads.state
+            .collect { downloadState ->
+                _state.update { it.copy(downloadState = downloadState) }
+            }
     }
 
     override fun setBitrate(bitrate: Bitrate) {
@@ -294,21 +321,70 @@ class SettingsViewModel(
 
     override fun confirmUpdate() {
         Timber.i("SettingsViewModel.confirmUpdate: START")
-        val info = _state.value.updateInfo ?: return
-        launch {
-            _state.update { it.copy(showUpdateDialog = false, downloadState = DownloadState.Downloading(0f)) }
-            try {
-                val file = UpdateChecker.downloadApk(context, info.apkDownloadUrl) { progress ->
-                    _state.update { it.copy(downloadState = DownloadState.Downloading(progress)) }
-                }
-                _state.update { it.copy(downloadState = DownloadState.Downloaded(file)) }
-                Timber.i("SettingsViewModel.confirmUpdate: download complete")
-            } catch (e: Exception) {
-                Timber.e(e, "SettingsViewModel.confirmUpdate: download FAILED")
-                _state.update {
-                    it.copy(downloadState = DownloadState.Error("Download failed: ${e.message}"))
-                }
+        val info = _state.value.updateInfo ?: run {
+            val current = _state.value.downloadState
+            if (current is DownloadState.Paused || current is DownloadState.Error) {
+                resumeUpdate()
             }
+            return
+        }
+        if (updateDownloads.isDownloading(info.apkDownloadUrl)) {
+            _state.update { it.copy(showUpdateDialog = false) }
+            return
+        }
+        _state.update { it.copy(showUpdateDialog = false) }
+        try {
+            updateDownloads.start(updatesDir(), info)
+        } catch (e: Exception) {
+            Timber.e(e, "SettingsViewModel.confirmUpdate: FAILED to start")
+            _state.update {
+                it.copy(downloadState = DownloadState.Error("Download failed: ${e.message}"))
+            }
+        }
+    }
+
+    override fun resumeUpdate() {
+        Timber.i("SettingsViewModel.resumeUpdate: START")
+        val info = _state.value.updateInfo ?: run {
+            val target = updateDownloads.activeTarget()
+            val url = target.first ?: return
+            val version = target.second
+            val dir = try {
+                updatesDir()
+            } catch (_: Exception) {
+                return
+            }
+            try {
+                updateDownloads.resume(
+                    dir,
+                    xyz.botolog.ghostify.update.UpdateInfo(
+                        versionName = version ?: "",
+                        versionCode = 0L,
+                        releaseNotes = "",
+                        apkDownloadUrl = url,
+                        publishedAt = "",
+                    ),
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "SettingsViewModel.resumeUpdate: FAILED")
+            }
+            return
+        }
+        if (updateDownloads.isDownloading(info.apkDownloadUrl)) return
+        _state.update { it.copy(showUpdateDialog = false) }
+        try {
+            updateDownloads.resume(updatesDir(), info)
+        } catch (e: Exception) {
+            Timber.e(e, "SettingsViewModel.resumeUpdate: FAILED")
+        }
+    }
+
+    override fun pauseUpdate() {
+        Timber.i("SettingsViewModel.pauseUpdate: START")
+        try {
+            updateDownloads.pause()
+        } catch (e: Exception) {
+            Timber.e(e, "SettingsViewModel.pauseUpdate: FAILED")
         }
     }
 
@@ -317,7 +393,6 @@ class SettingsViewModel(
             it.copy(
                 showUpdateDialog = false,
                 updateInfo = null,
-                downloadState = DownloadState.Idle,
                 updateError = null,
             )
         }
@@ -328,6 +403,12 @@ class SettingsViewModel(
         val state = _state.value.downloadState
         if (state !is DownloadState.Downloaded) return
         try {
+            if (!state.file.exists()) {
+                _state.update {
+                    it.copy(updateError = "Install failed: downloaded file is missing")
+                }
+                return
+            }
             UpdateChecker.installApk(context, state.file)
         } catch (e: Exception) {
             Timber.e(e, "SettingsViewModel.installUpdate: FAILED")
@@ -422,6 +503,16 @@ class SettingsViewModel(
             .collect { uiState ->
                 _state.update { current ->
                     uiState.copy(
+                        cacheStats = current.cacheStats,
+                        isClearingCache = current.isClearingCache,
+                        pendingMigrationPath = current.pendingMigrationPath,
+                        isMigrating = current.isMigrating,
+                        migrationResult = current.migrationResult,
+                        isCheckingUpdate = current.isCheckingUpdate,
+                        updateInfo = current.updateInfo,
+                        showUpdateDialog = current.showUpdateDialog,
+                        downloadState = current.downloadState,
+                        updateError = current.updateError,
                         isLoadingPythonLibraries = current.isLoadingPythonLibraries,
                         showPythonLibraries = current.showPythonLibraries,
                         pythonLibraries = current.pythonLibraries,
