@@ -123,6 +123,24 @@ class PlayerQueueManager {
         Timber.i("PlayerQueueManager.reshuffle: reshuffled ${_queue.size} items")
     }
 
+    /**
+     * Sets the shuffle flag directly without reordering (used for the empty-queue state).
+     *
+     * When the queue is empty there is nothing to reorder, but the MiniPlayer shuffle
+     * toggle must still persist so the next [setQueue] build can be randomized. Clearing
+     * the saved original order on disable keeps a later [unshuffle] from resurrecting
+     * stale positions.
+     *
+     * @param enabled true to mark shuffled, false for sequential.
+     */
+    fun setShuffleFlag(enabled: Boolean) {
+        if (!enabled) {
+            _originalQueue.clear()
+        }
+        isShuffled = enabled
+        Timber.i("PlayerQueueManager.setShuffleFlag: enabled=$enabled")
+    }
+
     /** Restores the queue to its original (unshuffled) order. */
     fun unshuffle() {
         isShuffled = false

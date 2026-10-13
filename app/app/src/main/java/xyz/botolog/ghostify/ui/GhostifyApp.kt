@@ -161,21 +161,24 @@ fun GhostifyApp(
                 }
             }
 
-            // Spotify-style now-playing bar. Persistent across every screen; hidden while
-            // nothing is loaded. Tapping opens the full player overlay. Bottom padding keeps
-            // it above the system navigation bar.
-            if (!playerState.empty) {
-                MiniPlayer(
-                    contract = deps.player,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() },
-                        ) { fullPlayerOpen = true }
-                        .windowInsetsPadding(WindowInsets.navigationBars),
-                )
-            }
+            // Spotify-style now-playing bar. Persistent across every screen and ALWAYS
+            // visible — even with no song loaded ("No Song" empty state). Tapping opens the
+            // full player overlay only when a song is loaded; empty taps are a no-op.
+            // Bottom padding keeps it above the system navigation bar.
+            MiniPlayer(
+                contract = deps.player,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) {
+                        if (!playerState.empty && playerState.nowPlaying != null) {
+                            fullPlayerOpen = true
+                        }
+                    }
+                    .windowInsetsPadding(WindowInsets.navigationBars),
+            )
         }
 
         // Full player overlay — slides up over the current screen.

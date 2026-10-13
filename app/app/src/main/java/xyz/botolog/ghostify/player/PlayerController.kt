@@ -652,6 +652,18 @@ class PlayerController private constructor(
         if (exoPlayer.shuffleModeEnabled) {
             exoPlayer.shuffleModeEnabled = false
         }
+        if (enabled != queueManager.isShuffled && queueManager.size == 0) {
+            // Empty queue (fresh start / deleted playlist / cleared): no items to reorder,
+            // but persist the flag so the next playPlaylist()/playPlaylistLazy() build
+            // is randomized when enabled. handleQueueReady captures queueManager.isShuffled
+            // before setQueue and shuffles the fresh queue accordingly.
+            queueManager.setShuffleFlag(enabled)
+            if (exoPlayer.shuffleModeEnabled) {
+                exoPlayer.shuffleModeEnabled = false
+            }
+            publishSnapshot()
+            return
+        }
         if (enabled != queueManager.isShuffled && queueManager.size > 0) {
             if (enabled) {
                 val activeIndex = currentQueueIndex()
