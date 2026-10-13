@@ -127,6 +127,7 @@ class SettingsViewModelUpdateCancelTest {
         every { settings.observeLoopPlaylists() } returns flowOf(true)
         every { settings.observeFullPlayerLayout() } returns flowOf("normal")
         every { settings.observeIncludePreReleaseUpdates() } returns flowOf(false)
+        every { settings.observeAppScale() } returns flowOf(1.0f)
         coEvery { settings.getStorageDir() } returns "ghostify"
 
         playlistRepo = mockk()

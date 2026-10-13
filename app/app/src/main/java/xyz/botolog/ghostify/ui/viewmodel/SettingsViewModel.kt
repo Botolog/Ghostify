@@ -272,6 +272,16 @@ class SettingsViewModel(
         launch { settings.setLandscapeControlsSide(side) }
     }
 
+    override fun setAppScale(scale: Float) {
+        Timber.i("SettingsViewModel.setAppScale: scale=$scale")
+        launch { settings.setAppScale(scale) }
+    }
+
+    override fun resetAppScale() {
+        Timber.i("SettingsViewModel.resetAppScale: START")
+        launch { settings.setAppScale(SettingsRepository.DEFAULT_APP_SCALE) }
+    }
+
     override fun setIncludePreReleaseUpdates(enabled: Boolean) {
         Timber.i("SettingsViewModel.setIncludePreReleaseUpdates: enabled=$enabled")
         launch { settings.setIncludePreReleaseUpdates(enabled) }
@@ -528,6 +538,9 @@ class SettingsViewModel(
             }
             .combine(settings.observeIncludePreReleaseUpdates()) { uiState, includePreReleaseUpdates ->
                 uiState.copy(includePreReleaseUpdates = includePreReleaseUpdates)
+            }
+            .combine(settings.observeAppScale()) { uiState, appScale ->
+                uiState.copy(appScale = appScale)
             }
             .catch { e -> Timber.e(e, "SettingsViewModel: settings stream FAILED") }
             .collect { uiState ->

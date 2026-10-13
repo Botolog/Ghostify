@@ -46,6 +46,9 @@ class SettingsRepository(private val settingDao: SettingDao) {
         /** Preference key for offering pre-release GitHub versions in update checks. */
         const val KEY_INCLUDE_PRE_RELEASE_UPDATES = "include_pre_release_updates"
 
+        /** Preference key for the global UI scale (browser-zoom style, e.g. "1.0"). */
+        const val KEY_APP_SCALE = "app_scale"
+
         // ── Defaults ──────────────────────────────────────────────────
 
         /** Default storage directory name. */
@@ -76,6 +79,18 @@ class SettingsRepository(private val settingDao: SettingDao) {
          * `false` (or a missing value) means the normal layout.
          */
         const val DEFAULT_FULL_PLAYER_LAYOUT = "normal"
+
+        /** Default global UI scale (100% — no zoom). */
+        const val DEFAULT_APP_SCALE = 1.0f
+
+        /** Minimum global UI scale (75%). */
+        const val MIN_APP_SCALE = 0.75f
+
+        /** Maximum global UI scale (150%). */
+        const val MAX_APP_SCALE = 1.5f
+
+        /** Step used by the +/- steppers in Settings (5%). */
+        const val APP_SCALE_STEP = 0.05f
 
         /** Strings recognised as truthy when parsing boolean settings. */
         private val TRUTHY_VALUES = setOf("true", "1", "yes")
@@ -447,6 +462,50 @@ class SettingsRepository(private val settingDao: SettingDao) {
         set(KEY_LANDSCAPE_CONTROLS_SIDE, value)
     }
 
+    // ── app_scale (global UI scale / browser zoom) ──────────────────────
+
+    /**
+     * Observes the global UI scale factor.
+     *
+     * Corrupted or missing values fall back to [DEFAULT_APP_SCALE]; out-of-range
+     * values are clamped to [MIN_APP_SCALE]..[MAX_APP_SCALE] so a bad row can
+     * never break layout. NaN/infinite values also fall back to the default.
+     *
+     * No DB migration is needed: the `settings` table is a key/value store and
+     * missing keys resolve to the default, so existing installs keep 100%.
+     *
+     * @return A [Flow] emitting the scale factor (e.g. 1.0f == 100%).
+     */
+    fun observeAppScale(): Flow<Float> {
+        Timber.i("SettingsRepository.observeAppScale: START")
+        val result = observe(KEY_APP_SCALE, DEFAULT_APP_SCALE.toString())
+            .map { parseAppScale(it) }
+        Timber.i("SettingsRepository.observeAppScale: returning $result")
+        return result
+    }
+
+    /**
+     * One-shot fetch of the global UI scale factor.
+     *
+     * @return The clamped scale factor, or [DEFAULT_APP_SCALE] when unset/corrupt.
+     */
+    suspend fun getAppScale(): Float {
+        Timber.i("SettingsRepository.getAppScale: START")
+        val result = parseAppScale(get(KEY_APP_SCALE, DEFAULT_APP_SCALE.toString()))
+        Timber.i("SettingsRepository.getAppScale: returning $result")
+        return result
+    }
+
+    /**
+     * Persists the global UI scale factor, clamped to [MIN_APP_SCALE]..[MAX_APP_SCALE].
+     *
+     * @param value The new scale factor (e.g. 1.0f == 100%).
+     */
+    suspend fun setAppScale(value: Float) {
+        Timber.i("SettingsRepository.setAppScale: value=$value")
+        set(KEY_APP_SCALE, clampAppScale(value).toString())
+    }
+
     // ── Private helpers ───────────────────────────────────────────────
 
     /**
@@ -463,4 +522,21 @@ class SettingsRepository(private val settingDao: SettingDao) {
             in FALSY_VALUES -> false
             else -> fallback
         }
+
+    /**
+     * Parses a stored app-scale string, falling back to [DEFAULT_APP_SCALE] for
+     * missing/corrupt/NaN/infinite values and clamping the rest into range.
+     */
+    private fun parseAppScale(raw: String): Float {
+        val parsed = raw.toFloatOrNull() ?: return DEFAULT_APP_SCALE
+        if (!parsed.isFinite()) return DEFAULT_APP_SCALE
+        return clampAppScale(parsed)
+    }
+
+    /**
+     * Clamps [value] into [MIN_APP_SCALE]..[MAX_APP_SCALE].
+     * Non-finite inputs map to [DEFAULT_APP_SCALE].
+     */
+    private fun clampAppScale(value: Float): Float =
+        if (!value.isFinite()) DEFAULT_APP_SCALE else value.coerceIn(MIN_APP_SCALE, MAX_APP_SCALE)
 }

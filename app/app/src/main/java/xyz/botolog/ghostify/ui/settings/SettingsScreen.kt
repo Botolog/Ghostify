@@ -39,6 +39,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +67,7 @@ import xyz.botolog.ghostify.ui.model.Bitrate
 import xyz.botolog.ghostify.ui.model.FullPlayerLayout
 import xyz.botolog.ghostify.ui.viewmodel.SettingsViewModel
 import xyz.botolog.ghostify.update.DownloadState
+import kotlin.math.roundToInt
 
 /**
  * Test tag constants for the settings screen. Used by Compose UI tests to locate elements.
@@ -82,6 +84,12 @@ object SettingsTestTags {
     const val SHOW_QUEUE_COVERS = "setting_show_queue_covers"
     const val LOOP_PLAYLISTS = "setting_loop_playlists"
     const val FULL_PLAYER_LAYOUT = "setting_full_player_layout"
+    const val APP_SCALE = "setting_app_scale"
+    const val APP_SCALE_VALUE = "setting_app_scale_value"
+    const val APP_SCALE_PLUS = "setting_app_scale_plus"
+    const val APP_SCALE_MINUS = "setting_app_scale_minus"
+    const val APP_SCALE_RESET = "setting_app_scale_reset"
+    const val APP_SCALE_SLIDER = "setting_app_scale_slider"
     const val CACHE_COUNT = "setting_cache_count"
     const val CLEAR_CACHE = "setting_clear_cache"
     const val CHECK_UPDATE = "setting_check_update"
@@ -311,6 +319,9 @@ private fun SettingsContent(
         Spacer(modifier = Modifier.height(SECTION_SPACING))
 
         FullPlayerLayoutSetting(state = state, contract = contract)
+        Spacer(modifier = Modifier.height(SECTION_SPACING))
+
+        AppScaleSetting(state = state, contract = contract)
         Spacer(modifier = Modifier.height(SECTION_SPACING_LARGE))
 
         SectionHeader("Storage")
@@ -608,6 +619,86 @@ private fun FullPlayerLayoutSetting(state: SettingsUiState, contract: SettingsCo
         }
     }
 }
+
+/**
+ * Global UI scale (browser-zoom style): scales every dp + sp in the app via a
+ * scaled [androidx.compose.ui.platform.LocalDensity] at the root.
+ *
+ * Stepper mirrors [ConcurrencySetting]; the slider allows jumping straight to a
+ * value. Range 75%–150% in 5% steps, default 100% with a Reset button.
+ */
+@Composable
+private fun AppScaleSetting(state: SettingsUiState, contract: SettingsContract) {
+    Text("App size / Interface scale", style = MaterialTheme.typography.bodyLarge)
+    Text(
+        "Like browser zoom (Ctrl+/Ctrl-): scales all text and layout. 100% is default.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp)
+            .testTag(SettingsTestTags.APP_SCALE),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = {
+                contract.setAppScale((state.appScale - APP_SCALE_STEP).coerceAtLeast(APP_SCALE_MIN))
+            },
+            enabled = state.appScale > APP_SCALE_MIN,
+            modifier = Modifier.testTag(SettingsTestTags.APP_SCALE_MINUS),
+        ) {
+            Icon(Icons.Filled.Remove, contentDescription = "Decrease interface scale")
+        }
+        Text(
+            text = "${(state.appScale * 100).roundToInt()}%",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier
+                .width(APP_SCALE_TEXT_WIDTH)
+                .testTag(SettingsTestTags.APP_SCALE_VALUE),
+            textAlign = TextAlign.Center,
+        )
+        IconButton(
+            onClick = {
+                contract.setAppScale((state.appScale + APP_SCALE_STEP).coerceAtMost(APP_SCALE_MAX))
+            },
+            enabled = state.appScale < APP_SCALE_MAX,
+            modifier = Modifier.testTag(SettingsTestTags.APP_SCALE_PLUS),
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Increase interface scale")
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        OutlinedButton(
+            onClick = contract::resetAppScale,
+            enabled = state.appScale != APP_SCALE_DEFAULT,
+            modifier = Modifier.testTag(SettingsTestTags.APP_SCALE_RESET),
+        ) {
+            Text("Reset")
+        }
+    }
+    Slider(
+        value = state.appScale,
+        onValueChange = { contract.setAppScale(it) },
+        valueRange = APP_SCALE_MIN..APP_SCALE_MAX,
+        steps = APP_SCALE_SLIDER_STEPS,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(SettingsTestTags.APP_SCALE_SLIDER),
+    )
+}
+
+private const val APP_SCALE_MIN = 0.75f
+private const val APP_SCALE_MAX = 1.5f
+private const val APP_SCALE_STEP = 0.05f
+private const val APP_SCALE_DEFAULT = 1.0f
+
+/**
+ * Slider steps for 0.75..1.5 in 0.05 increments: (1.5-0.75)/0.05 = 15 intervals,
+ * so 14 intermediate steps between the endpoints.
+ */
+private const val APP_SCALE_SLIDER_STEPS = 14
+private val APP_SCALE_TEXT_WIDTH = 64.dp
 
 /**
  * Cache statistics display with a "Clear cache" button.

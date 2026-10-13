@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,6 +19,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -96,6 +99,31 @@ fun GhostifyApp(
 
         var fullPlayerOpen by rememberSaveable { mutableStateOf(false) }
         val settingsState by deps.settings.state.collectAsState()
+
+        // Global UI scale (browser-zoom style): scale EVERYTHING by deriving a scaled
+        // Density from the current system density at the root of the composition.
+        //
+        // Choice: MULTIPLY with the system density/fontScale (do not replace it).
+        // The system fontScale (accessibility setting) stays respected and the app
+        // zoom stacks on top: dp uses density*scale, sp uses fontScale*scale, so text
+        // and layout grow together like Ctrl+/Ctrl- in Chrome. There is no
+        // double-scaling: the scaled copy is recomputed from the current system
+        // LocalDensity on each recomposition (not incrementally stacked), clamped to
+        // 0.75..1.5 with a 1.0f fallback for non-finite values, so rotation and
+        // process recreation (which re-collect the persisted Room value) can never
+        // crash or compound the zoom. MiniPlayer, FullPlayerOverlay, Library and all
+        // dialogs sit inside this provider, so all of them scale.
+        val baseDensity = LocalDensity.current
+        val appScale = settingsState.appScale
+            .let { if (it.isFinite()) it else 1.0f }
+            .coerceIn(0.75f, 1.5f)
+        val scaledDensity = remember(baseDensity, appScale) {
+            Density(
+                density = baseDensity.density * appScale,
+                fontScale = baseDensity.fontScale * appScale,
+            )
+        }
+        CompositionLocalProvider(LocalDensity provides scaledDensity) {
 
         LaunchedEffect(openPlayerRequest) {
             openPlayerRequest?.collect { fullPlayerOpen = true }
@@ -189,6 +217,7 @@ fun GhostifyApp(
             landscapeControlsSide = settingsState.landscapeControlsSide,
             layout = settingsState.fullPlayerLayout,
         )
+        }
     }
 }
 

@@ -50,6 +50,7 @@ class SettingsViewModelFullPlayerLayoutTest {
         every { settings.observeShowQueueCovers() } returns flowOf(false)
         every { settings.observeLoopPlaylists() } returns flowOf(true)
         every { settings.observeIncludePreReleaseUpdates() } returns flowOf(false)
+        every { settings.observeAppScale() } returns flowOf(1.0f)
         coEvery { settings.getStorageDir() } returns "ghostify"
         coEvery { settings.setFullPlayerLayout(any()) } returns Unit
 

@@ -86,6 +86,18 @@ interface SettingsContract {
     fun setLandscapeControlsSide(side: String)
 
     /**
+     * Update the global UI scale (browser-zoom style).
+     *
+     * @param scale scale factor where 1.0f == 100%; clamped to 0.75..1.5.
+     */
+    fun setAppScale(scale: Float)
+
+    /**
+     * Resets the global UI scale to 100%.
+     */
+    fun resetAppScale()
+
+    /**
      * Deletes orphan/cache files; library records are untouched.
      */
     fun clearCache()
@@ -179,6 +191,7 @@ interface SettingsContract {
         val landscapeControlsSide: String = "left",
         val showQueueCovers: Boolean = true,
         val loopPlaylists: Boolean = true,
+        val appScale: Float = 1.0f,
         val cacheStats: CacheStats = CacheStats(0, 0),
         val isClearingCache: Boolean = false,
         val pendingMigrationPath: String? = null,
