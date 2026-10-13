@@ -9,7 +9,8 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -39,6 +42,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 private fun performTickVibration(context: Context) {
@@ -55,13 +60,75 @@ private fun performTickVibration(context: Context) {
     }
 }
 
+/**
+ * Like [detectHorizontalDragGestures], but only commits once:
+ *  - total travel reaches [minDistance], AND
+ *  - |Δx| >= |Δy| * [lockRatio].
+ * If the parent (e.g. vertical scroll) consumes an event before we lock in,
+ * we bail out silently so diagonal scrolling never triggers a swipe.
+ */
+private suspend fun PointerInputScope.detectLockedHorizontalDrag(
+    lockRatio: Float = 1.5f,
+    minDistance: Float = viewConfiguration.touchSlop * 2f,
+    onDragStart: () -> Unit = {},
+                                                                 onDragEnd: () -> Unit = {},
+                                                                 onDragCancel: () -> Unit = {},
+                                                                 onHorizontalDrag: (change: PointerInputChange, dragAmount: Float) -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var dragStarted = false
+        var totalDx = 0f
+        var totalDy = 0f
+
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+            if (!change.pressed) {
+                if (dragStarted) onDragEnd() else onDragCancel()
+                    break
+            }
+
+            if (!dragStarted) {
+                // Parent scroll already grabbed it — give up silently.
+                if (change.isConsumed) {
+                    onDragCancel()
+                    break
+                }
+                val d = change.position - change.previousPosition
+                totalDx += d.x
+                totalDy += d.y
+                if (hypot(totalDx, totalDy) >= minDistance) {
+                    if (abs(totalDx) >= abs(totalDy) * lockRatio) {
+                        dragStarted = true
+                        down.consume()
+                        change.consume()
+                        onDragStart()
+                    } else {
+                        // Too diagonal / too vertical — not our gesture.
+                        onDragCancel()
+                        break
+                    }
+                }
+            } else {
+                val d = change.position - change.previousPosition
+                if (d.x != 0f) {
+                    change.consume()
+                    onHorizontalDrag(change, d.x)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun SwipeToAddTrackRow(
     onAddToQueue: () -> Unit,
-    onClick: () -> Unit = {},
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    content: @Composable () -> Unit,
+                       onClick: () -> Unit = {},
+                       modifier: Modifier = Modifier,
+                       enabled: Boolean = true,
+                       content: @Composable () -> Unit,
 ) {
     val revealPx = with(LocalDensity.current) { 40.dp.toPx() }
     val commitThreshold = revealPx * 0.4f
@@ -76,8 +143,8 @@ fun SwipeToAddTrackRow(
 
     fun rubberBand(raw: Float): Float {
         if (raw <= revealPx) return raw
-        val over = raw - revealPx
-        return revealPx + maxExtra * over / (maxExtra + over)
+            val over = raw - revealPx
+            return revealPx + maxExtra * over / (maxExtra + over)
     }
 
     fun springBack() {
@@ -106,25 +173,26 @@ fun SwipeToAddTrackRow(
             ) {
                 Icon(
                     imageVector = Icons.Filled.PlaylistAdd,
-                    contentDescription = "Add to queue",
-                    tint = Color.White,
-                    modifier = Modifier
-                        .size(28.dp)
-                        .offset(x = 14.dp),
+                     contentDescription = "Add to queue",
+                     tint = Color.White,
+                     modifier = Modifier
+                     .size(28.dp)
+                     .offset(x = 14.dp),
                 )
             }
         }
 
         Box(
             Modifier
-                .fillMaxWidth()
-                .offset { IntOffset(offsetX.roundToInt(), 0) }
-                .background(MaterialTheme.colorScheme.surface)
-                .then(
-                    if (!enabled) Modifier
+            .fillMaxWidth()
+            .offset { IntOffset(offsetX.roundToInt(), 0) }
+            .background(MaterialTheme.colorScheme.surface)
+            .then(
+                if (!enabled) Modifier
                     else Modifier
                         .pointerInput(Unit) {
-                            detectHorizontalDragGestures(
+                            detectLockedHorizontalDrag(
+                                lockRatio = 1.5f,
                                 onDragStart = {
                                     animJob?.cancel()
                                     rawOffset = offsetX
@@ -139,14 +207,13 @@ fun SwipeToAddTrackRow(
                                     springBack()
                                 },
                                 onDragCancel = { springBack() },
-                            ) { change, dragAmount ->
-                                change.consume()
+                            ) { _, dragAmount ->
                                 rawOffset = (rawOffset + dragAmount).coerceAtLeast(0f)
                                 offsetX = rubberBand(rawOffset)
                             }
                         }
                         .clickable { onClick() }
-                ),
+            ),
         ) { content() }
     }
 }
