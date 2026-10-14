@@ -81,6 +81,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1546,6 +1548,18 @@ private suspend fun PointerInputScope.detectCoverTaps(
     }
 }
 
+/**
+ * Rendering-time grayscale filter for the empty-track SVG placeholder layers only.
+ *
+ * Applied via Compose [ColorFilter] on the SVG [AsyncImage]s, so the
+ * `no_song_cover.svg` bytes stay untouched and the real cover art on top keeps
+ * its full colour. Works with Coil's SvgDecoder output because [AsyncImage]'s
+ * `colorFilter` is applied at Compose draw time to whatever the painter holds
+ * (SvgDecoder renders to a bitmap drawable), not at decode time.
+ */
+private val EmptyCoverGrayscaleFilter =
+    ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+
 @Composable
 private fun SwipeableCoverArt(
     coverUrl: Any?,
@@ -1621,14 +1635,46 @@ private fun SwipeableCoverArt(
         modifier
     }
 
-    AsyncImage(
-        model = coverUrl,
-        contentDescription = "Album art",
+    // Layered cover art: the empty-track SVG asset stays composed as the base layer so it
+    // shows through while the real cover is loading, empty, or failed. The base SVG layer
+    // alone renders grayscale (background-appropriate); the real cover is composed on top
+    // only when present with NO filter, sharing the same size/clip/ContentScale so the
+    // layers align exactly with no layout shift. A single AsyncImage per layer means no
+    // double network fetch; the top layer leaves placeholder/error/fallback unset so a
+    // loading or failed load stays transparent and the SVG remains visible.
+    Box(
         modifier = sizeModifier
             .clip(shape)
             .then(gestureModifier),
-        contentScale = ContentScale.Crop,
-    )
+    ) {
+        AsyncImage(
+            model = EMPTY_COVER_ASSET_URI,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+            colorFilter = EmptyCoverGrayscaleFilter,
+        )
+        if (hasCoverArt(coverUrl)) {
+            AsyncImage(
+                model = coverUrl,
+                contentDescription = "Album art",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
+    }
+}
+
+/**
+ * Whether [coverUrl] carries real artwork worth composing on top of the empty-track SVG
+ * placeholder: non-null, non-blank strings and non-empty byte arrays. Anything else leaves
+ * the SVG base layer visible.
+ */
+internal fun hasCoverArt(coverUrl: Any?): Boolean = when (coverUrl) {
+    null -> false
+    is String -> coverUrl.isNotBlank()
+    is ByteArray -> coverUrl.isNotEmpty()
+    else -> true
 }
 
 // ── Seek Bar (seeks on release only) ──────────────────────────────────
