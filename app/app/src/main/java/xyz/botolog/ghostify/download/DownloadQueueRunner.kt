@@ -60,6 +60,9 @@ class DownloadQueueRunner(
     private val downloader: TrackDownloader,
     private val concurrencySupplier: () -> Int = { 1 },
     private val artworkPersistence: xyz.botolog.ghostify.player.ArtworkPersistence? = null,
+    private val playlistCoverFetcher: (String) -> ByteArray? = { url ->
+        xyz.botolog.ghostify.player.fetchUrlBytes(url)
+    },
 ) {
 
     /**
@@ -309,8 +312,49 @@ class DownloadQueueRunner(
         }
     }
 
+    /**
+     * Persists the playlist's own cover for offline display, never a track's cover.
+     *
+     * Root cause of "first-song cover after restart": the old implementation
+     * unconditionally copied the first downloaded song's `covers/<songId>.jpg`
+     * to `covers/playlist_<id>.jpg` and stored it as the playlist's
+     * `coverArtLocalPath`. Since `coverImageModel` prefers the local file, the
+     * wrong file then shadowed the correct remote `coverUrl` on every cold start
+     * (memory/disk Coil caches hid it until the restart).
+     *
+     * New precedence, all persisted (Room + covers file):
+     *  1. Existing usable local playlist file -> keep, do nothing.
+     *  2. Playlist's own `coverUrl` -> download it to `playlist_<id>.jpg`.
+     *  3. No own cover at all -> copy first downloaded song as last-resort
+     *     fallback (only case where a track's art may stand in).
+     * When (2) fails (offline/fetch error) the DB is left untouched so the
+     * remote URL still displays instead of wrong art.
+     */
     private suspend fun persistPlaylistCover(playlistId: String) {
         val persistence = artworkPersistence ?: return
+        val playlist = runCatching { repo.getPlaylist(playlistId) }.getOrNull()
+
+        if (playlist != null && persistence.playlistLocalUsable(playlist.coverArtLocalPath)) {
+            Timber.d("DownloadQueueRunner: keeping existing playlist cover for $playlistId")
+            return
+        }
+
+        val ownCoverUrl = playlist?.coverUrl?.trim().orEmpty()
+        if (ownCoverUrl.isNotEmpty()) {
+            val localPath = runCatching {
+                persistence.persistPlaylistCoverFromUrl(playlistId, ownCoverUrl, playlistCoverFetcher)
+            }.getOrNull()
+            if (localPath != null) {
+                repo.updatePlaylistCoverArtLocalPath(playlistId, localPath)
+                Timber.d("DownloadQueueRunner: saved own playlist cover for $playlistId")
+            } else {
+                Timber.d("DownloadQueueRunner: own playlist cover download failed for $playlistId, keeping remote URL")
+            }
+            return
+        }
+
+        // Last resort: playlist truly has no own artwork — borrow the first
+        // downloaded track so offline rows still show something.
         val songs = repo.songsFor(playlistId)
         val firstDownloaded = songs
             .filter { it.status == DownloadStatus.DOWNLOADED && it.filePath != null }

@@ -686,10 +686,13 @@ internal suspend fun highlightSongWhileVisible(
 /**
  * The playlist artwork, used by both the expanded header and the collapsed bar.
  *
- * The model is resolved by [coverImageModel], so an extracted local cover is preferred
- * but never shadows the remote URL when the local file is gone, and the resolution is
- * remembered because this composable recomposes on every frame while the header collapses.
- * A neutral placeholder keeps the artwork slot visible when neither source is usable.
+ * The model is resolved by [playlistCoverModel]: the playlist's own local file,
+ * then its remote URL, and only as a last resort the first track's artwork
+ * (when the playlist itself has no usable cover). A stale local path never
+ * shadows a good remote URL, and a track's cover never shadows the playlist's
+ * own cover — it only fills a slot that would otherwise be a placeholder.
+ * Resolution is remembered because this composable recomposes on every frame
+ * while the header collapses.
  *
  * @param state the playlist state carrying the cover sources.
  * @param coverSize the rendered edge length of the square artwork.
@@ -705,8 +708,19 @@ private fun PlaylistCoverImage(
     contentDescription: String? = null,
     modifier: Modifier = Modifier,
 ) {
-    val model = remember(state.coverArtLocalPath, state.coverUrl) {
-        coverImageModel(state.coverArtLocalPath, state.coverUrl)
+    val firstTrack = remember(state.tracks) { state.tracks.minByOrNull { it.position } }
+    val model = remember(
+        state.coverArtLocalPath,
+        state.coverUrl,
+        firstTrack?.coverArtLocalPath,
+        firstTrack?.coverUrl,
+    ) {
+        xyz.botolog.ghostify.ui.util.playlistCoverModel(
+            state.coverArtLocalPath,
+            state.coverUrl,
+            firstTrack?.coverArtLocalPath,
+            firstTrack?.coverUrl,
+        )
     }
     val empty = ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
     AsyncImage(

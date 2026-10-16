@@ -85,11 +85,52 @@ class SyncUseCaseCoverTest {
         assertEquals(null, updated.captured.coverUrl)
     }
 
-    private fun playlist(coverUrl: String?) = PlaylistEntity(
+    @Test
+    fun syncNeverOverwritesLocalCoverWhenRemoteCoverMissing() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://old/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = null),
+        )
+
+        useCase().syncPlaylist(PLAYLIST_ID)
+
+        assertEquals("https://old/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun syncKeepsLocalCoverWhenRemoteCoverUnchanged() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://same/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "https://same/cover.jpg"),
+        )
+
+        useCase().syncPlaylist(PLAYLIST_ID)
+
+        assertEquals("https://same/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun syncClearsStaleLocalCoverWhenRemoteCoverChanged() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://old/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "https://new/cover.jpg"),
+        )
+
+        useCase().syncPlaylist(PLAYLIST_ID)
+
+        assertEquals("https://new/cover.jpg", updated.captured.coverUrl)
+        // Old file would shadow the new URL via local-first precedence.
+        assertEquals(null, updated.captured.coverArtLocalPath)
+    }
+
+    private fun playlist(coverUrl: String?, localPath: String? = null) = PlaylistEntity(
         id = PLAYLIST_ID,
         spotifyId = SPOTIFY_ID,
         name = "Playlist",
         coverUrl = coverUrl,
+        coverArtLocalPath = localPath,
         status = PlaylistStatus.NEW,
     )
 

@@ -117,6 +117,19 @@ class RoomDownloadRepository(
         return result
     }
 
+    override suspend fun getPlaylist(playlistId: String): PlaylistRecord? {
+        Timber.i("RoomDownloadRepository.getPlaylist: START")
+        val entity = playlistDao.getById(playlistId) ?: return null
+        val result = PlaylistRecord(
+            id = entity.id,
+            status = entity.status.toPlaylistStatus(),
+            coverUrl = entity.coverUrl,
+            coverArtLocalPath = entity.coverArtLocalPath,
+        )
+        Timber.i("RoomDownloadRepository.getPlaylist: returning $result")
+        return result
+    }
+
     /**
      * Sets the playlist-level status.
      *

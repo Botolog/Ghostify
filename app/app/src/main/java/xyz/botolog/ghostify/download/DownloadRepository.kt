@@ -56,12 +56,21 @@ data class SongRecord(
 /**
  * The subset of the Room `playlists` row the download manager needs.
  *
+ * `coverUrl` is the playlist's own artwork (from Spotify/YouTube fetch) and
+ * `coverArtLocalPath` is the persisted offline copy (`covers/playlist_<id>.jpg`).
+ * Both are needed so the queue runner can persist the playlist's own cover
+ * without ever overwriting it with a track's cover.
+ *
  * @property id unique playlist identifier.
  * @property status current playlist-level status.
+ * @property coverUrl URL of the playlist's own cover artwork, `null` when unknown.
+ * @property coverArtLocalPath absolute path of the persisted playlist cover, `null` when none.
  */
 data class PlaylistRecord(
     val id: String,
     val status: PlaylistStatus,
+    val coverUrl: String? = null,
+    val coverArtLocalPath: String? = null,
 )
 
 /**
@@ -124,6 +133,16 @@ interface DownloadRepository {
      * @param playlistId the playlist to query.
      */
     suspend fun getPlaylistStatus(playlistId: String): PlaylistStatus?
+
+    /**
+     * Returns the playlist record (status + cover sources), or `null` if unknown.
+     *
+     * Needed by the queue runner's playlist-cover persist step so it can keep
+     * the playlist's own artwork instead of overwriting it with a track's cover.
+     *
+     * @param playlistId the playlist to query.
+     */
+    suspend fun getPlaylist(playlistId: String): PlaylistRecord?
 
     /**
      * Sets the playlist-level status.

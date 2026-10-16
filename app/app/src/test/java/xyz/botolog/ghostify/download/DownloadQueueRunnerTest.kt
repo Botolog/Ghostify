@@ -14,6 +14,7 @@ class DownloadQueueRunnerTest {
 
     private class FakeDownloadRepository(
         initialSongs: List<SongRecord>,
+        initialPlaylists: Map<String, PlaylistRecord> = emptyMap(),
     ) : DownloadRepository {
 
         data class SetStatusCall(
@@ -25,7 +26,9 @@ class DownloadQueueRunnerTest {
         )
 
         private val songs = initialSongs.associateBy { it.id }.toMutableMap()
+        private val playlists = initialPlaylists.toMutableMap()
         val setStatusCalls = mutableListOf<SetStatusCall>()
+        val playlistCoverUpdates = mutableListOf<Pair<String, String?>>()
 
         override suspend fun songsFor(playlistId: String): List<SongRecord> =
             songs.values.toList()
@@ -54,7 +57,10 @@ class DownloadQueueRunnerTest {
         }
 
         override suspend fun getPlaylistStatus(playlistId: String): PlaylistStatus? =
-            PlaylistStatus.READY
+            playlists[playlistId]?.status ?: PlaylistStatus.READY
+
+        override suspend fun getPlaylist(playlistId: String): PlaylistRecord? =
+            playlists[playlistId]
 
         override suspend fun setPlaylistStatus(playlistId: String, status: PlaylistStatus) {
             // no-op
@@ -88,7 +94,8 @@ class DownloadQueueRunnerTest {
         }
 
         override suspend fun updatePlaylistCoverArtLocalPath(playlistId: String, path: String?) {
-            // no-op
+            playlistCoverUpdates.add(playlistId to path)
+            playlists[playlistId]?.let { playlists[playlistId] = it.copy(coverArtLocalPath = path) }
         }
     }
 

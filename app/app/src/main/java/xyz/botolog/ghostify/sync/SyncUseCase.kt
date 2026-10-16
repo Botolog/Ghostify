@@ -109,6 +109,13 @@ class SyncUseCase(
      * fetch that comes back without artwork (an anonymous payload that omits images, a
      * partial response) must not wipe a cover URL that is already stored, otherwise the
      * detail and library screens lose their artwork until a lucky sync.
+     *
+     * `coverArtLocalPath` is never overwritten here: it always points at the
+     * playlist's own persisted file (or a last-resort track copy when the playlist
+     * has no own cover). When the remote `coverUrl` actually changed, the old
+     * local file is stale and would shadow the new URL via `coverImageModel`'s
+     * local-first precedence, so it is cleared — the next download run re-persists
+     * the new cover.
      */
     private suspend fun applyDiffWithinTransaction(
         playlistId: String,
@@ -125,11 +132,19 @@ class SyncUseCase(
                 songs.deleteBySpotifyIds(playlistId, plan.deleteSpotifyIds)
             }
 
+            val newCoverUrl = remote.coverUrl?.takeIf { it.isNotBlank() } ?: playlist.coverUrl
+            val coverChanged = newCoverUrl != null &&
+                playlist.coverUrl != null &&
+                newCoverUrl.trim() != playlist.coverUrl?.trim() &&
+                remote.coverUrl?.isNotBlank() == true
             playlists.update(
                 playlist.copy(
                     name = remote.name,
                     owner = remote.owner,
-                    coverUrl = remote.coverUrl?.takeIf { it.isNotBlank() } ?: playlist.coverUrl,
+                    coverUrl = newCoverUrl,
+                    // Never borrow a track's art here; only drop a stale own-cover
+                    // file when the remote URL genuinely changed.
+                    coverArtLocalPath = if (coverChanged) null else playlist.coverArtLocalPath,
                     trackCount = plan.finalTrackCount,
                     lastSyncedAt = now(),
                 ),
