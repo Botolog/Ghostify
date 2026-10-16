@@ -1779,8 +1779,10 @@ private fun LyricsMiniView(
             .clickable {
                 if (lyrics != null && parsed.isNotEmpty()) onTap() else onRetryLyrics()
             }
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .navigationBarsPadding(),
+            // No navigationBarsPadding here: the outer PortraitPlayerContent
+            // already applies statusBarsPadding()+navigationBarsPadding().
+            // An inner inset would double-pad when visible.
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

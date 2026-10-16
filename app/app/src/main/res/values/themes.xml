@@ -8,8 +8,13 @@
 <resources>
     <style name="Theme.Ghostify" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/ghostify_background</item>
-        <item name="android:statusBarColor">@color/ghostify_background</item>
-        <item name="android:navigationBarColor">@color/ghostify_background</item>
+        <!-- Transparent scrims for edge-to-edge: content draws behind system
+             bars; the bars themselves are drawn by the system (transparent
+             gesture nav, transparent 3-button via isNavigationBarContrastEnforced=false).
+             Opaque colors here would leave a nav-keys-sized bald strip when the
+             bars are hidden. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>

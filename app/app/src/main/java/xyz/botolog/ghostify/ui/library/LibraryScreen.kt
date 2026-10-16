@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +43,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -127,6 +130,14 @@ fun LibraryScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        // In-flow MiniPlayer below this Scaffold already pads for the nav bar
+        // (MiniPlayer content uses navigationBarsPadding, background extends
+        // behind transparent bar). Keep Scaffold's top/horizontal insets but
+        // drop its bottom so the list ends at the MiniPlayer instead of leaving
+        // a nav-height bald gap. Hidden nav => bottom was 0 => no-op.
+        contentWindowInsets = ScaffoldDefaults.contentWindowInsets.only(
+            WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+        ),
         topBar = {
             LibraryTopBar(
                 contract = contract,

@@ -4,11 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -192,7 +189,14 @@ fun GhostifyApp(
             // Spotify-style now-playing bar. Persistent across every screen and ALWAYS
             // visible — even with no song loaded ("No Song" empty state). Tapping opens the
             // full player overlay only when a song is loaded; empty taps are a no-op.
-            // Bottom padding keeps it above the system navigation bar.
+            // Edge-to-edge: MiniPlayer's Surface extends behind the (transparent)
+            // nav bar and pads its CONTENT via unconditional
+            // navigationBarsPadding() inside MiniPlayer. Compose's
+            // navigationBars inset is 0 when hidden and nav height when
+            // 3-button visible, so this sits above the bar with no overlap
+            // and leaves no bald gap when hidden. No outer
+            // windowInsetsPadding here — that would inset the background itself
+            // and re-create the gap.
             MiniPlayer(
                 contract = deps.player,
                 modifier = Modifier
@@ -204,8 +208,7 @@ fun GhostifyApp(
                         if (!playerState.empty && playerState.nowPlaying != null) {
                             fullPlayerOpen = true
                         }
-                    }
-                    .windowInsetsPadding(WindowInsets.navigationBars),
+                    },
             )
         }
 

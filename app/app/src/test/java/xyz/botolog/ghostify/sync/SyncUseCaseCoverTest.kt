@@ -21,7 +21,9 @@ class SyncUseCaseCoverTest {
     private val fetcher = mockk<SpotifyPlaylistFetcher>()
     private val updated = slot<PlaylistEntity>()
 
-    private fun useCase(): SyncUseCase = SyncUseCase(
+    private fun useCase(
+        downloader: (suspend (String, String) -> String?)? = null,
+    ): SyncUseCase = SyncUseCase(
         playlists = playlistDao,
         songs = songDao,
         transactions = DirectTransactions,
@@ -31,6 +33,7 @@ class SyncUseCaseCoverTest {
         locks = SyncLocks(),
         now = { NOW },
         newId = { "new" },
+        playlistCoverDownloader = downloader,
     )
 
     private fun stub(stored: PlaylistEntity, remote: PlaylistMetadata) {
@@ -123,6 +126,176 @@ class SyncUseCaseCoverTest {
         assertEquals("https://new/cover.jpg", updated.captured.coverUrl)
         // Old file would shadow the new URL via local-first precedence.
         assertEquals(null, updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun coverChangedRedownloadsAndStoresFreshLocalPath() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://old/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "https://new/cover.jpg"),
+        )
+        val requested = mutableListOf<Pair<String, String>>()
+
+        useCase(downloader = { playlistId, coverUrl ->
+            requested += playlistId to coverUrl
+            "/covers/playlist_pl.jpg"
+        }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(listOf(PLAYLIST_ID to "https://new/cover.jpg"), requested)
+        assertEquals("https://new/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun coverChangedTrimsUrlBeforeDownload() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://old/cover.jpg"),
+            remote = metadata(coverUrl = "  https://new/cover.jpg  "),
+        )
+        val requested = mutableListOf<String>()
+
+        useCase(downloader = { _, coverUrl ->
+            requested += coverUrl
+            "/covers/playlist_pl.jpg"
+        }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(listOf("https://new/cover.jpg"), requested)
+        assertEquals("https://new/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun firstCoverDownloadsWhenStoredCoverIsNull() = runTest {
+        stub(
+            stored = playlist(coverUrl = null),
+            remote = metadata(coverUrl = "https://new/cover.jpg"),
+        )
+        var calls = 0
+
+        useCase(downloader = { _, _ ->
+            calls++
+            "/covers/playlist_pl.jpg"
+        }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(1, calls)
+        assertEquals("https://new/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun coverUnchangedSkipsDownload() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://same/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "https://same/cover.jpg"),
+        )
+        var calls = 0
+
+        useCase(downloader = { _, _ ->
+            calls++
+            "/covers/playlist_pl.jpg"
+        }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(0, calls)
+        assertEquals("https://same/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun whitespaceOnlyDifferenceSkipsDownload() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://same/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "  https://same/cover.jpg  "),
+        )
+        var calls = 0
+
+        useCase(downloader = { _, _ ->
+            calls++
+            "/covers/playlist_pl.jpg"
+        }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(0, calls)
+        assertEquals("https://same/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun blankRemoteCoverSkipsDownload() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://old/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "   "),
+        )
+        var calls = 0
+
+        useCase(downloader = { _, _ ->
+            calls++
+            "/covers/playlist_pl.jpg"
+        }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(0, calls)
+        assertEquals("https://old/cover.jpg", updated.captured.coverUrl)
+        assertEquals("/covers/playlist_pl.jpg", updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun queryParamChangeCountsAsChanged() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://cdn/cover.jpg"),
+            remote = metadata(coverUrl = "https://cdn/cover.jpg?version=2"),
+        )
+        var calls = 0
+
+        useCase(downloader = { _, _ ->
+            calls++
+            "/covers/playlist_pl.jpg"
+        }).syncPlaylist(PLAYLIST_ID)
+
+        // No query-param stripping: a param-only change costs one JPEG download
+        // rather than risking stale art.
+        assertEquals(1, calls)
+        assertEquals("https://cdn/cover.jpg?version=2", updated.captured.coverUrl)
+    }
+
+    @Test
+    fun downloadFailureStillSucceedsAndClearsStaleLocal() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://old/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "https://new/cover.jpg"),
+        )
+
+        val result = useCase(downloader = { _, _ -> null }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(0, result.added)
+        assertEquals("https://new/cover.jpg", updated.captured.coverUrl)
+        // Stale file cleared so the new remote URL displays instead of wrong old art.
+        assertEquals(null, updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun downloadExceptionStillSucceedsWithoutCorruptingDb() = runTest {
+        stub(
+            stored = playlist(coverUrl = "https://old/cover.jpg", localPath = "/covers/playlist_pl.jpg"),
+            remote = metadata(coverUrl = "https://new/cover.jpg"),
+        )
+
+        val result = useCase(downloader = { _, _ ->
+            throw RuntimeException("offline")
+        }).syncPlaylist(PLAYLIST_ID)
+
+        assertEquals(0, result.added)
+        assertEquals("https://new/cover.jpg", updated.captured.coverUrl)
+        assertEquals(null, updated.captured.coverArtLocalPath)
+    }
+
+    @Test
+    fun coverChangeComparisonIsTrimBased() {
+        assertEquals(true, SyncUseCase.isPlaylistCoverChanged("https://old/a.jpg", "https://new/b.jpg"))
+        assertEquals(true, SyncUseCase.isPlaylistCoverChanged(null, "https://new/b.jpg"))
+        assertEquals(false, SyncUseCase.isPlaylistCoverChanged("https://same/a.jpg", "https://same/a.jpg"))
+        assertEquals(false, SyncUseCase.isPlaylistCoverChanged("https://same/a.jpg", "  https://same/a.jpg  "))
+        assertEquals(false, SyncUseCase.isPlaylistCoverChanged("https://old/a.jpg", null))
+        assertEquals(false, SyncUseCase.isPlaylistCoverChanged("https://old/a.jpg", "   "))
+        assertEquals(null, SyncUseCase.normalizeCoverUrl("   "))
+        assertEquals("https://a/b.jpg", SyncUseCase.normalizeCoverUrl("  https://a/b.jpg  "))
     }
 
     private fun playlist(coverUrl: String?, localPath: String? = null) = PlaylistEntity(

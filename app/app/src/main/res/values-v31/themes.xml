@@ -7,8 +7,8 @@
 <resources>
     <style name="Theme.Ghostify" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/ghostify_background</item>
-        <item name="android:statusBarColor">@color/ghostify_background</item>
-        <item name="android:navigationBarColor">@color/ghostify_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowSplashScreenBackground">@color/ghostify_background</item>

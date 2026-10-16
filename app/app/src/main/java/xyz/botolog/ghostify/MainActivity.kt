@@ -1,9 +1,11 @@
 package xyz.botolog.ghostify
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import xyz.botolog.ghostify.ui.GhostifyApp
 import xyz.botolog.ghostify.ui.GhostifyDependencies
 
@@ -27,6 +29,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Proper edge-to-edge (targetSdk 35 enforces it on Android 15+; this
+        // makes it consistent back to minSdk): content draws behind the system
+        // bars with transparent scrims, so a hidden nav bar leaves no opaque
+        // strip behind. Bars stay VISIBLE by default (no immersive hide here);
+        // bottom UI pads via unconditional navigationBarsPadding() (Compose
+        // insets are 0 when hidden, nav height when 3-button visible).
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Transparent 3-button nav (no translucent scrim); gesture nav is
+            // already transparent. Lets MiniPlayer / FullPlayer backgrounds
+            // extend behind the bar instead of leaving a bald gap.
+            window.isNavigationBarContrastEnforced = false
+        }
         OpenPlayerRequests.Process.handle(intent?.action)
         setContent {
             GhostifyApp(

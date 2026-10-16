@@ -39,6 +39,12 @@ import timber.log.Timber
  * @property locks Per-playlist mutex to serialize concurrent syncs.
  * @property now Clock function returning epoch millis (injectable for testing).
  * @property newId UUID generator (injectable for testing).
+ * @property playlistCoverDownloader Downloads + persists a fresh playlist cover
+ *   when the remote `coverUrl` changed, returning the local path or `null` on
+ *   failure. Production wires this to `ArtworkPersistence.persistPlaylistCoverFromUrl`
+ *   on `Dispatchers.IO` (same fetcher/downloader as `DownloadQueueRunner`, same
+ *   `covers/playlist_<id>.jpg` file). `null` (default) keeps the legacy behaviour:
+ *   the stale local path is cleared so the new URL shows, without downloading.
  */
 class SyncUseCase(
     private val playlists: PlaylistDao,
@@ -50,6 +56,7 @@ class SyncUseCase(
     private val locks: SyncLocks,
     private val now: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
+    private val playlistCoverDownloader: (suspend (playlistId: String, coverUrl: String) -> String?)? = null,
 ) {
 
     /**
@@ -80,7 +87,12 @@ class SyncUseCase(
 
         val remote = fetchRemoteTracks(playlist.spotifyId, playlist.origin)
 
-        val plan = applyDiffWithinTransaction(playlistId, playlist, remote)
+        // Network first, transaction after: the cover download never holds the
+        // SQLite writer lock, and any failure degrades to "clear stale local"
+        // instead of failing the sync (T-067).
+        val freshCoverLocalPath = downloadFreshPlaylistCover(playlistId, playlist, remote)
+
+        val plan = applyDiffWithinTransaction(playlistId, playlist, remote, freshCoverLocalPath)
 
         deleteOrphanedFiles(plan.deleteFilePaths)
         enqueuePendingDownloadsIfNeeded(playlistId, plan)
@@ -102,6 +114,29 @@ class SyncUseCase(
         }
 
     /**
+     * Downloads the new playlist cover when the remote `coverUrl` changed.
+     *
+     * Never throws: any failure (no downloader wired, download error, blank
+     * bytes) returns `null` so the sync still succeeds and the DB write falls
+     * back to clearing the stale local path (the new remote URL then displays
+     * until the next successful download).
+     *
+     * Skipped entirely when the URL is unchanged/blank — no redundant download.
+     */
+    private suspend fun downloadFreshPlaylistCover(
+        playlistId: String,
+        playlist: xyz.botolog.ghostify.data.db.entity.PlaylistEntity,
+        remote: xyz.botolog.ghostify.python.PlaylistMetadata,
+    ): String? {
+        val downloader = playlistCoverDownloader ?: return null
+        val normalizedRemote = normalizeCoverUrl(remote.coverUrl) ?: return null
+        if (!isPlaylistCoverChanged(playlist.coverUrl, remote.coverUrl)) return null
+        return runCatching { downloader(playlistId, normalizedRemote) }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * Reads current songs, computes the diff, and applies inserts/updates/deletes
      * atomically. Any DAO failure rolls the whole batch back (T-067).
      *
@@ -110,17 +145,24 @@ class SyncUseCase(
      * partial response) must not wipe a cover URL that is already stored, otherwise the
      * detail and library screens lose their artwork until a lucky sync.
      *
-     * `coverArtLocalPath` is never overwritten here: it always points at the
-     * playlist's own persisted file (or a last-resort track copy when the playlist
-     * has no own cover). When the remote `coverUrl` actually changed, the old
-     * local file is stale and would shadow the new URL via `coverImageModel`'s
-     * local-first precedence, so it is cleared — the next download run re-persists
-     * the new cover.
+     * When the remote `coverUrl` actually changed, the old local file is stale and
+     * would shadow the new URL via `coverImageModel`'s local-first precedence:
+     *  - download succeeded ([freshCoverLocalPath] non-null) → store the new URL +
+     *    the fresh local path (same `covers/playlist_<id>.jpg` file, overwritten —
+     *    no orphan, and the Room Flow emission makes Library/Detail recompose);
+     *  - download failed / no downloader wired → store the new URL and clear the
+     *    local path so the new remote URL displays instead of wrong old art. The
+     *    stale bytes stay on disk under the same deterministic filename and are
+     *    overwritten on the next success, so no orphan accumulates; the next
+     *    download run also retries the persist via its own cover step.
+     * Otherwise (`coverUrl` same or blank) the local path is left untouched —
+     * never borrowed from a track here, never redundantly re-downloaded.
      */
     private suspend fun applyDiffWithinTransaction(
         playlistId: String,
         playlist: xyz.botolog.ghostify.data.db.entity.PlaylistEntity,
         remote: xyz.botolog.ghostify.python.PlaylistMetadata,
+        freshCoverLocalPath: String? = null,
     ): SyncPlan =
         transactions.withinTransaction {
             val stored = songs.getSongsForPlaylist(playlistId)
@@ -132,19 +174,21 @@ class SyncUseCase(
                 songs.deleteBySpotifyIds(playlistId, plan.deleteSpotifyIds)
             }
 
-            val newCoverUrl = remote.coverUrl?.takeIf { it.isNotBlank() } ?: playlist.coverUrl
-            val coverChanged = newCoverUrl != null &&
-                playlist.coverUrl != null &&
-                newCoverUrl.trim() != playlist.coverUrl?.trim() &&
-                remote.coverUrl?.isNotBlank() == true
+            val newCoverUrl = normalizeCoverUrl(remote.coverUrl) ?: playlist.coverUrl
+            val coverChanged = isPlaylistCoverChanged(playlist.coverUrl, remote.coverUrl)
+            val newLocalPath = when {
+                !coverChanged -> playlist.coverArtLocalPath
+                freshCoverLocalPath != null -> freshCoverLocalPath
+                // Never borrow a track's art here; only drop a stale own-cover
+                // file when the remote URL genuinely changed.
+                else -> null
+            }
             playlists.update(
                 playlist.copy(
                     name = remote.name,
                     owner = remote.owner,
                     coverUrl = newCoverUrl,
-                    // Never borrow a track's art here; only drop a stale own-cover
-                    // file when the remote URL genuinely changed.
-                    coverArtLocalPath = if (coverChanged) null else playlist.coverArtLocalPath,
+                    coverArtLocalPath = newLocalPath,
                     trackCount = plan.finalTrackCount,
                     lastSyncedAt = now(),
                 ),
@@ -186,5 +230,32 @@ class SyncUseCase(
             metadataUpdated = updates.size - resets,
             filesDeleted = deleteFilePaths.size,
         )
+    }
+
+    companion object {
+        /**
+         * Trims whitespace; blank collapses to `null`.
+         *
+         * Deliberately no deeper canonicalization (no trailing-slash stripping,
+         * no query-param removal, case-sensitive): Spotify/CDN artwork URLs are
+         * opaque, and treating a query-param-only change as "changed" costs at
+         * most one extra JPEG download, while stripping parts could miss a real
+         * artwork change and leave stale art on screen.
+         */
+        fun normalizeCoverUrl(url: String?): String? =
+            url?.trim()?.takeIf { it.isNotEmpty() }
+
+        /**
+         * Whether the fetched remote cover differs from the stored one.
+         *
+         * Compares trimmed, non-blank values: blank/missing remote is never a
+         * change (stored art is kept), identical-after-trim is not a change (no
+         * re-download), anything else — including first cover (`null` → new) —
+         * is a change.
+         */
+        fun isPlaylistCoverChanged(storedUrl: String?, remoteUrl: String?): Boolean {
+            val normalizedRemote = normalizeCoverUrl(remoteUrl) ?: return false
+            return normalizedRemote != normalizeCoverUrl(storedUrl)
+        }
     }
 }

@@ -214,6 +214,16 @@ class GhostifyContainer(private val context: Application) {
                 downloadManager.downloadAll(playlistId)
             },
             locks = xyz.botolog.ghostify.sync.SyncLocks(),
+            // Same fetcher/downloader + file as DownloadQueueRunner:
+            // ArtworkPersistence.persistPlaylistCoverFromUrl overwrites
+            // covers/playlist_<id>.jpg with 10s timeouts and never throws.
+            playlistCoverDownloader = { playlistId, coverUrl ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching {
+                        artworkPersistence.persistPlaylistCoverFromUrl(playlistId, coverUrl)
+                    }.getOrNull()
+                }
+            },
         )
     }
 

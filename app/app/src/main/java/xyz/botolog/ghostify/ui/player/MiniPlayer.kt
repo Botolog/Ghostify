@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -189,7 +190,14 @@ fun MiniPlayer(
         tonalElevation = 3.dp,
         shadowElevation = 8.dp,
     ) {
-        Column {
+        // Edge-to-edge: the Surface background extends behind the transparent
+        // nav bar; only the CONTENT is lifted above it via unconditional
+        // navigationBarsPadding(). Compose's navigationBars inset is already
+        // visibility-aware under edge-to-edge (0 when hidden, nav height when
+        // 3-button visible), so this pads exactly when needed with no blank
+        // strip and no overlap. Padding lives here (inside), never on the
+        // caller's outer modifier (that would inset the background itself).
+        Column(modifier = Modifier.navigationBarsPadding()) {
             MiniSeekBar(state = state, contract = contract, isEmpty = isEmpty)
             MiniPlayerControls(
                 state = state,
