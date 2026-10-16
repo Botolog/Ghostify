@@ -49,11 +49,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.remember
 import coil.compose.AsyncImage
 import kotlinx.coroutines.isActive
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.model.QueueItem
 import xyz.botolog.ghostify.ui.util.DurationFormat
+import xyz.botolog.ghostify.ui.util.coverImageModel
 import kotlin.math.roundToInt
 
 /**
@@ -562,10 +564,13 @@ private fun QueueItemRow(item: QueueItem, showCover: Boolean = false) {
  */
 @Composable
 private fun QueueItemCover(item: QueueItem, showCover: Boolean) {
-    if (!shouldShowQueueItemCover(showCover, item.coverUrl)) return
+    if (!shouldShowQueueItemCover(showCover, item.coverArtLocalPath, item.coverUrl)) return
 
+    val model = remember(item.coverArtLocalPath, item.coverUrl) {
+        coverImageModel(item.coverArtLocalPath, item.coverUrl)
+    }
     AsyncImage(
-        model = item.coverUrl,
+        model = model,
         contentDescription = "Album art",
         modifier = Modifier
             .size(40.dp)
@@ -581,8 +586,12 @@ private fun QueueItemCover(item: QueueItem, showCover: Boolean) {
  * Applies to every row, including the currently playing one.
  *
  * @param showCover the value of the covers-in-queue setting.
+ * @param coverArtLocalPath the item's local artwork path, which may be absent.
  * @param coverUrl the item's artwork URL, which may be absent.
- * @return `true` when covers are enabled and artwork is available.
+ * @return `true` when covers are enabled and any artwork source is available.
  */
-internal fun shouldShowQueueItemCover(showCover: Boolean, coverUrl: String?): Boolean =
-    showCover && !coverUrl.isNullOrBlank()
+internal fun shouldShowQueueItemCover(
+    showCover: Boolean,
+    coverArtLocalPath: String?,
+    coverUrl: String?,
+): Boolean = showCover && (!coverArtLocalPath.isNullOrBlank() || !coverUrl.isNullOrBlank())

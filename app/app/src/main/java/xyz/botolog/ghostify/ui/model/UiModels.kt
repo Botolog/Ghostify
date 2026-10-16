@@ -106,6 +106,7 @@ data class QueueItem(
     val isCurrent: Boolean = false,
     val queuedByUser: Boolean = false,
     val coverUrl: String? = null,
+    val coverArtLocalPath: String? = null,
 )
 
 /**

@@ -14,6 +14,7 @@ package xyz.botolog.ghostify.player.core
  * @property filePath Absolute path to the local audio file.
  * @property indexInQueue Zero-based position within the built queue.
  * @property coverUrl URL for the album artwork, or `null` if unavailable.
+ * @property coverArtLocalPath Absolute path of the extracted local artwork file, or `null`.
  */
 data class QueueItem(
     val songId: String,
@@ -24,6 +25,7 @@ data class QueueItem(
     val filePath: String,
     val indexInQueue: Int,
     val coverUrl: String? = null,
+    val coverArtLocalPath: String? = null,
     val queuedByUser: Boolean = false,
 ) {
     /**

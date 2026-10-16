@@ -737,13 +737,21 @@ class PlayerController private constructor(
      *
      * @param songId the song database ID.
      * @param mediaItem the Media3 item to insert.
+     * @param coverUrl remote artwork URL, carried separately because [MediaItem] metadata
+     *   does not preserve it.
+     * @param coverArtLocalPath local artwork file path, preferred for offline covers.
      */
-    fun addToQueueNext(songId: String, mediaItem: MediaItem) {
+    fun addToQueueNext(
+        songId: String,
+        mediaItem: MediaItem,
+        coverUrl: String? = null,
+        coverArtLocalPath: String? = null,
+    ) {
         Timber.i("PlayerController.addToQueueNext: songId=$songId")
         if (exoPlayer.mediaItemCount == 0) return
         val currentIdx = exoPlayer.currentMediaItemIndex
 
-        val mutation = queueManager.addToQueueNext(songId, mediaItem, currentIdx) ?: return
+        val mutation = queueManager.addToQueueNext(songId, mediaItem, currentIdx, coverUrl, coverArtLocalPath) ?: return
 
         // Mirror the mutation on ExoPlayer.
         val savedMediaId = exoPlayer.currentMediaItem?.mediaId

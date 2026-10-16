@@ -185,9 +185,17 @@ class PlayerQueueManager {
      * @param songId the song database ID.
      * @param mediaItem built from the song's file and metadata (used to create QueueItem if new).
      * @param currentIndex the currently playing item's index.
+     * @param coverUrl remote artwork URL for a newly inserted item.
+     * @param coverArtLocalPath local artwork path for a newly inserted item, preferred offline.
      * @return a [QueueMutation] describing what happened, or null if no action was taken.
      */
-    fun addToQueueNext(songId: String, mediaItem: MediaItem, currentIndex: Int): QueueMutation? {
+    fun addToQueueNext(
+        songId: String,
+        mediaItem: MediaItem,
+        currentIndex: Int,
+        coverUrl: String? = null,
+        coverArtLocalPath: String? = null,
+    ): QueueMutation? {
         Timber.i("PlayerQueueManager.addToQueueNext: songId=$songId, currentIndex=$currentIndex")
         if (_queue.isEmpty()) return null
         if (currentIndex !in _queue.indices) return null
@@ -244,7 +252,8 @@ class PlayerQueueManager {
                 durationMs = mediaItem.mediaMetadata.durationMs,
                 filePath = mediaItem.localConfiguration?.uri?.path.orEmpty(),
                 indexInQueue = targetIdx,
-                coverUrl = null,
+                coverUrl = coverUrl ?: mediaItem.mediaMetadata.artworkUri?.toString(),
+                coverArtLocalPath = coverArtLocalPath,
                 queuedByUser = true,
             )
             val insertAt = targetIdx.coerceAtMost(_queue.size)

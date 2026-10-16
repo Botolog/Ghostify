@@ -201,5 +201,6 @@ class PlayerStatePersistence(
         filePath = filePath,
         status = xyz.botolog.ghostify.player.core.SongStatus.DOWNLOADED,
         coverUrl = coverUrl,
+        coverArtLocalPath = coverArtLocalPath,
     )
 }

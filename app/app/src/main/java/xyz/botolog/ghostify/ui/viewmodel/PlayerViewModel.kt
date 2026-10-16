@@ -188,10 +188,11 @@ class PlayerViewModel(
                     filePath = entity.filePath,
                     indexInQueue = 0,
                     coverUrl = entity.coverUrl,
+                    coverArtLocalPath = entity.coverArtLocalPath,
                 ),
                 null,
             )
-            player.addToQueueNext(songId, mediaItem)
+            player.addToQueueNext(songId, mediaItem, entity.coverUrl, entity.coverArtLocalPath)
         }
     }
 
@@ -397,6 +398,7 @@ class PlayerViewModel(
                 isCurrent = index == core.currentQueueIndex,
                 queuedByUser = item.queuedByUser,
                 coverUrl = item.coverUrl,
+                coverArtLocalPath = item.coverArtLocalPath,
             )
         }
 

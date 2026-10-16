@@ -287,9 +287,10 @@ class PlaylistDetailViewModel(
                 filePath = song.filePath,
                 indexInQueue = 0,
                 coverUrl = song.coverUrl,
+                coverArtLocalPath = song.coverArtLocalPath,
             )
             val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(coreItem, null)
-            player.addToQueueNext(song.id, mediaItem)
+            player.addToQueueNext(song.id, mediaItem, song.coverUrl, song.coverArtLocalPath)
         }
     }
 

@@ -100,6 +100,7 @@ class LazyPlayerQueueBuilder(
             filePath = path,
             indexInQueue = allItems.size,
             coverUrl = song.coverUrl,
+            coverArtLocalPath = song.coverArtLocalPath,
         )
     }
 
