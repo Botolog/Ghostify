@@ -1100,7 +1100,8 @@ def _is_youtube_music_source(result: Result) -> bool:
     """
 
     if getattr(result, "source", None) == "YouTubeMusic":
-        return True
+        pass # this is unreliable way of cheking since ytmusic returns regular videos too
+        # return True
     url = getattr(result, "url", "") or ""
     return "music.youtube.com" in str(url)
 

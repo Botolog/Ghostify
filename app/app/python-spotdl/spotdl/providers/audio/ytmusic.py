@@ -3,12 +3,15 @@ YTMusic module for downloading and searching songs.
 """
 
 import logging
+import random
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from ytmusicapi import YTMusic
+from ytmusicapi.exceptions import YTMusicGatedError, YTMusicServerError
 
 from spotdl.providers.audio.base import ISRC_REGEX, AudioProvider
 from spotdl.types.result import Result
@@ -26,9 +29,122 @@ except ImportError:  # pragma: no cover - vendored sys.path fallback
         YTM_VIDEOS_LIMIT,
     )
 
+# Backoff tuning: prefer dedicated YTM consts, fall back to the shared
+# YouTube-provider base and finally to inline defaults so vendored imports
+# keep working when ghostify_consts is partially available.
+try:
+    from ghostify_consts import YTM_BACKOFF_BASE as _YTM_BACKOFF_BASE
+except ImportError:  # pragma: no cover - old consts module
+    try:
+        from ghostify_consts import (  # type: ignore[import-not-found]
+            YT_PROVIDER_BACKOFF_BASE as _YTM_BACKOFF_BASE,
+        )
+    except ImportError:
+        _YTM_BACKOFF_BASE = 2  # type: ignore[no-redef]
+
+try:
+    from ghostify_consts import YTM_BACKOFF_CAP as _YTM_BACKOFF_CAP
+except ImportError:  # pragma: no cover - old consts module
+    try:
+        from ghostify_consts import (  # type: ignore[import-not-found]
+            YT_BACKOFF_CAP as _YTM_BACKOFF_CAP,
+        )
+    except ImportError:
+        _YTM_BACKOFF_CAP = 180.0  # type: ignore[no-redef]
+
 __all__ = ["YouTubeMusic", "parse_ytm_views"]
 
 logger = logging.getLogger(__name__)
+
+
+_YTM_HTTP_STATUS_RE = re.compile(r"HTTP\s+(\d{3})")
+
+
+def _ytm_http_status(exc: BaseException) -> Optional[int]:
+    """Extract an HTTP status code from a YTM/requests exception, if present."""
+    for attr in ("status_code", "status"):
+        try:
+            val = getattr(exc, attr, None)
+        except Exception:  # noqa: BLE001 - defensive
+            val = None
+        if isinstance(val, int) and 100 <= val <= 599:
+            return val
+        # Some wrappers store it as a numeric string.
+        if isinstance(val, str) and val.isdigit():
+            try:
+                code = int(val)
+            except ValueError:
+                code = None
+            if code is not None and 100 <= code <= 599:
+                return code
+    try:
+        resp = getattr(exc, "response", None)
+    except Exception:  # noqa: BLE001 - defensive
+        resp = None
+    if resp is not None:
+        try:
+            code = getattr(resp, "status_code", None)
+        except Exception:  # noqa: BLE001 - defensive
+            code = None
+        if isinstance(code, int) and 100 <= code <= 599:
+            return code
+    try:
+        match = _YTM_HTTP_STATUS_RE.search(str(exc))
+    except Exception:  # noqa: BLE001 - defensive
+        match = None
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _is_retryable_ytm_exception(exc: BaseException) -> bool:
+    """Return True for transient YTM failures that deserve a backoff retry."""
+    # Gated accounts require user interaction — never retry.
+    if isinstance(exc, YTMusicGatedError):
+        return False
+    if isinstance(exc, YTMusicServerError):
+        code = _ytm_http_status(exc)
+        if code is None:
+            # Server-side error without a parseable code: treat as transient.
+            return True
+        if code == 429:
+            return True
+        if 500 <= code <= 599:
+            return True
+        # Other 4xx (bad request, auth, not-found, ...) fail fast.
+        return False
+    # Transport-level failures from requests / stdlib.
+    try:
+        import requests.exceptions as _req_exc  # type: ignore[import-not-found]
+
+        if isinstance(exc, (_req_exc.Timeout, _req_exc.ConnectionError)):
+            return True
+        if isinstance(exc, _req_exc.HTTPError):
+            code = _ytm_http_status(exc)
+            if code == 429 or (code is not None and 500 <= code <= 599):
+                return True
+            # Non-retryable HTTP status carried as HTTPError.
+            if code is not None:
+                return False
+    except ImportError:  # pragma: no cover - requests always present via ytmusicapi
+        pass
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    return False
+
+
+def _ytm_backoff_delay(retry_index: int) -> float:
+    """Exponential backoff delay for retry_index (0-based) with jitter."""
+    try:
+        base = float(_YTM_BACKOFF_BASE)
+    except Exception:  # noqa: BLE001 - defensive
+        base = 2.0
+    if not base > 0:
+        base = 2.0
+    return base * (2.0**retry_index) + random.uniform(0, 1.0)
 
 
 _YTM_VIEWS_MULTIPLIERS = {
@@ -185,8 +301,53 @@ class YouTubeMusic(AudioProvider):
         #     print("FORCEFULLY SETTING FILTER TO SONGS")
         #     kwargs["filter"] = "songs"
 
+        # Total wall-clock budget for transient-failure backoff. The outer
+        # ghostify_dl._call_with_deadline runs this in a daemon worker and
+        # discards the result on timeout, so this inner cap only bounds how
+        # long the worker itself keeps sleeping/retrying — it never swallows
+        # the outer deadline into an infinite hang.
+        try:
+            total_budget = float(_YTM_BACKOFF_CAP)
+        except Exception:  # noqa: BLE001 - defensive
+            total_budget = 180.0
+        if not total_budget > 0:
+            total_budget = 180.0
+        start = time.monotonic()
+        retry_index = 0
+
         for attempt in range(self.SEARCH_ATTEMPTS):
-            search_results = self.client.search(search_term, **kwargs)
+            try:
+                search_results = self.client.search(search_term, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - classify then retry or fail fast
+                if not _is_retryable_ytm_exception(exc):
+                    raise
+                elapsed = time.monotonic() - start
+                remaining = total_budget - elapsed
+                is_last_attempt = attempt >= self.SEARCH_ATTEMPTS - 1
+                if is_last_attempt or remaining <= 0:
+                    raise
+                delay = _ytm_backoff_delay(retry_index)
+                retry_index += 1
+                sleep_for = min(delay, remaining)
+                if sleep_for <= 0:
+                    raise
+                logger.debug(
+                    "YouTube Music transient failure for %s on attempt %s/%s "
+                    "(%s: %s), backing off %.2fs (%.1fs budget left)",
+                    search_term,
+                    attempt + 1,
+                    self.SEARCH_ATTEMPTS,
+                    type(exc).__name__,
+                    exc,
+                    sleep_for,
+                    max(0.0, remaining),
+                )
+                time.sleep(sleep_for)
+                try:
+                    self.client = self._create_client()
+                except Exception:  # noqa: BLE001 - keep old client on refresh failure
+                    pass
+                continue
 
             # Simplify results
             results = []

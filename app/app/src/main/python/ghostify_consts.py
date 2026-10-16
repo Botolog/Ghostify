@@ -192,11 +192,25 @@ LYRICS_READ_TIMEOUT = 10
 # Original: ghostify_dl._resolve_yt_id  yt_retries = 3, sleep 1.5*(attempt+1)
 YT_RESOLVE_RETRIES = 3
 YT_RETRY_BACKOFF_BASE = 1.5
+# Original: ghostify_dl.search_yt_candidates pooled-branch backoff cap 180s
+# (rate-limited branch retries with exponential backoff without shrinking pool)
+YT_POOL_BACKOFF_CAP = 180.0
+YT_POOL_BACKOFF_BASE = 1.0
 # Original: youtube.YouTube.get_results  max_retries = 3, sleep 2**(attempt+1)
 YT_PROVIDER_MAX_RETRIES = 3
 YT_PROVIDER_BACKOFF_BASE = 2
+# Total wall-clock budget (seconds) for plain-YouTube ytsearch retries.
+# Original: none — new cap so exponential backoff (2s,4s,8s,16s,32s,64s…)
+# never sleeps past 180s total elapsed; sum of sleeps is capped to this.
+YT_BACKOFF_CAP = 180.0
 # Original: ytmusic.SEARCH_ATTEMPTS = 3
 YTM_SEARCH_ATTEMPTS = 3
+# Total wall-clock budget (seconds) for YTMusic search retries.
+# Original: none — new cap so exponential backoff (2s,4s,8s,16s,32s,64s…)
+# never sleeps past 180s total elapsed; sum of sleeps is capped to this.
+# Mirrors YT_BACKOFF_CAP for the plain-YouTube provider.
+YTM_BACKOFF_BASE = 2
+YTM_BACKOFF_CAP = 180.0
 # Original: base.AudioProvider yt-dlp retries = 5
 YTDL_RETRIES = 5
 # Original: ghostify_dl._score_candidates per-candidate views budget
@@ -288,9 +302,14 @@ __all__ = [
     "LYRICS_READ_TIMEOUT",
     "YT_RESOLVE_RETRIES",
     "YT_RETRY_BACKOFF_BASE",
+    "YT_POOL_BACKOFF_CAP",
+    "YT_POOL_BACKOFF_BASE",
     "YT_PROVIDER_MAX_RETRIES",
     "YT_PROVIDER_BACKOFF_BASE",
+    "YT_BACKOFF_CAP",
     "YTM_SEARCH_ATTEMPTS",
+    "YTM_BACKOFF_BASE",
+    "YTM_BACKOFF_CAP",
     "YTDL_RETRIES",
     "VIEWS_LOOKUP_MAX_BUDGET",
     "VIEWS_LOOKUP_MIN_BUDGET",

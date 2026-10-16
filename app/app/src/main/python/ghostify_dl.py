@@ -62,6 +62,8 @@ from ghostify_consts import (
     YT_CONCURRENCY as _CONST_YT_CONCURRENCY,
     YT_RESOLVE_RETRIES,
     YT_RETRY_BACKOFF_BASE,
+    YT_POOL_BACKOFF_CAP as _CONST_YT_POOL_BACKOFF_CAP,
+    YT_POOL_BACKOFF_BASE as _CONST_YT_POOL_BACKOFF_BASE,
 )
 
 logger = logging.getLogger("ghostify_dl")
@@ -283,6 +285,8 @@ DEFAULT_TIMEOUT = _CONST_DEFAULT_TIMEOUT
 DEFAULT_RESOLVE_YT = True
 DEFAULT_PER_TRACK_YT_TIMEOUT = _CONST_PER_TRACK_YT_TIMEOUT
 YT_CONCURRENCY = _CONST_YT_CONCURRENCY
+YT_POOL_BACKOFF_CAP = _CONST_YT_POOL_BACKOFF_CAP
+YT_POOL_BACKOFF_BASE = _CONST_YT_POOL_BACKOFF_BASE
 _yt_semaphore = threading.Semaphore(YT_CONCURRENCY)
 
 _PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{1,64}$")
@@ -412,6 +416,131 @@ def _call_with_deadline(timeout: Optional[float], func: Callable, *args: Any) ->
     if "error" in box:
         raise box["error"]  # type: ignore[misc]
     return box["result"]
+
+
+# ---------------------------------------------------------------------------
+# Pooled-branch retry helper (exponential backoff, capped total budget).
+# ---------------------------------------------------------------------------
+
+
+def _is_retryable_pool_error(exc: BaseException) -> bool:
+    """Return True when a pooled-branch failure is worth retrying.
+
+    Retryable: Timeout (incl. ``GhostifyError(TIMEOUT)`` from
+    :func:`_call_with_deadline`), HTTP 429 / 5xx, ``ConnectionError``,
+    ``YTMusicServerError`` / yt-dlp ``ExtractorError`` / ``DownloadError``.
+
+    Non-retryable (fail fast): private/forbidden, not-found, programming
+    errors (``ValueError``/``TypeError``/``AttributeError``), etc.
+    """
+    if isinstance(exc, GhostifyError):
+        return exc.code in (ERR_TIMEOUT, ERR_RATE_LIMITED, ERR_NO_NETWORK)
+
+    retryable_names = frozenset(
+        {
+            "YTMusicServerError",
+            "ExtractorError",
+            "DownloadError",
+        }
+    )
+
+    current: Optional[BaseException] = exc
+    seen: set = set()
+    texts: List[str] = []
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ in retryable_names:
+            return True
+        if isinstance(current, (TimeoutError, ConnectionError)):
+            return True
+        try:
+            from requests import exceptions as requests_exceptions  # type: ignore
+
+            if isinstance(
+                current,
+                (
+                    requests_exceptions.Timeout,
+                    requests_exceptions.ConnectionError,
+                ),
+            ):
+                return True
+        except Exception:  # noqa: BLE001 - requests always shipped, be defensive
+            pass
+        message = str(current)
+        if message and message not in texts:
+            texts.append(message)
+        error_attr = getattr(current, "error", None)
+        if isinstance(error_attr, str) and error_attr and error_attr not in texts:
+            texts.append(error_attr)
+        for klass in type(current).__mro__:
+            if klass.__name__ in retryable_names:
+                return True
+        current = current.__cause__ or current.__context__
+
+    joined = " | ".join(texts).lower()
+    if not joined:
+        return False
+    retryable_patterns = (
+        r"429",
+        r"rate limit",
+        r"too many request",
+        r"quota",
+        r"retry-after",
+        r"50[0-4]",
+        r"server error",
+        r"bad gateway",
+        r"service unavailable",
+        r"gateway timeout",
+        r"timed out",
+        r"timeout",
+        r"connection",
+        r"network",
+        r"temporary failure",
+        r"ytmusicservererror",
+        r"extractorerror",
+        r"downloaderror",
+    )
+    return any(re.search(pattern, joined) is not None for pattern in retryable_patterns)
+
+
+def _call_pool_branch_with_backoff(
+    call: Callable[[], Any],
+    per_track_timeout: float,
+    cap: Optional[float] = None,
+    base: Optional[float] = None,
+) -> Any:
+    """Call ``call`` under a per-attempt deadline, retrying on retryable errors.
+
+    Each attempt is bounded by ``_call_with_deadline(per_track_timeout, ...)``;
+    retryable failures (see :func:`_is_retryable_pool_error`) are retried with
+    exponential backoff ``base * 2**attempt`` until the total ``cap`` budget
+    (seconds, default :data:`YT_POOL_BACKOFF_CAP`) is exhausted. Non-retryable
+    errors are re-raised immediately without sleeping.
+    """
+    if cap is None:
+        cap = YT_POOL_BACKOFF_CAP
+    if base is None:
+        base = YT_POOL_BACKOFF_BASE
+    if cap is None or cap <= 0:
+        return _call_with_deadline(per_track_timeout, call)
+
+    deadline = time.monotonic() + cap
+    attempt = 0
+    while True:
+        try:
+            return _call_with_deadline(per_track_timeout, call)
+        except Exception as exc:  # noqa: BLE001 - predicate decides retry vs raise
+            if not _is_retryable_pool_error(exc):
+                raise
+            now = time.monotonic()
+            if now >= deadline:
+                raise
+            remaining = deadline - now
+            # Cap the exponent so huge attempt counts (mocked sleeps in tests)
+            # cannot raise OverflowError; min() then clamps to remaining.
+            backoff = base * (2.0 ** min(attempt, 20))
+            time.sleep(min(backoff, remaining))
+            attempt += 1
 
 
 # ---------------------------------------------------------------------------
@@ -1008,6 +1137,13 @@ def search_yt_candidates(
 
     Never raises. Returns ``results`` (possibly empty), ``provider``,
     ``query`` and ``error`` (the last provider exception's class name).
+
+    Each branch is retried with exponential backoff on retryable failures
+    (timeout / 429 / 5xx / connection / YTMusicServerError / yt-dlp
+    ExtractorError / DownloadError) within a capped total budget
+    (:data:`YT_POOL_BACKOFF_CAP`), so a rate-limited branch can recover
+    instead of permanently shrinking the pool. Per-attempt deadline stays at
+    ``per_track_timeout``.
     """
     report: Dict[str, Any] = {
         "results": [],
@@ -1045,7 +1181,7 @@ def search_yt_candidates(
         ("youtube", _youtube),
     ):
         try:
-            results = _call_with_deadline(per_track_timeout, call)
+            results = _call_pool_branch_with_backoff(call, per_track_timeout)
         except Exception as exc:  # noqa: BLE001 - report, never raise
             logger.debug(
                 "%s candidate search failed for %s: %s",
@@ -1099,8 +1235,9 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
         results = provider.get_results(query, limit=GHOSTIFY_SEARCH_LIMIT)
         return _select_yt_id(song, results, per_track_timeout)
 
-    # Try YouTube Music with retries
+    # Try YouTube Music with retries (retryable failures only).
     last_exc: Optional[BaseException] = None
+    pool_deadline = time.monotonic() + YT_POOL_BACKOFF_CAP
     for attempt in range(yt_retries):
         try:
             result = _call_with_deadline(per_track_timeout, _search_ytmusic)
@@ -1108,16 +1245,23 @@ def _resolve_yt_id(song: Any, per_track_timeout: float) -> Optional[str]:
                 return result
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
+            if not _is_retryable_pool_error(exc):
+                break
         if attempt < yt_retries - 1:
-            time.sleep(YT_RETRY_BACKOFF_BASE * (attempt + 1))
+            if time.monotonic() >= pool_deadline:
+                break
+            remaining = pool_deadline - time.monotonic()
+            time.sleep(min(YT_RETRY_BACKOFF_BASE * (attempt + 1), remaining))
 
-    # Fallback: plain YouTube search
+    # Fallback: plain YouTube search (same capped exponential backoff).
     logger.debug(
         "YTMusic returned no results for %s, trying YouTube fallback",
         getattr(song, "song_id", "?"),
     )
     try:
-        result = _call_with_deadline(per_track_timeout, _search_youtube_fallback)
+        result = _call_pool_branch_with_backoff(
+            _search_youtube_fallback, per_track_timeout
+        )
         if result:
             return result
     except Exception as exc:  # noqa: BLE001
