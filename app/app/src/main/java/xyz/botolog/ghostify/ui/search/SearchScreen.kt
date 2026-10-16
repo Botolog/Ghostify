@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import xyz.botolog.ghostify.ui.contract.SearchContract
 import xyz.botolog.ghostify.ui.contract.SearchContract.SearchUiState
+import xyz.botolog.ghostify.ui.util.coverImageModel
 
 /**
  * Test tag constants for the search screen.
@@ -229,6 +230,9 @@ private fun PlaylistResultRow(
     result: SearchContract.PlaylistSearchResult,
     onClick: () -> Unit,
 ) {
+    val coverModel = remember(result.coverArtLocalPath, result.coverUrl) {
+        coverImageModel(result.coverArtLocalPath, result.coverUrl)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -237,7 +241,7 @@ private fun PlaylistResultRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = result.coverUrl,
+            model = coverModel,
             contentDescription = null,
             modifier = Modifier
                 .size(40.dp),
@@ -268,6 +272,9 @@ private fun SongResultRow(
     result: SearchContract.SongSearchResult,
     onClick: () -> Unit,
 ) {
+    val coverModel = remember(result.coverArtLocalPath, result.coverUrl) {
+        coverImageModel(result.coverArtLocalPath, result.coverUrl)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -276,7 +283,7 @@ private fun SongResultRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = result.coverUrl,
+            model = coverModel,
             contentDescription = null,
             modifier = Modifier
                 .size(40.dp),

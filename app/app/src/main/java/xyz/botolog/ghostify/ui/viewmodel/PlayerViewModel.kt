@@ -17,6 +17,7 @@ import xyz.botolog.ghostify.ui.playlist.PlaylistSortSpec
 import xyz.botolog.ghostify.ui.playlist.isStoredOrder
 import xyz.botolog.ghostify.ui.playlist.sortedTrackIds
 import xyz.botolog.ghostify.ui.playlist.storedSortSpec
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +28,9 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.io.File
 
 /**
  * Backs the Player screen: a pure presentation layer over [PlayerController].
@@ -178,19 +181,32 @@ class PlayerViewModel(
                 Timber.w("addToQueue: song $songId is not downloaded, skipping")
                 return@launch
             }
+            val queueItem = xyz.botolog.ghostify.player.core.QueueItem(
+                songId = entity.id,
+                title = entity.title,
+                artist = entity.artists,
+                album = entity.album.orEmpty(),
+                durationMs = entity.durationMs.toLong(),
+                filePath = entity.filePath,
+                indexInQueue = 0,
+                coverUrl = entity.coverUrl,
+                coverArtLocalPath = entity.coverArtLocalPath,
+            )
+            // Prefer local cover file bytes so the ExoPlayer timeline (and thus the
+            // notification/lockscreen) carries artworkData instead of null.
+            val artBytes = withContext(Dispatchers.IO) {
+                try {
+                    entity.coverArtLocalPath?.let { path ->
+                        val f = File(path)
+                        if (f.exists() && f.isFile) f.readBytes().takeIf { it.isNotEmpty() } else null
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+            }
             val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(
-                xyz.botolog.ghostify.player.core.QueueItem(
-                    songId = entity.id,
-                    title = entity.title,
-                    artist = entity.artists,
-                    album = entity.album.orEmpty(),
-                    durationMs = entity.durationMs.toLong(),
-                    filePath = entity.filePath,
-                    indexInQueue = 0,
-                    coverUrl = entity.coverUrl,
-                    coverArtLocalPath = entity.coverArtLocalPath,
-                ),
-                null,
+                queueItem,
+                artBytes,
             )
             player.addToQueueNext(songId, mediaItem, entity.coverUrl, entity.coverArtLocalPath)
         }

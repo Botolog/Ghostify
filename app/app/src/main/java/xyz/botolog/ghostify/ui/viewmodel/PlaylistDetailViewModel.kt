@@ -289,7 +289,19 @@ class PlaylistDetailViewModel(
                 coverUrl = song.coverUrl,
                 coverArtLocalPath = song.coverArtLocalPath,
             )
-            val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(coreItem, null)
+            // Prefer local cover file bytes so the ExoPlayer timeline (and thus the
+            // notification/lockscreen) carries artworkData instead of null.
+            val artBytes = withContext(Dispatchers.IO) {
+                try {
+                    song.coverArtLocalPath?.let { path ->
+                        val f = File(path)
+                        if (f.exists() && f.isFile) f.readBytes().takeIf { it.isNotEmpty() } else null
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(coreItem, artBytes)
             player.addToQueueNext(song.id, mediaItem, song.coverUrl, song.coverArtLocalPath)
         }
     }

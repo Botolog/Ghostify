@@ -43,12 +43,16 @@ interface SearchContract {
      * @property id the playlist row id.
      * @property name the playlist name.
      * @property trackCount number of tracks in the playlist.
+     * @property coverUrl remote URL of the playlist cover artwork.
+     * @property coverArtLocalPath absolute path of the extracted local artwork file, if any.
+     *   Preferred offline via [xyz.botolog.ghostify.ui.util.coverImageModel].
      */
     data class PlaylistSearchResult(
         val id: String,
         val name: String,
         val trackCount: Int,
         val coverUrl: String? = null,
+        val coverArtLocalPath: String? = null,
     )
 
     /**
@@ -60,6 +64,9 @@ interface SearchContract {
      * @property playlistId the parent playlist id.
      * @property playlistName the parent playlist name.
      * @property position the song's position within the playlist.
+     * @property coverUrl remote URL of the song artwork.
+     * @property coverArtLocalPath absolute path of the extracted local artwork file, if any.
+     *   Preferred offline via [xyz.botolog.ghostify.ui.util.coverImageModel].
      */
     data class SongSearchResult(
         val songId: String,
@@ -69,5 +76,6 @@ interface SearchContract {
         val playlistName: String,
         val position: Int,
         val coverUrl: String? = null,
+        val coverArtLocalPath: String? = null,
     )
 }

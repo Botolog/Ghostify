@@ -58,6 +58,7 @@ class SearchViewModel(
                     name = entity.name,
                     trackCount = entity.trackCount,
                     coverUrl = entity.coverUrl,
+                    coverArtLocalPath = entity.coverArtLocalPath,
                 )
             }
 
@@ -72,6 +73,7 @@ class SearchViewModel(
                     playlistName = playlist.name,
                     position = song.position,
                     coverUrl = song.coverUrl,
+                    coverArtLocalPath = song.coverArtLocalPath,
                 )
             }
 
