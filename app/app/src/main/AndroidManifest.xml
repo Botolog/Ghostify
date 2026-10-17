@@ -37,11 +37,6 @@
     <!-- No uses-feature restrictions: the app must remain installable on the
          full API 26+ device range. -->
 
-    <!-- profileable (API 29+, ignored below) enables Perfetto/heapprofd native
-         heap profiling on release builds WITHOUT enabling debuggable. It is a
-         child element of <application> (android:profileable is not a valid
-         attribute); android:shell="true" is what local shell profilers read.
-         tools:targetApi silences the minSdk 26 lint warning for the element. -->
     <application
         android:name=".GhostifyApplication"
         android:allowBackup="true"
@@ -55,10 +50,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Ghostify"
         android:usesCleartextTraffic="false">
-
-        <profileable
-            android:shell="true"
-            tools:targetApi="29" />
 
         <!-- Single-activity Compose app. Exported so the launcher can start it;
              singleTop so notification taps don't stack instances. -->
