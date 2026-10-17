@@ -35,6 +35,7 @@ import xyz.botolog.ghostify.data.model.SongStatus
  * @property lyrics Song lyrics fetched from a lyrics provider, `null` if unavailable.
  * @property lyricsSource Provider/source that supplied the lyrics.
  * @property lyricsEdited `true` if the user manually edited the lyrics.
+ * @property metadataEdited `true` if the user manually edited title/artists/album.
  * @property ytUrl YouTube video URL, if resolved.
  * @property ytName YouTube video title, if resolved.
  * @property ytChannel YouTube channel name, if resolved.
@@ -98,6 +99,9 @@ data class SongEntity(
 
     @ColumnInfo(name = "lyrics_edited")
     val lyricsEdited: Boolean = false,
+
+    @ColumnInfo(name = "metadata_edited", defaultValue = "0")
+    val metadataEdited: Boolean = false,
 
     @ColumnInfo(name = "yt_url")
     val ytUrl: String? = null,

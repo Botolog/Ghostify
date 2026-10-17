@@ -202,11 +202,20 @@ object SyncDiff {
             addedAt = addedAt,
         )
 
-    /** Applies current remote metadata/position, preserving identity + file state. */
+    /**
+     * Applies current remote metadata/position, preserving identity + file state.
+     *
+     * Provenance rule for the display fields: when the user has explicitly edited
+     * title/artists/album (`metadataEdited`), the local values win and the remote
+     * ones are ignored, so a re-sync never clobbers a user edit. Rows the user has
+     * never edited keep deriving those fields from the remote origin. The
+     * non-editable fields (`durationMs`, `coverUrl`, `ytId`, `position`) always
+     * track the remote, since the user cannot set them by hand.
+     */
     private fun SongEntity.applyMetadata(track: PlaylistTrack): SongEntity = copy(
-        title = track.title,
-        artists = track.artists,
-        album = track.album,
+        title = if (metadataEdited) this.title else track.title,
+        artists = if (metadataEdited) this.artists else track.artists,
+        album = if (metadataEdited) this.album else track.album,
         durationMs = track.durationMs.toInt(),
         coverUrl = track.coverUrl,
         ytId = track.ytId,

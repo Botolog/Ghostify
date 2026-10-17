@@ -31,6 +31,10 @@ import timber.log.Timber
  *      descending). Existing rows default to playlist order ascending, which is
  *      the order their `songs.position` values already hold, so upgrading never
  *      re-sorts a playlist.
+ * v10 — adds `songs.metadata_edited` (whether the user manually edited the
+ *       display title/artists/album, so a re-sync preserves those edits instead
+ *       of overwriting them with the remote values). Existing rows default to
+ *       `false`, i.e. not user-edited.
  *
  * The migration is a single Room transaction, so it is atomic: if any step fails
  * SQLite rolls the whole upgrade back and the database is left at the previous
@@ -174,6 +178,25 @@ object Migrations {
         }
     }
 
+    /**
+     * The v9 → v10 DDL. Adds the user-edit provenance flag for display metadata.
+     *
+     * `NOT NULL` with a column-level default of `0`, so the `ALTER` backfills every
+     * existing song as "not user-edited": a re-sync keeps deriving its title/artists/
+     * album from the remote origin until the user saves an edit through the info dialog.
+     */
+    val MIGRATION_9_10_STATEMENTS: List<String> = listOf(
+        "ALTER TABLE songs ADD COLUMN metadata_edited INTEGER NOT NULL DEFAULT 0",
+    )
+
+    /** v9 → v10 migration. */
+    val MIGRATION_9_10: Migration = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            Timber.d("Migrations.MIGRATION_9_10.migrate")
+            MIGRATION_9_10_STATEMENTS.forEach { db.execSQL(it) }
+        }
+    }
+
     /** All migrations in order, passed to [Room.databaseBuilder]. */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
@@ -184,5 +207,6 @@ object Migrations {
         MIGRATION_6_7,
         MIGRATION_7_8,
         MIGRATION_8_9,
+        MIGRATION_9_10,
     )
 }

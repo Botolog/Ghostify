@@ -307,9 +307,12 @@ interface SongDao {
     /**
      * Writes the user-editable display metadata of a single song.
      *
-     * Only `title`, `artists` and `album` are touched: the file path, the download status
-     * and every other column are left exactly as they are, so renaming a track in the info
-     * dialog can never orphan, re-download or replace the file it plays from.
+     * Only `title`, `artists`, `album` and the `metadata_edited` provenance flag are touched:
+     * the file path, the download status and every other column are left exactly as they are,
+     * so renaming a track in the info dialog can never orphan, re-download or replace the file
+     * it plays from. Marking `metadata_edited` records that this is an explicit user save, so a
+     * later playlist re-sync preserves the edit instead of overwriting it with remote values
+     * (mirroring how editing lyrics sets `lyrics_edited`).
      *
      * @param songId The song row id.
      * @param title The new track title.
@@ -317,7 +320,7 @@ interface SongDao {
      * @param album The new album name, or `null` when the track has no album.
      * @return The number of rows written, i.e. `0` when no song carries that id.
      */
-    @Query("UPDATE songs SET title = :title, artists = :artists, album = :album WHERE id = :songId")
+    @Query("UPDATE songs SET title = :title, artists = :artists, album = :album, metadata_edited = 1 WHERE id = :songId")
     suspend fun updateMetadata(songId: String, title: String, artists: String, album: String?): Int
 
     /**

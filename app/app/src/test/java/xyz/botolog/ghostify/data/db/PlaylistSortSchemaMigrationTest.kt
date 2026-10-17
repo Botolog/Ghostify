@@ -112,8 +112,8 @@ class PlaylistSortSchemaMigrationTest {
     }
 
     private companion object {
-        /** The version `AppDatabase` declares, which v8 → v9 has to reach. */
-        const val DATABASE_VERSION = 9
+        /** The version `AppDatabase` declares, which the migration chain has to reach. */
+        const val DATABASE_VERSION = 10
         const val SORT_FIELD_DEFAULT = PlaylistEntity.SORT_FIELD_PLAYLIST_ORDER
         const val SORT_DESCENDING_DEFAULT = false
     }

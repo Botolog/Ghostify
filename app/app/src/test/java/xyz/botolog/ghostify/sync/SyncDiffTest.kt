@@ -60,6 +60,7 @@ class SyncDiffTest {
         filePath: String? = null,
         status: SongStatus = SongStatus.DOWNLOADED,
         position: Int = 0,
+        metadataEdited: Boolean = false,
     ) = SongEntity(
         id = id,
         playlistId = playlistId,
@@ -73,6 +74,7 @@ class SyncDiffTest {
         filePath = filePath,
         status = status,
         position = position,
+        metadataEdited = metadataEdited,
         addedAt = fixedNow,
     )
 
@@ -245,6 +247,91 @@ class SyncDiffTest {
         assertEquals("yt_new", updated.ytId)
         assertEquals(SongStatus.DOWNLOADED, updated.status)
         assertEquals("/songs/s1.mp3", updated.filePath)
+        assertEquals(0, plan.enqueueIds.size)
+    }
+
+    @Test
+    fun userEditedMetadata_preservesUserFieldsAndTakesRemoteRest() {
+        val existing = song(
+            spotifyId = "s1",
+            title = "My Title",
+            artists = "My Artist",
+            album = "My Album",
+            durationMs = 100_000,
+            coverUrl = "https://old",
+            ytId = null,
+            position = 0,
+            status = SongStatus.DOWNLOADED,
+            filePath = "/songs/s1.mp3",
+            metadataEdited = true,
+        )
+        fakeFiles.existingPaths.add("/songs/s1.mp3")
+        val remote = listOf(
+            PlaylistTrack(
+                position = 4,
+                spotifyId = "s1",
+                title = "Remote Title",
+                artists = "Remote Artist",
+                album = "Remote Album",
+                durationMs = 300_000,
+                coverUrl = "https://new",
+                ytId = "yt_new",
+            )
+        )
+
+        val plan = compute(remoteTracks = remote, stored = listOf(existing))
+
+        assertEquals(1, plan.updates.size)
+        val updated = plan.updates[0]
+        // The user-edited display metadata wins over the remote values.
+        assertEquals("My Title", updated.title)
+        assertEquals("My Artist", updated.artists)
+        assertEquals("My Album", updated.album)
+        // The non-editable fields still follow the remote.
+        assertEquals(300_000, updated.durationMs)
+        assertEquals("https://new", updated.coverUrl)
+        assertEquals("yt_new", updated.ytId)
+        assertEquals(4, updated.position)
+        // Identity and file state are preserved.
+        assertEquals(SongStatus.DOWNLOADED, updated.status)
+        assertEquals("/songs/s1.mp3", updated.filePath)
+        assertEquals(0, plan.enqueueIds.size)
+    }
+
+    @Test
+    fun userEditedMetadataOnlyRemoteTitleDiffers_noUpdate() {
+        val existing = song(
+            spotifyId = "s1",
+            title = "My Title",
+            artists = "Artist",
+            album = "Album",
+            durationMs = 200_000,
+            coverUrl = "https://cover",
+            ytId = null,
+            position = 0,
+            status = SongStatus.DOWNLOADED,
+            filePath = "/songs/s1.mp3",
+            metadataEdited = true,
+        )
+        fakeFiles.existingPaths.add("/songs/s1.mp3")
+        val remote = listOf(
+            PlaylistTrack(
+                position = 0,
+                spotifyId = "s1",
+                title = "Remote Title",
+                artists = "Artist",
+                album = "Album",
+                durationMs = 200_000,
+                coverUrl = "https://cover",
+                ytId = null,
+            )
+        )
+
+        val plan = compute(remoteTracks = remote, stored = listOf(existing))
+
+        // The only remote difference is the title, which the user's edit overrides,
+        // so the applied candidate equals the stored row: no update is emitted.
+        assertEquals(0, plan.updates.size)
         assertEquals(0, plan.enqueueIds.size)
     }
 
