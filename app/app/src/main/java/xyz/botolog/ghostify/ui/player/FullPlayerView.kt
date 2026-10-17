@@ -96,6 +96,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -114,6 +115,7 @@ import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import android.content.res.Configuration
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -1549,13 +1551,13 @@ private suspend fun PointerInputScope.detectCoverTaps(
 }
 
 /**
- * Rendering-time grayscale filter for the empty-track SVG placeholder layers only.
+ * Rendering-time grayscale filter for the empty-track SVG cover only.
  *
- * Applied via Compose [ColorFilter] on the SVG [AsyncImage]s, so the
- * `no_song_cover.svg` bytes stay untouched and the real cover art on top keeps
- * its full colour. Works with Coil's SvgDecoder output because [AsyncImage]'s
- * `colorFilter` is applied at Compose draw time to whatever the painter holds
- * (SvgDecoder renders to a bitmap drawable), not at decode time.
+ * Applied via Compose [ColorFilter] on the SVG [AsyncImage], so the `no_song_cover.svg`
+ * bytes stay untouched and the real cover art (a separate layer that never gets this
+ * filter) keeps its full colour. Works with Coil's SvgDecoder output because
+ * [AsyncImage]'s `colorFilter` is applied at Compose draw time to whatever the painter
+ * holds (SvgDecoder renders to a bitmap drawable), not at decode time.
  */
 private val EmptyCoverGrayscaleFilter =
     ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
@@ -1635,40 +1637,59 @@ private fun SwipeableCoverArt(
         modifier
     }
 
-    // Layered cover art: the empty-track SVG asset stays composed as the base layer so it
-    // shows through while the real cover is loading, empty, or failed. The base SVG layer
-    // alone renders grayscale (background-appropriate); the real cover is composed on top
-    // only when present with NO filter, sharing the same size/clip/ContentScale so the
-    // layers align exactly with no layout shift. A single AsyncImage per layer means no
-    // double network fetch; the top layer leaves placeholder/error/fallback unset so a
-    // loading or failed load stays transparent and the SVG remains visible.
+    // Decode bound for the cover: the drawn edge length in pixels, so neither layer is
+    // decoded at the source resolution (embedded art can be up to 1280 px). A square cover
+    // is width-bounded, while the super-compact full-bleed cover may be height-bounded.
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val artSizePx = with(density) {
+        val widthPx = configuration.screenWidthDp.dp.roundToPx()
+        val heightPx = configuration.screenHeightDp.dp.roundToPx()
+        (if (square) widthPx else maxOf(widthPx, heightPx)).coerceAtLeast(1)
+    }
+    val emptyCoverRequest =
+        remember(context, artSizePx) {
+            ImageRequest.Builder(context).data(EMPTY_COVER_ASSET_URI).size(artSizePx).build()
+        }
+    val coverRequest =
+        remember(context, coverUrl, artSizePx) {
+            ImageRequest.Builder(context).data(coverUrl).size(artSizePx).build()
+        }
+
+    // Single cover layer: only one of the two is composed so the full-screen player never
+    // decodes a real cover and a grayscale SVG backdrop at the same time. The empty-track
+    // SVG renders grayscale (background-appropriate); the real cover is composed with NO
+    // filter and is preferred whenever artwork exists. Both share size/clip/ContentScale so
+    // they align exactly with no layout shift.
     Box(
         modifier = sizeModifier
             .clip(shape)
             .then(gestureModifier),
     ) {
-        AsyncImage(
-            model = EMPTY_COVER_ASSET_URI,
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-            colorFilter = EmptyCoverGrayscaleFilter,
-        )
         if (hasCoverArt(coverUrl)) {
             AsyncImage(
-                model = coverUrl,
+                model = coverRequest,
                 contentDescription = "Album art",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
+            )
+        } else {
+            AsyncImage(
+                model = emptyCoverRequest,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                colorFilter = EmptyCoverGrayscaleFilter,
             )
         }
     }
 }
 
 /**
- * Whether [coverUrl] carries real artwork worth composing on top of the empty-track SVG
- * placeholder: non-null, non-blank strings and non-empty byte arrays. Anything else leaves
- * the SVG base layer visible.
+ * Whether [coverUrl] carries real artwork worth rendering: non-null, non-blank strings and
+ * non-empty byte arrays. Anything else makes [SwipeableCoverArt] fall back to the grayscale
+ * empty-track SVG.
  */
 internal fun hasCoverArt(coverUrl: Any?): Boolean = when (coverUrl) {
     null -> false

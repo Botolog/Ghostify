@@ -82,14 +82,21 @@ class PlayerStatePersistence(
         wasPlaying: Boolean,
     ) {
         Timber.i("PlayerStatePersistence.save: songId=$currentSongId, playlistId=$playlistId, queueSize=${queueSongIds.size}, index=$queueIndex")
-        settings.set(KEY_CURRENT_SONG_ID, currentSongId ?: "")
-        settings.set(KEY_PLAYLIST_ID, playlistId ?: "")
-        settings.set(KEY_QUEUE_SONG_IDS, encodeQueue(queueSongIds, queueIndex))
-        settings.set(KEY_SHUFFLE_ENABLED, shuffleEnabled.toString())
-        settings.set(KEY_REPEAT_MODE, repeatMode.media3Value.toString())
-        settings.set(KEY_VOLUME, volume.toString())
-        settings.set(KEY_POSITION_MS, positionMs.toString())
-        settings.set(KEY_WAS_PLAYING, wasPlaying.toString())
+        // One batched transaction instead of eight sequential writes: eight separate
+        // upserts would invalidate the whole `settings` table eight times, re-emitting
+        // every settings Flow in the app on each one.
+        settings.setAll(
+            mapOf(
+                KEY_CURRENT_SONG_ID to (currentSongId ?: ""),
+                KEY_PLAYLIST_ID to (playlistId ?: ""),
+                KEY_QUEUE_SONG_IDS to encodeQueue(queueSongIds, queueIndex),
+                KEY_SHUFFLE_ENABLED to shuffleEnabled.toString(),
+                KEY_REPEAT_MODE to repeatMode.media3Value.toString(),
+                KEY_VOLUME to volume.toString(),
+                KEY_POSITION_MS to positionMs.toString(),
+                KEY_WAS_PLAYING to wasPlaying.toString(),
+            ),
+        )
     }
 
     /**
@@ -154,14 +161,18 @@ class PlayerStatePersistence(
      */
     suspend fun clear() {
         Timber.i("PlayerStatePersistence.clear: START")
-        settings.set(KEY_CURRENT_SONG_ID, "")
-        settings.set(KEY_PLAYLIST_ID, "")
-        settings.set(KEY_QUEUE_SONG_IDS, "")
-        settings.set(KEY_SHUFFLE_ENABLED, "false")
-        settings.set(KEY_REPEAT_MODE, "0")
-        settings.set(KEY_VOLUME, "1.0")
-        settings.set(KEY_POSITION_MS, "0")
-        settings.set(KEY_WAS_PLAYING, "false")
+        settings.setAll(
+            mapOf(
+                KEY_CURRENT_SONG_ID to "",
+                KEY_PLAYLIST_ID to "",
+                KEY_QUEUE_SONG_IDS to "",
+                KEY_SHUFFLE_ENABLED to "false",
+                KEY_REPEAT_MODE to "0",
+                KEY_VOLUME to "1.0",
+                KEY_POSITION_MS to "0",
+                KEY_WAS_PLAYING to "false",
+            ),
+        )
     }
 
     /**

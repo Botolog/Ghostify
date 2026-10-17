@@ -18,6 +18,8 @@ import xyz.botolog.ghostify.data.db.AppDatabase
 import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.data.repo.SettingsRepository
 import xyz.botolog.ghostify.data.repo.SongRepository
+import xyz.botolog.ghostify.debug.MainThreadWatchdog
+import xyz.botolog.ghostify.debug.StrictModeSetup
 import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.file.MusicStore
 import xyz.botolog.ghostify.logging.FileLoggingTree
@@ -95,6 +97,14 @@ class GhostifyApplication : Application(), ImageLoaderFactory {
         fileLoggingTree = FileLoggingTree(this)
         Timber.plant(fileLoggingTree)
         if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
+
+        // Debug-only diagnostics for the silent ANR ("Ghostify isn't responding")
+        // reports: StrictMode surfaces policy violations and the watchdog captures a
+        // main-thread stack when the UI thread stalls. Both are no-ops in release.
+        if (BuildConfig.DEBUG) {
+            StrictModeSetup.installIfDebug()
+            MainThreadWatchdog.install()
+        }
 
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val crashMarker = PrefsCrashMarker(this)

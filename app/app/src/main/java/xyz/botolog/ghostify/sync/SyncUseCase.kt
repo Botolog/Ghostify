@@ -4,6 +4,8 @@ import xyz.botolog.ghostify.data.db.TransactionRunner
 import xyz.botolog.ghostify.data.db.dao.PlaylistDao
 import xyz.botolog.ghostify.data.db.dao.SongDao
 import xyz.botolog.ghostify.data.model.SongStatus
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import timber.log.Timber
 
@@ -199,10 +201,18 @@ class SyncUseCase(
 
     /**
      * Deletes orphaned local files after the transaction commits (see class docs).
+     *
+     * File deletion is blocking I/O, so it runs on [Dispatchers.IO] regardless of
+     * which thread the sync was started from (a UI-started sync runs on Main).
+     * The delete-after-commit ordering is unchanged: this is still called only
+     * after [applyDiffWithinTransaction] returns.
      */
-    private fun deleteOrphanedFiles(filePaths: List<String>) {
-        for (path in filePaths) {
-            runCatching { files.delete(path) }
+    private suspend fun deleteOrphanedFiles(filePaths: List<String>) {
+        if (filePaths.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            for (path in filePaths) {
+                runCatching { files.delete(path) }
+            }
         }
     }
 

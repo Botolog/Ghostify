@@ -152,6 +152,23 @@ class SettingsRepository(private val settingDao: SettingDao) {
         settingDao.upsert(SettingEntity(key, value))
     }
 
+    /**
+     * Persists several settings in one transaction.
+     *
+     * Callers that write a group of related keys (e.g. player state) should use this
+     * instead of N [set] calls: each individual write invalidates the whole `settings`
+     * table, so N writes would make every observed settings Flow re-emit N times. One
+     * batched transaction produces a single invalidation.
+     *
+     * @param values The key/value pairs to store.
+     */
+    suspend fun setAll(values: Map<String, String>) {
+        if (values.isEmpty()) return
+        Timber.i("SettingsRepository.setAll: START (${values.size} keys)")
+        settingDao.upsertAll(values.map { (key, value) -> SettingEntity(key, value) })
+        Timber.i("SettingsRepository.setAll: DONE")
+    }
+
     // ── storage_dir ───────────────────────────────────────────────────
 
     /**

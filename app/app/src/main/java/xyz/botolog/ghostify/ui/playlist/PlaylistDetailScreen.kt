@@ -96,8 +96,9 @@ import xyz.botolog.ghostify.ui.util.DurationFormat
 import xyz.botolog.ghostify.ui.util.InAppSnackbarHost
 import xyz.botolog.ghostify.ui.util.InAppSnackbarState
 import xyz.botolog.ghostify.ui.util.InAppSnackbarTestTags
-import xyz.botolog.ghostify.ui.util.coverImageModel
+import xyz.botolog.ghostify.ui.util.rememberCoverImageRequest
 import xyz.botolog.ghostify.ui.util.rememberInAppSnackbarState
+import xyz.botolog.ghostify.ui.util.rememberPlaylistCoverImageRequest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -717,19 +718,16 @@ private fun PlaylistCoverImage(
     modifier: Modifier = Modifier,
 ) {
     val firstTrack = remember(state.tracks) { state.tracks.minByOrNull { it.position } }
-    val model = remember(
-        state.coverArtLocalPath,
-        state.coverUrl,
-        firstTrack?.coverArtLocalPath,
-        firstTrack?.coverUrl,
-    ) {
-        xyz.botolog.ghostify.ui.util.playlistCoverModel(
-            state.coverArtLocalPath,
-            state.coverUrl,
-            firstTrack?.coverArtLocalPath,
-            firstTrack?.coverUrl,
-        )
-    }
+    // Decoded at the expanded size even while collapsed: the header animates `coverSize`
+    // every frame while it collapses, so keying the request on the animated value would
+    // rebuild the request on every frame. The larger bound is a stable size that serves both.
+    val model = rememberPlaylistCoverImageRequest(
+        playlistLocal = state.coverArtLocalPath,
+        playlistUrl = state.coverUrl,
+        fallbackLocal = firstTrack?.coverArtLocalPath,
+        fallbackUrl = firstTrack?.coverUrl,
+        size = COVER_SIZE,
+    )
     val empty = ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
     AsyncImage(
         model = model,
@@ -1071,9 +1069,7 @@ private fun TrackRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = remember(track.coverArtLocalPath, track.coverUrl) {
-                coverImageModel(track.coverArtLocalPath, track.coverUrl)
-            },
+            model = rememberCoverImageRequest(track.coverArtLocalPath, track.coverUrl, 40.dp),
             contentDescription = null,
             modifier = Modifier
                 .size(40.dp)

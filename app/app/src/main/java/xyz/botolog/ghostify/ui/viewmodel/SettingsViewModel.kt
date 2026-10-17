@@ -179,52 +179,57 @@ class SettingsViewModel(
      * `playlistId/filename.mp3` structure. Updates the database file_path
      * for each moved song.
      *
+     * The whole loop (filesystem `renameTo`/`copyTo`/`delete` plus the per-song
+     * DB `updateFilePath`) runs on [ioDispatcher]; only the caller's resulting
+     * state update stays on Main.
+     *
      * @return a summary string like "12 moved, 2 failed".
      */
-    private suspend fun performMigration(oldPath: String, newPath: String): String {
-        var moved = 0
-        var failed = 0
-        val playlists = playlistRepo.observePlaylists().first()
-        for (playlist in playlists) {
-            val songs = songRepo.getSongs(playlist.id)
-            for (song in songs) {
-                val oldFilePath = song.filePath
-                if (oldFilePath.isNullOrBlank()) continue
-                if (!oldFilePath.startsWith(oldPath)) continue
+    private suspend fun performMigration(oldPath: String, newPath: String): String =
+        withContext(ioDispatcher) {
+            var moved = 0
+            var failed = 0
+            val playlists = playlistRepo.observePlaylists().first()
+            for (playlist in playlists) {
+                val songs = songRepo.getSongs(playlist.id)
+                for (song in songs) {
+                    val oldFilePath = song.filePath
+                    if (oldFilePath.isNullOrBlank()) continue
+                    if (!oldFilePath.startsWith(oldPath)) continue
 
-                val oldFile = java.io.File(oldFilePath)
-                if (!oldFile.exists()) continue
+                    val oldFile = java.io.File(oldFilePath)
+                    if (!oldFile.exists()) continue
 
-                // Build new path: newPath/playlistId/filename
-                val fileName = oldFile.name
-                val targetDir = java.io.File(newPath, playlist.id)
-                val newFile = java.io.File(targetDir, fileName)
+                    // Build new path: newPath/playlistId/filename
+                    val fileName = oldFile.name
+                    val targetDir = java.io.File(newPath, playlist.id)
+                    val newFile = java.io.File(targetDir, fileName)
 
-                try {
-                    targetDir.mkdirs()
-                    val success = oldFile.renameTo(newFile)
-                    if (success) {
-                        songRepo.updateFilePath(song.id, newFile.absolutePath)
-                        moved++
-                    } else {
-                        // renameTo can fail across mount points; fall back to copy+delete
-                        oldFile.copyTo(newFile, overwrite = true)
-                        oldFile.delete()
-                        songRepo.updateFilePath(song.id, newFile.absolutePath)
-                        moved++
+                    try {
+                        targetDir.mkdirs()
+                        val success = oldFile.renameTo(newFile)
+                        if (success) {
+                            songRepo.updateFilePath(song.id, newFile.absolutePath)
+                            moved++
+                        } else {
+                            // renameTo can fail across mount points; fall back to copy+delete
+                            oldFile.copyTo(newFile, overwrite = true)
+                            oldFile.delete()
+                            songRepo.updateFilePath(song.id, newFile.absolutePath)
+                            moved++
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Migration: failed to move $oldFilePath")
+                        failed++
                     }
-                } catch (e: Exception) {
-                    Timber.e(e, "Migration: failed to move $oldFilePath")
-                    failed++
                 }
             }
+            if (failed == 0) {
+                "$moved song${if (moved != 1) "s" else ""} moved"
+            } else {
+                "$moved moved, $failed failed"
+            }
         }
-        return if (failed == 0) {
-            "$moved song${if (moved != 1) "s" else ""} moved"
-        } else {
-            "$moved moved, $failed failed"
-        }
-    }
 
     /**
      * Resolves a SAF tree URI to a filesystem path and saves it.
@@ -569,12 +574,17 @@ class SettingsViewModel(
 
     /**
      * Clears orphan cache files and shows the loading indicator during the operation.
+     *
+     * The path sweep and the filesystem deletion run on [ioDispatcher]; the
+     * loading-flag state updates stay on Main.
      */
     private suspend fun performClearCache() {
         _state.update { it.copy(isClearingCache = true) }
         try {
-            val knownPaths = collectAllSongPaths()
-            musicStore.clearOrphans(knownPaths)
+            withContext(ioDispatcher) {
+                val knownPaths = collectAllSongPaths()
+                musicStore.clearOrphans(knownPaths)
+            }
         } catch (e: Exception) {
             Timber.e(e, "SettingsViewModel.clearCache: FAILED")
         } finally {
@@ -584,30 +594,35 @@ class SettingsViewModel(
 
     /**
      * Recalculates cache statistics and updates the UI state.
+     *
+     * The DB sweep ([collectAllSongPaths]) and the directory listing/size scan
+     * ([MusicStore.orphanFiles]) are filesystem-bound, so they run on
+     * [ioDispatcher]; only the resulting state update happens on Main.
      */
     private suspend fun refreshCacheStats() {
-        val knownPaths = collectAllSongPaths()
-        val orphans = musicStore.orphanFiles(knownPaths)
-        _state.update {
-            it.copy(
-                cacheStats = CacheStats(
-                    fileCount = orphans.size,
-                    sizeBytes = orphans.sumOf { file ->
-                        runCatching { file.length() }.getOrDefault(0L)
-                    },
-                ),
+        val stats = withContext(ioDispatcher) {
+            val knownPaths = collectAllSongPaths()
+            val orphans = musicStore.orphanFiles(knownPaths)
+            CacheStats(
+                fileCount = orphans.size,
+                sizeBytes = orphans.sumOf { file ->
+                    runCatching { file.length() }.getOrDefault(0L)
+                },
             )
         }
+        _state.update { it.copy(cacheStats = stats) }
     }
 
     /**
      * Collects all song file paths across every playlist in the database.
      *
+     * Runs the per-playlist queries on [ioDispatcher] so callers never block Main.
+     *
      * @return list of non-blank file paths known to the library.
      */
-    private suspend fun collectAllSongPaths(): List<String> {
+    private suspend fun collectAllSongPaths(): List<String> = withContext(ioDispatcher) {
         val playlists = playlistRepo.observePlaylists().first()
-        return buildList {
+        buildList {
             for (playlist in playlists) {
                 for (song in songRepo.getSongs(playlist.id)) {
                     if (!song.filePath.isNullOrBlank()) add(song.filePath!!)

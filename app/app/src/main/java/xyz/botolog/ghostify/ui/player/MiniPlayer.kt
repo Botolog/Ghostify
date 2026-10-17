@@ -4,9 +4,11 @@ package xyz.botolog.ghostify.ui.player
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -46,15 +48,13 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
-import coil.size.Size
-import coil.transform.Transformation
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.contract.PlayerContract.PlayerUiState
 import xyz.botolog.ghostify.ui.model.NowPlaying
@@ -88,70 +88,21 @@ private val THUMB_SIZE = DpSize(4.dp, 4.dp)
  * src/main/assets/no_song_cover.svg). Rendered via Coil + SvgDecoder (see
  * GhostifyApplication.newImageLoader).
  *
- * Shared with the full player overlay as the behind-cover placeholder/fallback layer.
+ * Shared with the full player overlay as its empty-track cover layer.
  */
 internal const val EMPTY_COVER_ASSET_URI = "file:///android_asset/no_song_cover.svg"
 
 /**
- * Rendering-time grayscale filter for the empty-track SVG layers only.
+ * Rendering-time grayscale filter for the empty-track SVG layer only.
  *
- * Applied via Compose [ColorFilter] on the SVG [AsyncImage] model (empty state),
- * so `no_song_cover.svg` bytes stay untouched. Verified to work with Coil's
- * SvgDecoder output: [AsyncImage]'s `colorFilter` is applied at Compose draw time
- * to whatever the painter holds (SvgDecoder renders to a bitmap drawable), not at
- * decode time — so the real cover art (separate model, `colorFilter = null`) keeps
- * full colour.
+ * Applied via Compose [ColorFilter] on the SVG [AsyncImage] layer, so
+ * `no_song_cover.svg` bytes stay untouched. [AsyncImage]'s `colorFilter` is applied at
+ * Compose draw time to whatever the painter holds (SvgDecoder renders to a bitmap
+ * drawable), not at decode time — so the real cover art (separate layer,
+ * `colorFilter = null`) keeps full colour and no per-decode software bitmap is needed.
  */
 private val EmptyCoverGrayscaleFilter =
     ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
-
-/**
- * Coil [Transformation] that desaturates the decoded bitmap.
- *
- * Needed for the placeholder/error/fallback painters: Coil 2.7.0's
- * `rememberAsyncImagePainter` has no `colorFilter` param (only [AsyncImage] does),
- * and [AsyncImage]'s single `colorFilter` would also tint the real cover art when
- * it is showing. Baking grayscale into the SVG placeholder request keeps the
- * placeholders grayscale while the success layer stays colourful. Runs after
- * SvgDecoder (bitmap in → grayscale bitmap out), so the `.svg` asset is untouched.
- */
-private class GrayscaleTransformation : Transformation {
-    override val cacheKey: String = "grayscale"
-
-    override suspend fun transform(input: android.graphics.Bitmap, size: Size): android.graphics.Bitmap {
-        val paint =
-            android.graphics.Paint().apply {
-                colorFilter =
-                    android.graphics.ColorMatrixColorFilter(
-                        android.graphics.ColorMatrix().apply { setSaturation(0f) },
-                    )
-            }
-        val output =
-            android.graphics.Bitmap.createBitmap(
-                input.width,
-                input.height,
-                android.graphics.Bitmap.Config.ARGB_8888,
-            )
-        android.graphics.Canvas(output).drawBitmap(input, 0f, 0f, paint)
-        // Caller owns `input`; recycle the now-superseded source to free native memory.
-        if (output != input) input.recycle()
-        return output
-    }
-}
-
-/**
- * Whether [coverUrl] carries no real artwork (null, blank [String], or empty
- * [ByteArray]) — i.e. the MiniPlayer's main model will effectively render the
- * empty-track SVG and must use the grayscale filter. Mirrors `hasCoverArt` in
- * FullPlayerView (inverted).
- */
-private fun isEmptyCover(coverUrl: Any?): Boolean =
-    when (coverUrl) {
-        null -> true
-        is String -> coverUrl.isBlank()
-        is ByteArray -> coverUrl.isEmpty()
-        else -> false
-    }
 
 /**
  * Spotify-style persistent now-playing bar rendered at the bottom of every screen.
@@ -213,7 +164,7 @@ fun MiniPlayer(
  * Row of mini player controls: cover art, title/artist, shuffle, and transport buttons.
  *
  * Empty state ([isEmpty]) shows "No Song" / "—" with the asset SVG
- * [EMPTY_COVER_ASSET_URI] (single asset, NO Compose Box overlay). Transport is disabled + dimmed; shuffle
+ * [EMPTY_COVER_ASSET_URI] as the grayscale base layer. Transport is disabled + dimmed; shuffle
  * stays enabled so its flag can seed the next queue build.
  */
 @Composable
@@ -229,40 +180,51 @@ private fun MiniPlayerControls(
             .padding(horizontal = BAR_HORIZONTAL_PADDING, vertical = BAR_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Coil painter for the SVG asset — used as placeholder/error/fallback so every
-        // cover state (loading, error, null URL) renders the same user-supplied SVG,
-        // never the old XML drawable. Grayscale is baked in via [GrayscaleTransformation]
-        // (rememberAsyncImagePainter has no colorFilter param in Coil 2.7.0), so the
-        // placeholders stay grayscale even when the success layer shows real art in
-        // full colour. allowHardware(false) is required — the transformation draws to
-        // a Canvas, which hardware bitmaps do not support.
+        // Two layers, each sized to the 44 dp box so Coil never decodes the embedded
+        // cover at its full source resolution:
+        //  - the grayscale SVG asset is the base, painted with a draw-time [ColorFilter]
+        //    (no software bitmap and no `allowHardware(false)`);
+        //  - the real cover art is composed on top, unfiltered, only when present.
+        // This mirrors SwipeableCoverArt in the full player and keeps the empty-track
+        // placeholder grayscale while the success layer keeps full colour.
         val context = LocalContext.current
+        val coverSizePx = with(LocalDensity.current) { COVER_SIZE.roundToPx() }
         val emptyCoverRequest =
-            remember(context) {
+            remember(context, coverSizePx) {
                 ImageRequest.Builder(context)
                     .data(EMPTY_COVER_ASSET_URI)
-                    .transformations(GrayscaleTransformation())
-                    .allowHardware(false)
+                    .size(coverSizePx)
                     .build()
             }
-        val emptyCoverPainter = rememberAsyncImagePainter(emptyCoverRequest)
-        // Grayscale the main model only when it effectively renders the SVG
-        // (empty state, or null/blank/empty coverUrl which falls back to the SVG).
-        // Real cover art keeps colorFilter = null (full colour).
-        val showSvgModel = isEmpty || isEmptyCover(nowPlaying?.coverUrl)
-        AsyncImage(
-            model = if (isEmpty) EMPTY_COVER_ASSET_URI else (nowPlaying?.coverUrl ?: EMPTY_COVER_ASSET_URI),
-            contentDescription = "Album art",
+        val coverRequest =
+            remember(context, coverSizePx, nowPlaying?.coverUrl) {
+                ImageRequest.Builder(context)
+                    .data(nowPlaying?.coverUrl)
+                    .size(coverSizePx)
+                    .build()
+            }
+        Box(
             modifier = Modifier
                 .size(COVER_SIZE)
                 .clip(RoundedCornerShape(6.dp))
                 .testTag(MiniPlayerTestTags.COVER),
-            contentScale = ContentScale.Crop,
-            colorFilter = if (showSvgModel) EmptyCoverGrayscaleFilter else null,
-            placeholder = emptyCoverPainter,
-            error = emptyCoverPainter,
-            fallback = emptyCoverPainter,
-        )
+        ) {
+            AsyncImage(
+                model = emptyCoverRequest,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                colorFilter = EmptyCoverGrayscaleFilter,
+            )
+            if (hasCoverArt(nowPlaying?.coverUrl)) {
+                AsyncImage(
+                    model = coverRequest,
+                    contentDescription = "Album art",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.width(10.dp))
 

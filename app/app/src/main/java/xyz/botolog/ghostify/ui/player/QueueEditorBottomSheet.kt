@@ -55,7 +55,7 @@ import kotlinx.coroutines.isActive
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.model.QueueItem
 import xyz.botolog.ghostify.ui.util.DurationFormat
-import xyz.botolog.ghostify.ui.util.coverImageModel
+import xyz.botolog.ghostify.ui.util.rememberCoverImageRequest
 import kotlin.math.roundToInt
 
 /**
@@ -566,9 +566,7 @@ private fun QueueItemRow(item: QueueItem, showCover: Boolean = false) {
 private fun QueueItemCover(item: QueueItem, showCover: Boolean) {
     if (!shouldShowQueueItemCover(showCover, item.coverArtLocalPath, item.coverUrl)) return
 
-    val model = remember(item.coverArtLocalPath, item.coverUrl) {
-        coverImageModel(item.coverArtLocalPath, item.coverUrl)
-    }
+    val model = rememberCoverImageRequest(item.coverArtLocalPath, item.coverUrl, 40.dp)
     AsyncImage(
         model = model,
         contentDescription = "Album art",

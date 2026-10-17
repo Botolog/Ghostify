@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -79,6 +80,30 @@ class PlayerViewModel(
     /** Cached cover art bytes for the current track. */
     private var cachedCover: Any? = null
 
+    // Queue memoization: the last source queue (by identity), the current index
+    // and the covers flag it was built from, plus the produced list. Reused
+    // unchanged across the 250 ms position ticks.
+    private var cachedQueueSource: List<xyz.botolog.ghostify.player.core.QueueItem>? = null
+    private var cachedQueueIndex: Int = Int.MIN_VALUE
+    private var cachedShowQueueCovers: Boolean? = null
+    private var cachedQueueItems: List<QueueItem> = emptyList()
+
+    // Now-playing memoization: the current item + song entity identities it was
+    // built from, plus the produced value. Reused unchanged across ticks.
+    private var cachedCurrentItem: CurrentItem? = null
+    private var cachedEntity: xyz.botolog.ghostify.data.db.entity.SongEntity? = null
+    private var cachedNowPlaying: NowPlaying? = null
+    private var nowPlayingCached: Boolean = false
+
+    /** Cheap carrier handed from the `combine` transform to the off-main mapper. */
+    private data class PlayerInputs(
+        val core: CorePlayerUiState,
+        val open: Boolean,
+        val lyrics: String?,
+        val entity: xyz.botolog.ghostify.data.db.entity.SongEntity?,
+        val showQueueCovers: Boolean,
+    )
+
     init {
         Timber.i("PlayerViewModel: init")
 
@@ -109,17 +134,36 @@ class PlayerViewModel(
         // Observe player state, queue flag, lyrics, song entity, AND showQueueCovers — combine all into one emission.
         launch {
             combine(player.state, queueOpen, currentLyrics, currentSongEntity, settingsRepository.observeShowQueueCovers()) { core, open, lyrics, entity, showQueueCovers ->
-                val ui = mapToUi(core, open, entity, showQueueCovers)
-                val mediaId = ui.nowPlaying?.let { findMediaId(ui) }
-                currentSongId.value = mediaId
-                ui.copy(
-                    lyrics = lyrics,
-                    lyricsSource = entity?.lyricsSource,
-                    lyricsEdited = entity?.lyricsEdited == true,
-                )
+                PlayerInputs(core, open, lyrics, entity, showQueueCovers)
             }
+                // Heavy mapping (queue rebuild + now-playing) only runs off the main
+                // thread when the underlying queue/item actually changed; the 250 ms
+                // position ticker reuses the memoized parts and just re-publishes the
+                // cheap scalar fields.
+                .map { inputs ->
+                    val core = inputs.core
+                    val ui = if (!core.queue.isEmpty() && !heavyMappingCached(core, inputs.entity, inputs.showQueueCovers)) {
+                        withContext(Dispatchers.Default) {
+                            mapToUi(core, inputs.open, inputs.entity, inputs.showQueueCovers)
+                        }
+                    } else {
+                        mapToUi(core, inputs.open, inputs.entity, inputs.showQueueCovers)
+                    }
+                    val mediaId = if (ui.nowPlaying != null) findMediaId(core) else null
+                    ui.copy(
+                        lyrics = inputs.lyrics,
+                        lyricsSource = inputs.entity?.lyricsSource,
+                        lyricsEdited = inputs.entity?.lyricsEdited == true,
+                    ) to mediaId
+                }
+                // Identical states (e.g. the settings-table invalidation storm) must
+                // not re-emit and re-cost the UI a recomposition.
+                .distinctUntilChanged()
                 .catch { e -> Timber.e(e, "PlayerViewModel: stream collection FAILED") }
-                .collect { _state.value = it }
+                .collect { (ui, mediaId) ->
+                    currentSongId.value = mediaId
+                    _state.value = ui
+                }
         }
     }
 
@@ -380,7 +424,7 @@ class PlayerViewModel(
             shuffle = core.shuffleEnabled,
             repeatMode = core.repeatMode.toUi(),
             volume = core.volume,
-            queue = mapQueueItems(core),
+            queue = mapQueueItems(core, showQueueCovers),
             queueOpen = open,
             showQueueCovers = showQueueCovers,
             sleepTimerActive = core.sleepTimerActive,
@@ -390,22 +434,37 @@ class PlayerViewModel(
     }
 
     /**
-     * Extracts the media id from the current state for lyrics observation.
+     * Extracts the media id from the already-computed core state for lyrics observation.
+     *
+     * @param core the current state from the player core.
      */
-    private fun findMediaId(ui: PlayerUiState): String? {
+    private fun findMediaId(core: CorePlayerUiState): String? {
         // The queue items carry the songId which matches the DB primary key.
-        val idx = player.state.value.currentQueueIndex
-        if (idx < 0 || idx >= player.state.value.queue.size) return null
-        return player.state.value.queue[idx].songId
+        val idx = core.currentQueueIndex
+        if (idx < 0 || idx >= core.queue.size) return null
+        return core.queue[idx].songId
     }
 
     /**
      * Maps the core queue list to a list of render-ready [QueueItem]s.
      *
+     * The result is memoized against the source queue identity, the current queue
+     * index and the [showQueueCovers] flag, so the 250 ms position ticker does not
+     * rebuild one object per queue track on every tick — only the position/time
+     * fields change between ticks, and the cached list instance is reused.
+     *
      * @param core the current state from the player core.
+     * @param showQueueCovers whether queue covers are currently shown.
      */
-    private fun mapQueueItems(core: CorePlayerUiState): List<QueueItem> =
-        core.queue.mapIndexed { index, item ->
+    private fun mapQueueItems(core: CorePlayerUiState, showQueueCovers: Boolean): List<QueueItem> {
+        val source = core.queue
+        if (source === cachedQueueSource &&
+            core.currentQueueIndex == cachedQueueIndex &&
+            showQueueCovers == cachedShowQueueCovers
+        ) {
+            return cachedQueueItems
+        }
+        val mapped = source.mapIndexed { index, item ->
             QueueItem(
                 songId = item.songId,
                 title = item.title.orEmpty(),
@@ -417,38 +476,80 @@ class PlayerViewModel(
                 coverArtLocalPath = item.coverArtLocalPath,
             )
         }
+        cachedQueueSource = source
+        cachedQueueIndex = core.currentQueueIndex
+        cachedShowQueueCovers = showQueueCovers
+        cachedQueueItems = mapped
+        return mapped
+    }
+
+    /**
+     * Whether the memoized queue and now-playing can be reused for [core].
+     *
+     * When `false` and the queue is non-empty, the mapping is recomputed on
+     * [Dispatchers.Default]; otherwise the cheap scalar rebuild runs inline.
+     */
+    private fun heavyMappingCached(
+        core: CorePlayerUiState,
+        entity: xyz.botolog.ghostify.data.db.entity.SongEntity?,
+        showQueueCovers: Boolean,
+    ): Boolean {
+        val queueCached = core.queue === cachedQueueSource &&
+            core.currentQueueIndex == cachedQueueIndex &&
+            showQueueCovers == cachedShowQueueCovers
+        if (!queueCached) return false
+        val isEmpty = core.nothingToPlay || core.queue.isEmpty()
+        val nowPlayingNeeded = !isEmpty && core.currentItem != null
+        if (!nowPlayingNeeded) return true
+        return nowPlayingCached &&
+            core.currentItem === cachedCurrentItem &&
+            entity === cachedEntity
+    }
 
     /**
      * Converts a [CurrentItem] from the player core into a [NowPlaying] model.
+     *
+     * Memoized against the [CurrentItem]/entity identities so ticks reuse the
+     * same instance instead of reallocating it.
      *
      * @param current the current item from the player core.
      */
     private fun toNowPlaying(
         current: CurrentItem,
         entity: xyz.botolog.ghostify.data.db.entity.SongEntity?,
-    ): NowPlaying = NowPlaying(
-        title = current.title.orEmpty(),
-        artist = current.artist.orEmpty(),
-        album = current.album.orEmpty(),
-        coverUrl = coverFor(current),
-        id = entity?.id.orEmpty(),
-        spotifyId = entity?.spotifyId.orEmpty(),
-        ytId = entity?.ytId,
-        filePath = entity?.filePath,
-        status = entity?.status?.name.orEmpty(),
-        error = entity?.error,
-        lyrics = entity?.lyrics,
-        durationMs = entity?.durationMs?.toLong() ?: 0L,
-        position = entity?.position ?: 0,
-        lyricsSource = entity?.lyricsSource,
-        lyricsEdited = entity?.lyricsEdited ?: false,
-        ytUrl = entity?.ytUrl,
-        ytName = entity?.ytName,
-        ytChannel = entity?.ytChannel,
-        bitrate = entity?.bitrate,
-        fileSize = entity?.fileSize,
-        downloadedAt = entity?.downloadedAt,
-    )
+    ): NowPlaying {
+        if (nowPlayingCached && current === cachedCurrentItem && entity === cachedEntity) {
+            return cachedNowPlaying!!
+        }
+        val mapped = NowPlaying(
+            title = current.title.orEmpty(),
+            artist = current.artist.orEmpty(),
+            album = current.album.orEmpty(),
+            coverUrl = coverFor(current),
+            id = entity?.id.orEmpty(),
+            spotifyId = entity?.spotifyId.orEmpty(),
+            ytId = entity?.ytId,
+            filePath = entity?.filePath,
+            status = entity?.status?.name.orEmpty(),
+            error = entity?.error,
+            lyrics = entity?.lyrics,
+            durationMs = entity?.durationMs?.toLong() ?: 0L,
+            position = entity?.position ?: 0,
+            lyricsSource = entity?.lyricsSource,
+            lyricsEdited = entity?.lyricsEdited ?: false,
+            ytUrl = entity?.ytUrl,
+            ytName = entity?.ytName,
+            ytChannel = entity?.ytChannel,
+            bitrate = entity?.bitrate,
+            fileSize = entity?.fileSize,
+            downloadedAt = entity?.downloadedAt,
+        )
+        cachedCurrentItem = current
+        cachedEntity = entity
+        cachedNowPlaying = mapped
+        nowPlayingCached = true
+        return mapped
+    }
 
     /**
      * Returns cover art for the current track. Passes the raw [ByteArray] to Coil

@@ -72,7 +72,7 @@ import xyz.botolog.ghostify.ui.model.PlaylistStatus
 import xyz.botolog.ghostify.ui.model.PlaylistUi
 import xyz.botolog.ghostify.ui.util.ProgressBadge
 import xyz.botolog.ghostify.ui.util.TimeFormat
-import xyz.botolog.ghostify.ui.util.coverImageModel
+import xyz.botolog.ghostify.ui.util.rememberCoverImageRequest
 
 /**
  * Test tag constants for the library screen. Used by Compose UI tests to locate elements.
@@ -376,9 +376,11 @@ private fun PlaylistRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = remember(playlist.coverArtLocalPath, playlist.coverUrl) {
-                coverImageModel(playlist.coverArtLocalPath, playlist.coverUrl)
-            },
+            model = rememberCoverImageRequest(
+                playlist.coverArtLocalPath,
+                playlist.coverUrl,
+                COVER_SIZE,
+            ),
             contentDescription = "Cover of ${playlist.name}",
             modifier = Modifier
                 .size(COVER_SIZE)
@@ -401,7 +403,11 @@ private fun PlaylistRow(
  */
 @Composable
 private fun PlaylistInfoColumn(playlist: PlaylistUi, now: () -> Long, modifier: Modifier = Modifier) {
-    val syncText = remember(playlist.lastSyncedAt, now()) {
+    // The clock must never be a `remember` key: `now()` returns a fresh value on every
+    // recomposition, which would re-run this block — and the relative-time formatting it
+    // does — on every frame. Keying on the persisted timestamp keeps the row cheap, and the
+    // injected `now` is still used to format it.
+    val syncText = remember(playlist.lastSyncedAt) {
         "Synced ${TimeFormat.formatRelative(playlist.lastSyncedAt, now())}"
     }
     Column(modifier = modifier) {

@@ -1,9 +1,7 @@
 package xyz.botolog.ghostify.player
 
 import android.content.Context
-import android.content.Intent
 import android.os.SystemClock
-import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -82,12 +80,29 @@ class PlayerController private constructor(
 ) : Player.Listener {
 
     private val _state = MutableStateFlow(PlayerUiState())
-    private val artworkByMediaId = HashMap<String, ByteArray>()
+
+    /**
+     * Embedded cover bytes keyed by song id, bounded by [MAX_ARTWORK_ENTRIES] and
+     * [MAX_ARTWORK_BYTES].
+     *
+     * A large queue can hold thousands of tracks whose covers are each hundreds of KB, so
+     * retaining every one for the whole session fed avoidable GC pressure. The bounded cache
+     * evicts least-recently-used entries instead; the track on screen is pinned by
+     * [BoundedArtworkCache.pinnedKey] so its cover is never evicted.
+     */
+    private val artworkByMediaId = BoundedArtworkCache(MAX_ARTWORK_ENTRIES, MAX_ARTWORK_BYTES)
     private var nothingToPlay = false
     private var lastError: PlayerError? = null
     private var tickerJob: Job? = null
     private var artworkBackfillJob: Job? = null
     private var saveJob: Job? = null
+
+    /**
+     * The last state actually written by [saveState], or `null` when nothing has been written
+     * yet. Compared against a fresh signature so an unchanged state does not re-write the
+     * settings table (which would otherwise happen on every idle ExoPlayer listener event).
+     */
+    private var lastSavedSignature: PersistedSignature? = null
 
     /** The running sleep timer, or [SleepTimerState.Inactive] when there is none. */
     private var sleepTimer: SleepTimerState = SleepTimerState.Inactive
@@ -127,8 +142,8 @@ class PlayerController private constructor(
     internal var coverBytesProvider: ((songId: String, coverPath: String?) -> ByteArray?)? = null
 
     /**
-     * Starts the foreground [PlaybackService] and connects the notification
-     * [MediaController]. Replaced in unit tests, which have no Android framework.
+     * Starts [PlaybackService] by connecting the notification [MediaController] (a binder
+     * connection). Replaced in unit tests, which have no Android framework.
      */
     internal var startPlaybackService: () -> Unit = ::startForegroundPlayback
 
@@ -400,6 +415,7 @@ class PlayerController private constructor(
             nothingToPlay = false
             lastError = null
             artworkByMediaId.clear()
+            artworkByMediaId.pinnedKey = mediaItems.items.getOrNull(startIndex)?.mediaId
             exoPlayer.shuffleModeEnabled = false
             artworkByMediaId.putAll(mediaItems.artwork)
             exoPlayer.setMediaItems(mediaItems.items, startIndex, PlaybackConstants.TIME_UNSET)
@@ -646,14 +662,19 @@ class PlayerController private constructor(
             persistence.clear()
             return
         }
-        when (val result = queueBuilder.build(songs, saved.currentSongId)) {
+        when (val result = withContext(Dispatchers.IO) {
+            // Existence/length checks per song are blocking disk I/O: keep them off main.
+            queueBuilder.build(songs, saved.currentSongId)
+        }) {
             is QueueBuildResult.NothingToPlay -> {
                 Timber.w("PlayerController.restoreSavedState: nothing to play after rebuild")
                 persistence.clear()
             }
             is QueueBuildResult.Ready -> {
                 val clickedSongId = saved.currentSongId
-                withContext(Dispatchers.Main.immediate) {
+                // Queue ordering and the start index are main-thread owned.
+                val prepared = withContext(Dispatchers.Main.immediate) {
+                    if (generation != queueGeneration) return@withContext null
                     queueManager.setQueue(result.items)
                     if (clickedSongId != null) {
                         val clickedIdx = queueManager.indexOf(clickedSongId)
@@ -668,16 +689,25 @@ class PlayerController private constructor(
                     } else if (saved.shuffleEnabled) {
                         queueManager.shuffle()
                     }
+                    val items = queueManager.queue
+                    val start = if (clickedSongId != null) {
+                        0
+                    } else if (saved.shuffleEnabled) {
+                        0
+                    } else {
+                        saved.currentSongId?.let { queueManager.indexOf(it) }?.coerceAtLeast(0) ?: 0
+                    }
+                    items to start
                 }
-                val currentItems = queueManager.queue
-                val startIndex = if (clickedSongId != null) {
-                    0
-                } else if (saved.shuffleEnabled) {
-                    0
-                } else {
-                    saved.currentSongId?.let { queueManager.indexOf(it) }?.coerceAtLeast(0) ?: 0
+                if (prepared == null) {
+                    Timber.i("restoreSavedState: queue replaced while restoring, discarding result")
+                    return
                 }
-                val mediaItems = buildMediaItems(currentItems, startIndex)
+                val (currentItems, startIndex) = prepared
+                // Cover-byte reads and embedded-art decode are blocking: keep them off main.
+                val mediaItems = withContext(Dispatchers.IO) {
+                    buildMediaItems(currentItems, startIndex)
+                }
                 val applied = withContext(Dispatchers.Main.immediate) {
                     if (generation != queueGeneration) {
                         Timber.i("restoreSavedState: queue replaced while restoring, discarding result")
@@ -686,6 +716,7 @@ class PlayerController private constructor(
                     nothingToPlay = false
                     lastError = null
                     artworkByMediaId.clear()
+                    artworkByMediaId.pinnedKey = mediaItems.items.getOrNull(startIndex)?.mediaId
                     artworkByMediaId.putAll(mediaItems.artwork)
                     exoPlayer.shuffleModeEnabled = false
                     exoPlayer.setMediaItems(mediaItems.items, startIndex, PlaybackConstants.TIME_UNSET)
@@ -699,6 +730,12 @@ class PlayerController private constructor(
                         exoPlayer.play()
                     }
                     publishSnapshot()
+                    // Connect the service (a binder connection through the MediaController) even
+                    // on a paused restore: the restored queue, position and notification must be
+                    // available so the user's next play / media-button resume works immediately.
+                    // This is ANR-safe because starting the service is a bind now, not
+                    // `startForegroundService()`, so there is no 5s foreground contract to break
+                    // while the player is prepared-but-paused.
                     startPlaybackService()
                     true
                 }
@@ -709,23 +746,48 @@ class PlayerController private constructor(
     }
 
     /**
+     * The persisted fields whose combined value decides whether a save is worth doing.
+     *
+     * Deliberately excludes fields that change on every position tick (the ticker updates
+     * [_state] directly and never calls [saveState]); it mirrors exactly what
+     * [PlayerStatePersistence.save] writes.
+     */
+    private data class PersistedSignature(
+        val currentSongId: String?,
+        val playlistId: String?,
+        val queueSongIds: List<String>,
+        val queueIndex: Int,
+        val shuffleEnabled: Boolean,
+        val repeatMode: RepeatMode,
+        val volume: Float,
+        val positionMs: Long,
+        val wasPlaying: Boolean,
+    )
+
+    /**
      * Saves the current player state to persistence (debounced).
      *
      * Only saves when there is a queue loaded. Cancels any pending save
      * and reschedules with a 2-second delay to avoid excessive writes
      * during rapid state changes (e.g. position ticker).
+     *
+     * The state is fingerprinted before writing and the write is skipped entirely when the
+     * fingerprint matches the last one persisted, so ordinary ExoPlayer listener events on an
+     * idle player no longer trigger the (batched) settings write on every event. The actual
+     * Room write runs on [Dispatchers.IO].
      */
     private fun saveState() {
-        if (persistence == null) return
+        val store = persistence ?: return
         if (nothingToPlay || queueManager.queue.isEmpty()) return
         saveJob?.cancel()
         saveJob = scope.launch {
             delay(SAVE_DEBOUNCE_MS)
+            // All reads below are main-thread owned (queueManager / _state).
             val snapshot = _state.value
             val queueSongIds = queueManager.queue.map { it.songId }
             val currentSongId = snapshot.currentItem?.mediaId
             val currentQueueIdx = queueManager.queue.indexOfFirst { it.songId == currentSongId }
-            persistence.save(
+            val signature = PersistedSignature(
                 currentSongId = currentSongId,
                 playlistId = currentPlaylistId,
                 queueSongIds = queueSongIds,
@@ -736,6 +798,24 @@ class PlayerController private constructor(
                 positionMs = snapshot.positionMs,
                 wasPlaying = snapshot.isPlaying,
             )
+            if (signature == lastSavedSignature) {
+                Timber.d("PlayerController.saveState: unchanged, skipping persist")
+                return@launch
+            }
+            withContext(Dispatchers.IO) {
+                store.save(
+                    currentSongId = signature.currentSongId,
+                    playlistId = signature.playlistId,
+                    queueSongIds = signature.queueSongIds,
+                    queueIndex = signature.queueIndex,
+                    shuffleEnabled = signature.shuffleEnabled,
+                    repeatMode = signature.repeatMode,
+                    volume = signature.volume,
+                    positionMs = signature.positionMs,
+                    wasPlaying = signature.wasPlaying,
+                )
+            }
+            lastSavedSignature = signature
             Timber.d("PlayerController.saveState: saved idx=$currentQueueIdx, queueSize=${queueSongIds.size}")
         }
     }
@@ -1245,6 +1325,7 @@ class PlayerController private constructor(
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
         publishSnapshot()
+        lastSavedSignature = null
         persistence?.let { store -> scope.launch { store.clear() } }
         return true
     }
@@ -1559,16 +1640,25 @@ class PlayerController private constructor(
     }
 
     /**
-     * Starts the foreground [PlaybackService] and creates a [MediaController] that
-     * binds to it so the notification appears.
+     * Starts [PlaybackService] by BINDING it through a [MediaController] and keeps the
+     * controller connected so the media notification appears.
      *
-     * Idempotent: the controller is built once and reused, so re-asserting the
-     * foreground service after a resume does not pile up connected controllers.
+     * We deliberately do NOT call `Context.startForegroundService()` here. media3's
+     * [androidx.media3.session.MediaSessionService] only promotes itself to the foreground
+     * (calls `startForeground()`) once there is actually something to play. Starting it with a
+     * plain intent therefore gives media3 no action/extras to act on, so
+     * `MediaSessionService.onStartCommand` returns without ever calling `startForeground()`,
+     * and Android kills the process ~5s later with
+     * "Context.startForegroundService() did not then call Service.startForeground()".
+     * Binding a [MediaController] to the [SessionToken] starts the service without that 5s
+     * foreground contract, and media3 posts the notification and enters the foreground safely
+     * (synchronously) when playback actually starts.
+     *
+     * Idempotent: the controller is built once and reused, so re-asserting the service after a
+     * resume does not pile up connected controllers.
      */
     private fun startForegroundPlayback() {
-        Timber.i("startPlaybackService: starting PlaybackService")
-        val intent = Intent(context, PlaybackService::class.java)
-        ContextCompat.startForegroundService(context, intent)
+        Timber.i("startPlaybackService: connecting MediaController to PlaybackService (bind)")
         if (mediaController != null) {
             Timber.i("startPlaybackService: reusing existing MediaController")
             return
@@ -1617,6 +1707,8 @@ class PlayerController private constructor(
     /** Creates a snapshot of every relevant ExoPlayer field. */
     private fun buildPlayerSnapshot(): PlayerSnapshot {
         val currentItem = exoPlayer.currentMediaItem
+        // Keep the on-screen track's cover resident no matter how large the queue is.
+        artworkByMediaId.pinnedKey = currentItem?.mediaId
         return PlayerSnapshot(
             playbackState = exoPlayer.playbackState,
             isPlaying = exoPlayer.isPlaying,
@@ -1656,6 +1748,59 @@ class PlayerController private constructor(
         }
     }
 
+    /**
+     * LRU-bounded store of embedded cover bytes keyed by song id.
+     *
+     * Backed by an access-ordered [LinkedHashMap], so the least-recently-used entry is evicted
+     * first once either [maxEntries] or [maxBytes] is exceeded; reads refresh recency. The
+     * currently displayed track ([pinnedKey]) is never evicted, so the now-playing cover stays
+     * available even when the queue is far larger than the cap.
+     */
+    private class BoundedArtworkCache(
+        private val maxEntries: Int,
+        private val maxBytes: Long,
+    ) : LinkedHashMap<String, ByteArray>(16, 0.75f, true) {
+
+        /** Song id whose entry must survive eviction, or `null` when nothing is pinned. */
+        var pinnedKey: String? = null
+
+        private var totalBytes = 0L
+
+        override fun put(key: String, value: ByteArray): ByteArray? {
+            val previous = super.put(key, value)
+            if (previous != null) totalBytes -= previous.size
+            totalBytes += value.size
+            evictIfNeeded()
+            return previous
+        }
+
+        override fun putAll(from: Map<out String, ByteArray>) {
+            for ((key, value) in from) put(key, value)
+        }
+
+        override fun remove(key: String): ByteArray? {
+            val removed = super.remove(key)
+            if (removed != null) totalBytes -= removed.size
+            return removed
+        }
+
+        override fun clear() {
+            super.clear()
+            totalBytes = 0L
+            pinnedKey = null
+        }
+
+        private fun evictIfNeeded() {
+            val oldest = entries.iterator()
+            while ((size > maxEntries || totalBytes > maxBytes) && oldest.hasNext()) {
+                val entry = oldest.next()
+                if (entry.key == pinnedKey) continue
+                totalBytes -= entry.value.size
+                oldest.remove()
+            }
+        }
+    }
+
     companion object {
 
         /** Interval in milliseconds between position-ticker updates. */
@@ -1672,6 +1817,12 @@ class PlayerController private constructor(
 
         /** Delay in milliseconds before persisting state (debounce). */
         private const val SAVE_DEBOUNCE_MS = 2000L
+
+        /** Maximum number of embedded-cover byte arrays retained at once. */
+        private const val MAX_ARTWORK_ENTRIES = 32
+
+        /** Maximum total bytes of embedded covers retained at once (8 MiB). */
+        private const val MAX_ARTWORK_BYTES = 8L * 1024L * 1024L
 
         /**
          * Creates a controller backed by the shared process-wide [ExoPlayer] (see

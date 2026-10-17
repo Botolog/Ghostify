@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import xyz.botolog.ghostify.data.db.entity.SettingEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -49,6 +50,19 @@ interface SettingDao {
      */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(setting: SettingEntity)
+
+    /**
+     * Inserts or replaces several settings in a single transaction.
+     *
+     * Batching within one transaction keeps observers from seeing one table change per
+     * row: the whole group commits atomically, so any Flow watching `settings` re-emits
+     * once instead of once per key.
+     *
+     * @param settings The settings to upsert.
+     */
+    @Transaction
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(settings: List<SettingEntity>)
 
     /**
      * Deletes a setting by key.
