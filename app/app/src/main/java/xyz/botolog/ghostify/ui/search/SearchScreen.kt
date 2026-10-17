@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import xyz.botolog.ghostify.ui.contract.SearchContract
 import xyz.botolog.ghostify.ui.contract.SearchContract.SearchUiState
+import xyz.botolog.ghostify.ui.util.UnloadingCoverCache
 import xyz.botolog.ghostify.ui.util.rememberCoverImageRequest
 
 /**
@@ -134,11 +135,15 @@ fun SearchScreen(
                     )
                 }
                 else -> {
-                    SearchResultList(
-                        state = state,
-                        onPlaylistClick = onPlaylistClick,
-                        onSongClick = onSongClick,
-                    )
+                    // Screen-scoped cache: the result covers are dropped when Search leaves
+                    // composition instead of lingering in the process-wide LRU.
+                    UnloadingCoverCache {
+                        SearchResultList(
+                            state = state,
+                            onPlaylistClick = onPlaylistClick,
+                            onSongClick = onSongClick,
+                        )
+                    }
                 }
             }
         }

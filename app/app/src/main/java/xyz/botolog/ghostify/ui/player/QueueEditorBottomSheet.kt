@@ -55,6 +55,7 @@ import kotlinx.coroutines.isActive
 import xyz.botolog.ghostify.ui.contract.PlayerContract
 import xyz.botolog.ghostify.ui.model.QueueItem
 import xyz.botolog.ghostify.ui.util.DurationFormat
+import xyz.botolog.ghostify.ui.util.UnloadingCoverCache
 import xyz.botolog.ghostify.ui.util.rememberCoverImageRequest
 import kotlin.math.roundToInt
 
@@ -88,14 +89,18 @@ fun QueueEditorBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
-        QueueEditorContent(
-            playedItems = playedItems,
-            currentItem = currentItem,
-            nextItems = nextItems,
-            currentIndex = currentIndex,
-            contract = contract,
-            showQueueCovers = showQueueCovers,
-        )
+        // Sheet-scoped cache: the queue covers are dropped when the sheet leaves composition
+        // on dismiss instead of staying resident in the process-wide LRU.
+        UnloadingCoverCache {
+            QueueEditorContent(
+                playedItems = playedItems,
+                currentItem = currentItem,
+                nextItems = nextItems,
+                currentIndex = currentIndex,
+                contract = contract,
+                showQueueCovers = showQueueCovers,
+            )
+        }
     }
 }
 

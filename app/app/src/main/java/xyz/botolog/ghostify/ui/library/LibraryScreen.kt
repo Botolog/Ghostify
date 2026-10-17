@@ -72,6 +72,7 @@ import xyz.botolog.ghostify.ui.model.PlaylistStatus
 import xyz.botolog.ghostify.ui.model.PlaylistUi
 import xyz.botolog.ghostify.ui.util.ProgressBadge
 import xyz.botolog.ghostify.ui.util.TimeFormat
+import xyz.botolog.ghostify.ui.util.UnloadingCoverCache
 import xyz.botolog.ghostify.ui.util.rememberCoverImageRequest
 
 /**
@@ -238,12 +239,14 @@ private fun LibraryContent(
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
             state.playlists.isEmpty() -> EmptyLibrary()
-            else -> PlaylistList(
-                state = state,
-                contract = contract,
-                onOpenPlaylist = onOpenPlaylist,
-                now = now,
-            )
+            else -> UnloadingCoverCache {
+                PlaylistList(
+                    state = state,
+                    contract = contract,
+                    onOpenPlaylist = onOpenPlaylist,
+                    now = now,
+                )
+            }
         }
     }
 }

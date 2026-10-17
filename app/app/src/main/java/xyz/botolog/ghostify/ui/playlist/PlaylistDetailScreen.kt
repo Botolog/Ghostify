@@ -96,6 +96,7 @@ import xyz.botolog.ghostify.ui.util.DurationFormat
 import xyz.botolog.ghostify.ui.util.InAppSnackbarHost
 import xyz.botolog.ghostify.ui.util.InAppSnackbarState
 import xyz.botolog.ghostify.ui.util.InAppSnackbarTestTags
+import xyz.botolog.ghostify.ui.util.UnloadingCoverCache
 import xyz.botolog.ghostify.ui.util.rememberCoverImageRequest
 import xyz.botolog.ghostify.ui.util.rememberInAppSnackbarState
 import xyz.botolog.ghostify.ui.util.rememberPlaylistCoverImageRequest
@@ -335,13 +336,17 @@ fun PlaylistDetailScreen(
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize()) {
-            PlaylistDetailContent(
-                state = state,
-                contract = contract,
-                padding = padding,
-                highlightSongId = highlightSongId,
-                snackbarState = snackbarState,
-            )
+            // Screen-scoped cache: the header + track covers are dropped when this playlist
+            // leaves composition, so a long track list does not pin its thumbnails in memory.
+            UnloadingCoverCache {
+                PlaylistDetailContent(
+                    state = state,
+                    contract = contract,
+                    padding = padding,
+                    highlightSongId = highlightSongId,
+                    snackbarState = snackbarState,
+                )
+            }
             InAppSnackbarHost(
                 state = snackbarState,
                 modifier = Modifier.align(Alignment.BottomCenter),
