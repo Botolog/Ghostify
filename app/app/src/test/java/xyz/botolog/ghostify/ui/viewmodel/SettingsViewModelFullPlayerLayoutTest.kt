@@ -9,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -124,11 +126,14 @@ class SettingsViewModelFullPlayerLayoutTest {
         viewModel.clear()
     }
 
-    private fun createViewModel(): SettingsViewModel = SettingsViewModel(
+    private fun TestScope.createViewModel(): SettingsViewModel = SettingsViewModel(
         context = context,
         settings = settings,
         playlistRepo = playlistRepo,
         songRepo = songRepo,
         musicStore = musicStore,
+        // Use the test scheduler for the init-time cache sweep so no real `Dispatchers.IO`
+        // coroutine can outlive the test and resume onto a reset Main dispatcher.
+        ioDispatcher = StandardTestDispatcher(testScheduler),
     )
 }

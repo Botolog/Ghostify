@@ -15,6 +15,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -147,13 +149,16 @@ class SettingsViewModelUpdateCancelTest {
         }
     }
 
-    private fun createViewModel(manager: UpdateDownloadManager): SettingsViewModel = SettingsViewModel(
+    private fun TestScope.createViewModel(manager: UpdateDownloadManager): SettingsViewModel = SettingsViewModel(
         context = context,
         settings = settings,
         playlistRepo = playlistRepo,
         songRepo = songRepo,
         musicStore = musicStore,
         updateDownloads = manager,
+        // Use the test scheduler for the init-time cache sweep so no real `Dispatchers.IO`
+        // coroutine can outlive the test and resume onto a reset Main dispatcher.
+        ioDispatcher = StandardTestDispatcher(testScheduler),
     )
 
     @Test

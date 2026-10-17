@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -47,10 +49,12 @@ class PlayerControllerRestoreServiceStartTest {
     private lateinit var player: ExoPlayer
     private lateinit var controller: PlayerController
     private lateinit var scope: CoroutineScope
+    private lateinit var scheduler: TestCoroutineScheduler
     private val uncaught = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
     private val playbackServiceStarts = AtomicInteger(0)
     private val playCount = AtomicInteger(0)
     private var mediaItems: MutableList<MediaItem> = mutableListOf()
+    private var restoreApplied = false
 
     @Before
     fun setUp() {
@@ -58,6 +62,7 @@ class PlayerControllerRestoreServiceStartTest {
         mediaItems = mutableListOf()
         playCount.set(0)
         playbackServiceStarts.set(0)
+        restoreApplied = false
         player = mockk(relaxed = true)
         every { player.currentMediaItem } answers { mediaItems.getOrNull(0) }
         every { player.currentMediaItemIndex } returns 0
@@ -74,6 +79,7 @@ class PlayerControllerRestoreServiceStartTest {
         every { player.volume } returns 1f
         every { player.setMediaItems(any<List<MediaItem>>(), any(), any()) } answers {
             mediaItems = firstArg<List<MediaItem>>().toMutableList()
+            restoreApplied = true
         }
         every { player.play() } answers { playCount.incrementAndGet() }
     }
@@ -91,14 +97,19 @@ class PlayerControllerRestoreServiceStartTest {
 
     /**
      * Builds a controller whose `restoreSavedState()` will find [wasPlaying] in the saved
-     * state. The [PlayerController.startPlaybackService] seam is installed immediately after
-     * construction: the restore suspends on its first `withContext(Dispatchers.IO)` hop, so
-     * the seam is in place before the restore reaches the service-start decision.
+     * state.
+     *
+     * The controller scope runs on a [StandardTestDispatcher] so the `init` restore coroutine
+     * is queued rather than executed during construction. The [PlayerController.startPlaybackService]
+     * seam is installed first, and only then is the queued restore started with
+     * [TestCoroutineScheduler.runCurrent]. This removes the race where the real
+     * `startForegroundPlayback()` could run before the seam was in place on a fast (release) JVM.
      */
     private fun buildController(wasPlaying: Boolean): PlayerController {
         uncaught.clear()
+        scheduler = TestCoroutineScheduler()
         scope = CoroutineScope(
-            SupervisorJob() + Dispatchers.Unconfined + CoroutineExceptionHandler { _, e ->
+            SupervisorJob() + StandardTestDispatcher(scheduler) + CoroutineExceptionHandler { _, e ->
                 uncaught.add(e)
             },
         )
@@ -136,12 +147,19 @@ class PlayerControllerRestoreServiceStartTest {
             flowOf(true),
         ) as PlayerController
         c.startPlaybackService = { playbackServiceStarts.incrementAndGet() }
+        // Start the queued `init` restore ONLY after the seam is installed, so restore can never
+        // reach the real `startForegroundPlayback()` even on a fast release JVM.
+        scheduler.runCurrent()
         return c
     }
 
-    /** Blocks until the restore has applied the rebuilt queue to the player. */
+    /**
+     * Blocks until the restore has applied the rebuilt queue to the player. The restore hops
+     * through [Dispatchers.IO] and back onto the test scheduler, so the scheduler is pumped on
+     * every poll until the queue has been applied.
+     */
     private fun awaitRestoreApplied() {
-        verify(timeout = 5_000) { player.setMediaItems(any<List<MediaItem>>(), any(), any()) }
+        awaitCondition("restore applied to player") { restoreApplied }
     }
 
     private fun awaitCondition(what: String, timeoutMs: Long = 5_000, predicate: () -> Boolean) {
@@ -150,6 +168,7 @@ class PlayerControllerRestoreServiceStartTest {
             if (System.currentTimeMillis() > deadline) {
                 throw AssertionError("timed out waiting for $what")
             }
+            scheduler.runCurrent()
             Thread.sleep(10)
         }
     }
