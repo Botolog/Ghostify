@@ -26,10 +26,29 @@ interface RecoveryDao {
     /**
      * Apply a whole [RecoveryPlan] atomically.
      *
+     * Song ids are applied in [RESET_CHUNK_SIZE]-sized chunks (like the
+     * download/sync `IN (...)` writes) so a killed "download all" that left
+     * ~1370 rows in-flight can never exceed SQLite's
+     * `SQLITE_MAX_VARIABLE_NUMBER`. Implementations wrap this in a single
+     * transaction, so the repair is still atomic.
+     *
      * @param plan the plan containing song and playlist resets to apply.
      */
     fun applyPlan(plan: RecoveryPlan) {
-        resetSongsToPending(plan.songResets.map { it.id })
+        plan.songResets.map { it.id }
+            .chunked(RESET_CHUNK_SIZE)
+            .forEach { resetSongsToPending(it) }
         plan.playlistResets.forEach { resetPlaylistStatus(it.id, it.toStatus) }
+    }
+
+    companion object {
+        /**
+         * Maximum number of song ids written in a single `IN (...)` clause.
+         *
+         * SQLite's classic `SQLITE_MAX_VARIABLE_NUMBER` is 999; 900 leaves a safe
+         * margin. Mirrors `SongDao.UPDATE_STATUS_CHUNK_SIZE` without depending on
+         * the app's DAO layer.
+         */
+        const val RESET_CHUNK_SIZE = 900
     }
 }

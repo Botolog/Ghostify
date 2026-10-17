@@ -31,7 +31,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.io.File
 
 /**
  * Backs the Player screen: a pure presentation layer over [PlayerController].
@@ -236,21 +235,12 @@ class PlayerViewModel(
                 coverUrl = entity.coverUrl,
                 coverArtLocalPath = entity.coverArtLocalPath,
             )
-            // Prefer local cover file bytes so the ExoPlayer timeline (and thus the
-            // notification/lockscreen) carries artworkData instead of null.
-            val artBytes = withContext(Dispatchers.IO) {
-                try {
-                    entity.coverArtLocalPath?.let { path ->
-                        val f = File(path)
-                        if (f.exists() && f.isFile) f.readBytes().takeIf { it.isNotEmpty() } else null
-                    }
-                } catch (_: Exception) {
-                    null
-                }
-            }
+            // A user-queued song is not the current item, so its media item must carry no
+            // artworkData (media3 decodes every queued item's art). PlayerController resolves
+            // and caches the cover from coverArtLocalPath and applies it on transition.
             val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(
                 queueItem,
-                artBytes,
+                artworkBytes = null,
             )
             player.addToQueueNext(songId, mediaItem, entity.coverUrl, entity.coverArtLocalPath)
         }

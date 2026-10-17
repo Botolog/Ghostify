@@ -173,7 +173,9 @@ class SyncUseCase(
             if (plan.inserts.isNotEmpty()) songs.insertAll(plan.inserts)
             if (plan.updates.isNotEmpty()) songs.updateAll(plan.updates)
             if (plan.deleteSpotifyIds.isNotEmpty()) {
-                songs.deleteBySpotifyIds(playlistId, plan.deleteSpotifyIds)
+                // Chunked: a large re-sync can mark hundreds of tracks as removed,
+                // which would otherwise blow SQLite's `IN (...)` variable limit.
+                songs.deleteBySpotifyIdsChunked(playlistId, plan.deleteSpotifyIds)
             }
 
             val newCoverUrl = normalizeCoverUrl(remote.coverUrl) ?: playlist.coverUrl

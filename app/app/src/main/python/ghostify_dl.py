@@ -34,6 +34,7 @@ Design notes
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -1591,6 +1592,174 @@ def _iter_sidecars(root: Path):
         return
 
 
+# --------------------------------------------------------------------------- #
+# Process-level sidecar index cache.
+#
+# The Kotlin wrapper builds a fresh :class:`TrackDownloader` per track, so a
+# per-instance index re-scanned and re-parsed *every* ``*.spotdl`` sidecar for
+# *every* track: O(tracks x sidecars) reads (on the real device ~1370 x 766,
+# and sidecars embed the full lyrics, so each parse allocated a lot of native
+# memory).  The index therefore lives at process level, keyed by the canonical
+# output directory, and is built at most once per directory.  It holds only
+# paths (``{"path", "file"}`` per entry) so it stays tiny; the fresh instances
+# merely borrow a reference to the shared dict.
+# --------------------------------------------------------------------------- #
+_SIDECAR_INDEX_CACHE: Dict[str, Dict[str, Dict[str, Any]]] = {}
+_SIDECAR_INDEX_LOCK = threading.Lock()
+
+
+def _sidecar_cache_key(output_dir: Union[str, os.PathLike, Path]) -> str:
+    """Canonical (absolute, symlinks-resolved) cache key for *output_dir*."""
+    path = Path(output_dir).expanduser()
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path.absolute())
+
+
+def _build_sidecar_index_for(output_dir: Path) -> Dict[str, Dict[str, Any]]:
+    """Scan *output_dir* once and map spotify id/url -> ``{path, file}``."""
+    index: Dict[str, Dict[str, Any]] = {}
+    for sidecar in _iter_sidecars(output_dir):
+        try:
+            info = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        entry = {"path": sidecar, "file": output_dir / info.get("file", "")}
+        if info.get("spotify_id"):
+            index.setdefault(info["spotify_id"], entry)
+        if info.get("url"):
+            index.setdefault(info["url"], entry)
+    return index
+
+
+def _get_sidecar_index(output_dir: Path) -> Dict[str, Dict[str, Any]]:
+    """Return the shared sidecar index for *output_dir*, building it once."""
+    key = _sidecar_cache_key(output_dir)
+    with _SIDECAR_INDEX_LOCK:
+        index = _SIDECAR_INDEX_CACHE.get(key)
+        if index is None:
+            index = _build_sidecar_index_for(output_dir)
+            _SIDECAR_INDEX_CACHE[key] = index
+        return index
+
+
+def _invalidate_sidecar_index(output_dir: Union[str, os.PathLike, Path]) -> None:
+    """Drop the cached index for *output_dir* so the next lookup rebuilds it."""
+    key = _sidecar_cache_key(output_dir)
+    with _SIDECAR_INDEX_LOCK:
+        _SIDECAR_INDEX_CACHE.pop(key, None)
+
+
+def _add_sidecar_to_index(
+    output_dir: Path,
+    spotify_id: Optional[str],
+    url: Optional[str],
+    sidecar: Path,
+    mp3: Path,
+) -> None:
+    """Incrementally register a freshly written sidecar (avoids a rescan).
+
+    If the directory was never indexed we intentionally do nothing: the index
+    is built lazily only when a lookup actually needs it, so a run that never
+    checks sidecars never pays for (or holds) one.
+    """
+    key = _sidecar_cache_key(output_dir)
+    entry = {"path": sidecar, "file": mp3}
+    with _SIDECAR_INDEX_LOCK:
+        index = _SIDECAR_INDEX_CACHE.get(key)
+        if index is None:
+            return
+        if spotify_id:
+            index.setdefault(spotify_id, entry)
+        if url:
+            index.setdefault(url, entry)
+
+
+def _remove_sidecar_from_index(output_dir: Path, sidecar: Path) -> None:
+    """Drop entries that point at a sidecar we just deleted."""
+    key = _sidecar_cache_key(output_dir)
+    with _SIDECAR_INDEX_LOCK:
+        index = _SIDECAR_INDEX_CACHE.get(key)
+        if index is None:
+            return
+        for index_key in [k for k, entry in index.items() if entry["path"] == sidecar]:
+            index.pop(index_key, None)
+
+
+def _sidecar_index_has_missing_files(index: Dict[str, Dict[str, Any]]) -> bool:
+    """True if any indexed mp3 has vanished (index is stale)."""
+    try:
+        # Snapshot the values: another worker may be adding entries concurrently.
+        return any(not entry["file"].exists() for entry in list(index.values()))
+    except Exception:  # noqa: BLE001 - staleness probing must never raise
+        return False
+
+
+def _thread_event_loop() -> Any:
+    """Return the current thread's event loop **without creating one**, or None.
+
+    ``asyncio.get_event_loop()`` would create (and register) a brand-new loop on
+    the main thread when none is set, which we must avoid while detaching spotdl's
+    loop.  The policy's thread-local is a CPython implementation detail, so this
+    is strictly best-effort.
+    """
+    try:
+        local = getattr(asyncio.get_event_loop_policy(), "_local", None)
+        if local is not None:
+            return getattr(local, "_loop", None)
+    except Exception:  # noqa: BLE001 - best effort only
+        pass
+    return None
+
+
+def _release_spotdl_downloader(downloader: Any) -> None:
+    """Best-effort teardown of one spotdl ``Downloader``'s native resources.
+
+    Closes each audio provider's ``YoutubeDL`` (see
+    ``spotdl/providers/audio/base.py``) and the downloader's private asyncio
+    event loop (created in ``spotdl/download/downloader.py``), then detaches the
+    loop from this thread.  Never raises and is safe on a partially built object,
+    because a single track may construct the primary *and* the YouTube-fallback
+    downloader and both must be released explicitly.
+    """
+    if downloader is None:
+        return
+
+    for provider in list(getattr(downloader, "audio_providers", None) or []):
+        handler = getattr(provider, "audio_handler", None)
+        if handler is None:
+            continue
+        for closer_name in ("close", "__exit__"):
+            closer = getattr(handler, closer_name, None)
+            if not callable(closer):
+                continue
+            try:
+                if closer_name == "__exit__":
+                    closer(None, None, None)
+                else:
+                    closer()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                pass
+            break
+
+    loop = getattr(downloader, "loop", None)
+    if loop is None:
+        return
+    try:
+        # Only clear the thread's loop when it is *this* loop, so an unrelated
+        # loop is never disturbed.
+        if _thread_event_loop() is loop:
+            asyncio.set_event_loop(None)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        if not loop.is_closed():
+            loop.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 _KNOWN_EXCEPTION_KINDS = {
     "QueryError": ErrorKind.NO_TRACK,
     "SongError": ErrorKind.NO_TRACK,
@@ -2162,8 +2331,12 @@ class TrackDownloader:
         self._downloader.progress_handler.update_callback = self._on_spotdl_progress
 
         self._temp_dir = Path(get_temp_path())
+        # Reference to the shared, process-level sidecar index (see
+        # _get_sidecar_index); it is the same dict object for every downloader on
+        # the same output directory, so it costs no extra memory.
         self._sidecar_index: Optional[Dict[str, Dict[str, Any]]] = None
         self._active_progress: Optional[Callable] = None
+        self._shutdown_done = False
 
         # Hard-kill orphans (a prior download that never got to clean up).
         self.cleanup_temp()
@@ -2343,43 +2516,44 @@ class TrackDownloader:
             return self.output_dir / f"{artist} - {title}.mp3"
 
     def _build_sidecar_index(self) -> Dict[str, Dict[str, Any]]:
-        index: Dict[str, Dict[str, Any]] = {}
-        for sidecar in _iter_sidecars(self.output_dir):
-            try:
-                info = json.loads(sidecar.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            entry = {"path": sidecar, "file": self.output_dir / info.get("file", "")}
-            if info.get("spotify_id"):
-                index.setdefault(info["spotify_id"], entry)
-            if info.get("url"):
-                index.setdefault(info["url"], entry)
-        return index
+        """Build a fresh index for this instance's output dir.
+
+        The authoritative index is shared process-wide (see
+        :func:`_get_sidecar_index`); this helper is retained as a thin,
+        side-effect-free builder for callers that need an independent snapshot.
+        """
+        return _build_sidecar_index_for(self.output_dir)
 
     def _find_sidecar(
         self, spotify_id: Optional[str], url: str
     ) -> Optional[Tuple[Path, Path]]:
-        """Return ``(mp3, sidecar)`` for an already-downloaded track, else None."""
-        if self._sidecar_index is None:
-            self._sidecar_index = self._build_sidecar_index()
-        index = self._sidecar_index
+        """Return ``(mp3, sidecar)`` for an already-downloaded track, else None.
 
-        def lookup() -> Optional[Tuple[Path, Path]]:
+        Uses the shared, process-level index so the sidecar set is scanned at
+        most once per output directory for the whole process (the old per
+        instance index re-read/re-parsed every sidecar on every track).
+        """
+        index = _get_sidecar_index(self.output_dir)
+        self._sidecar_index = index  # borrow a reference; dropped on shutdown()
+
+        def lookup(candidate: Dict[str, Dict[str, Any]]) -> Optional[Tuple[Path, Path]]:
             for key in (spotify_id, url):
                 if not key:
                     continue
-                entry = index.get(key)
+                entry = candidate.get(key)
                 if entry is not None and entry["file"].exists():
                     return entry["file"], entry["path"]
             return None
 
-        hit = lookup()
+        hit = lookup(index)
         if hit is not None:
             return hit
-        # Possible stale index (sidecar deleted externally). Rebuild once.
-        if any(not e["file"].exists() for e in index.values()):
-            self._sidecar_index = index = self._build_sidecar_index()
-            hit = lookup()
+        # Possible stale index (a sidecar was deleted externally). Rebuild once.
+        if _sidecar_index_has_missing_files(index):
+            _invalidate_sidecar_index(self.output_dir)
+            index = _get_sidecar_index(self.output_dir)
+            self._sidecar_index = index
+            hit = lookup(index)
             if hit is not None:
                 return hit
         return None
@@ -2403,7 +2577,10 @@ class TrackDownloader:
         tmp = sidecar.with_name("." + sidecar.name + ".tmp")
         tmp.write_text(json.dumps(info, ensure_ascii=True, indent=2), encoding="utf-8")
         os.replace(tmp, sidecar)
-        self._sidecar_index = None  # see the fresh entry next time
+        # Register the new sidecar in the shared index incrementally instead of
+        # invalidating it: the next _find_sidecar call sees it without rescanning
+        # (or re-parsing) every sidecar in the directory.
+        _add_sidecar_to_index(self.output_dir, song.song_id, song.url, sidecar, mp3)
 
     def _snapshot_temp(self) -> set:
         if not self._temp_dir.is_dir():
@@ -2549,6 +2726,9 @@ class TrackDownloader:
                 )
             finally:
                 self._downloader = original_downloader
+                # The fallback owns its own event loop + YoutubeDL instances;
+                # release them now instead of leaking them into the native heap.
+                _release_spotdl_downloader(fallback_downloader)
         except Exception as exc:
             logger.debug("YouTube fallback failed: %s", exc)
             raise
@@ -2963,6 +3143,9 @@ class TrackDownloader:
             sidecar = path.with_name(path.name + SIDECAR_EXT)
             if sidecar.exists():
                 sidecar.unlink()
+                # Keep the shared index honest: a deleted sidecar must not be
+                # returned by a later _find_sidecar call.
+                _remove_sidecar_from_index(self.output_dir, sidecar)
         except OSError:
             pass
 
@@ -3063,6 +3246,44 @@ class TrackDownloader:
         if not songs:
             return None
         return str(self._output_path_for_song(songs[0]))
+
+    # -- teardown -------------------------------------------------------------- #
+
+    def shutdown(self) -> None:
+        """Release the native/CPython resources this instance owns.
+
+        The Kotlin wrapper builds a fresh :class:`TrackDownloader` per track, and
+        each one owns a spotdl ``Downloader`` that (see
+        ``spotdl/download/downloader.py``) creates its own asyncio event loop
+        (``asyncio.new_event_loop()`` + ``asyncio.set_event_loop()``) and one
+        ``yt_dlp.YoutubeDL`` per audio provider.  Because those are only
+        reachable through reference cycles (loop <-> tasks <-> handlers), CPython
+        does not reclaim them promptly; the native heap therefore grew ~74 MB ->
+        ~2.9 GB over a bulk run and Android killed the process (``LOW_MEMORY``).
+
+        Idempotent and exception-safe: safe to call twice, on a partially
+        initialised instance, or after ``__init__`` failed.  The Kotlin bridge
+        calls this on the object returned by :func:`make_downloader`.
+        """
+        if getattr(self, "_shutdown_done", False):
+            return
+        self._shutdown_done = True
+
+        # Release the spotdl Downloader: per-provider YoutubeDL handlers first,
+        # then its private asyncio loop, then detach the loop from this thread.
+        _release_spotdl_downloader(getattr(self, "_downloader", None))
+
+        # Drop references so CPython can reclaim the native objects immediately
+        # instead of at interpreter shutdown.
+        self._downloader = None
+        self._sidecar_index = None
+        self._active_progress = None
+
+    def __del__(self) -> None:
+        try:
+            self.shutdown()
+        except Exception:  # noqa: BLE001 - a finalizer must never raise
+            pass
 
 
 def _track_dict(song: Any) -> Dict[str, Any]:
@@ -3169,6 +3390,20 @@ def cleanup_temp(
             "downloader must be a TrackDownloader (create it with make_downloader)"
         )
     return downloader.cleanup_temp(age_seconds)
+
+
+def shutdown(downloader: TrackDownloader) -> None:
+    """Release a :class:`TrackDownloader`'s native resources.
+
+    Module-level counterpart of :meth:`TrackDownloader.shutdown` so the Kotlin
+    bridge can call ``ghostify_dl.shutdown(handle)`` (idempotent, never raises for
+    a valid instance).
+    """
+    if not isinstance(downloader, TrackDownloader):
+        raise TypeError(
+            "downloader must be a TrackDownloader (create it with make_downloader)"
+        )
+    downloader.shutdown()
 
 
 def fetch_lyrics(name: str, artists: str, provider: str = "synced") -> Optional[str]:

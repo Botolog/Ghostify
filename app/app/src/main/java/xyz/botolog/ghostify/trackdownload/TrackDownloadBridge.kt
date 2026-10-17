@@ -3,19 +3,21 @@ package xyz.botolog.ghostify.trackdownload
 import com.chaquo.python.PyException
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
+import xyz.botolog.ghostify.perf.DownloadLeakTracker
 import xyz.botolog.ghostify.python.PyConverters
 import timber.log.Timber
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Kotlin bridge to the `ghostify_dl` Python module (Chaquopy) for single-track
  * downloads (TESTS.md T-030..T-041; PROJECT.md §6.1/§7).
  *
  * Wraps spotdl's programmatic API through `ghostify_dl.{make_downloader,
- * download, expected_output_path, cleanup_temp}`. A single instance holds one
- * Python `TrackDownloader` and serializes every call on [lock] so the Chaquopy
- * interpreter is never touched concurrently — matching the app's contract that
- * one downloader serves one worker (see PROJECT.md §7. "single-threaded
- * dispatcher").
+ * download, expected_output_path, cleanup_temp}`. Each call creates its own
+ * Python `TrackDownloader` so parallel downloads stay independent; the handle is
+ * owned by [withDownloader] and released exactly once in a `finally` (see
+ * [PyDownloaderLease]) so no native reference is leaked.
  *
  * Threading: every method blocks on Python + network and **must** be called from
  * a background dispatcher (the WorkManager worker drives it off `Dispatchers.IO`).
@@ -35,16 +37,33 @@ import timber.log.Timber
  * `ghostify_dl._fire`), so a misbehaving listener can never fail a download.
  *
  * @param moduleName the Python module to invoke (default "ghostify_dl").
+ * @param leakTracker optional lifecycle tracker used to assert the
+ *   "released exactly once per use" contract (T-166); production passes `null`.
  */
 class TrackDownloadBridge(
-    private val moduleName: String = DEFAULT_MODULE_NAME
+    private val moduleName: String = DEFAULT_MODULE_NAME,
+    private val leakTracker: DownloadLeakTracker? = null,
 ) {
+
+    /**
+     * Every downloader currently handed out by [withDownloader]. Used by
+     * [cancel] so an explicit cancellation can also release the native handle
+     * (idempotently — the owning `finally` remains the primary release path).
+     *
+     * Keyed by lease identity, which is why the set is built from a
+     * [ConcurrentHashMap] (leases use identity equality).
+     */
+    private val inFlightLeases: MutableSet<PyDownloaderLease<PyObject>> =
+        Collections.newSetFromMap(ConcurrentHashMap<PyDownloaderLease<PyObject>, Boolean>())
 
     /**
      * Creates a fresh Python `TrackDownloader` for each call. This avoids
      * serializing on a shared lock — each parallel download gets its own
      * independent downloader instance so multiple tracks can be fetched
      * concurrently.
+     *
+     * The returned handle is owned by [withDownloader], which releases it
+     * exactly once in a `finally`; callers must never close it themselves.
      */
     private fun requireDownloader(config: TrackDownloadConfig): PyObject {
         val module = Python.getInstance().getModule(moduleName)
@@ -57,6 +76,47 @@ class TrackDownloadBridge(
     }
 
     /**
+     * Runs [block] with a fresh downloader and releases the handle exactly once
+     * afterwards, on success, failure or cancellation. The lease is registered in
+     * [inFlightLeases] for the duration so [cancel] can reach it.
+     */
+    private fun <T> withDownloader(config: TrackDownloadConfig, block: (PyObject) -> T): T =
+        withPyDownloaderLease(
+            tracker = leakTracker,
+            ownerTag = OWNER_TAG,
+            onAcquired = { inFlightLeases.add(it) },
+            onReleased = { inFlightLeases.remove(it) },
+            factory = { requireDownloader(config) },
+            block = block,
+        )
+
+    /**
+     * Best-effort cancellation of every in-flight download.
+     *
+     * Each lease is released only if its handle has not been taken into use yet;
+     * a lease whose Python call is already running defers to its owning `finally`
+     * (so a running call can never have its handle closed underneath it). Release
+     * is idempotent, so the owning `finally` never double-closes.
+     *
+     * @return how many handles were released immediately by this call.
+     */
+    fun cancel(): Int {
+        val victims = inFlightLeases.toList()
+        var released = 0
+        for (lease in victims) {
+            inFlightLeases.remove(lease)
+            if (!lease.isClosed) {
+                lease.cancel()
+                if (lease.isClosed) released++
+            }
+        }
+        if (released > 0) {
+            Timber.i("TrackDownloadBridge.cancel: released $released in-flight downloader(s)")
+        }
+        return released
+    }
+
+    /**
      * Downloads one track, returning a typed result.
      *
      * Never throws for expected failures (T-036/T-039: unavailable, corrupt,
@@ -66,8 +126,8 @@ class TrackDownloadBridge(
      *
      * @param url a Spotify track URL/URI or a bare search query accepted by
      *   spotdl. Playlist URLs are rejected with [DownloadErrorKind.NO_TRACK].
-     * @param config downloader configuration; a new downloader is made if the
-     *   cached one does not match.
+     * @param config downloader configuration for the fresh downloader created
+     *   for this call.
      * @param listener optional progress callback; may be null to ignore progress.
      * @param ytId resolved YouTube video ID for YouTube-origin tracks.
      * @param meta optional flat metadata map (see [buildMetaPayload]) letting the
@@ -103,6 +163,9 @@ class TrackDownloadBridge(
      * The top-level [meta] map of primitives (String / Double / List / null)
      * converts natively through Chaquopy, like the scalar arguments already
      * passed here; `null` arrives in Python as `None`.
+     *
+     * The downloader handle is released by [withDownloader] once the call returns,
+     * whether it succeeded or threw.
      */
     private fun invokeDownload(
         url: String,
@@ -110,12 +173,12 @@ class TrackDownloadBridge(
         listener: TrackProgressListener?,
         ytId: String?,
         meta: Map<String, Any?>?,
-    ): PyObject? {
-        val downloader = requireDownloader(config)
-        val hook = listener?.let { HookAdapter(it) }
-        val module = Python.getInstance().getModule(moduleName)
-        return module.callAttr("download", downloader, url, hook, hook, hook, ytId, meta)
-    }
+    ): PyObject? =
+        withDownloader(config) { downloader ->
+            val hook = listener?.let { HookAdapter(it) }
+            val module = Python.getInstance().getModule(moduleName)
+            module.callAttr("download", downloader, url, hook, hook, hook, ytId, meta)
+        }
 
     /**
      * Path [url] would be written to, resolved without downloading — used for
@@ -128,10 +191,10 @@ class TrackDownloadBridge(
     ): String? {
         Timber.i("TrackDownloadBridge.expectedOutputPath: START")
         return try {
-            val downloader = requireDownloader(config)
-            val module = Python.getInstance().getModule(moduleName)
-            val py = module.callAttr("expected_output_path", downloader, url)
-            val result = PyConverters.string(py)
+            val result = withDownloader(config) { downloader ->
+                val module = Python.getInstance().getModule(moduleName)
+                PyConverters.string(module.callAttr("expected_output_path", downloader, url))
+            }
             Timber.i("TrackDownloadBridge.expectedOutputPath: returning $result")
             result
         } catch (e: PyException) {
@@ -154,14 +217,15 @@ class TrackDownloadBridge(
     ): Int {
         Timber.i("TrackDownloadBridge.cleanupTemp: START")
         return try {
-            val downloader = requireDownloader(config)
-            val module = Python.getInstance().getModule(moduleName)
-            val py = if (ageSeconds == null) {
-                module.callAttr("cleanup_temp", downloader)
-            } else {
-                module.callAttr("cleanup_temp", downloader, ageSeconds)
+            val result = withDownloader(config) { downloader ->
+                val module = Python.getInstance().getModule(moduleName)
+                val py = if (ageSeconds == null) {
+                    module.callAttr("cleanup_temp", downloader)
+                } else {
+                    module.callAttr("cleanup_temp", downloader, ageSeconds)
+                }
+                PyConverters.int(py) ?: 0
             }
-            val result = PyConverters.int(py) ?: 0
             Timber.i("TrackDownloadBridge.cleanupTemp: returning $result")
             result
         } catch (e: PyException) {
@@ -270,5 +334,8 @@ class TrackDownloadBridge(
 
     companion object {
         const val DEFAULT_MODULE_NAME = "ghostify_dl"
+
+        /** Leak-tracker owner tag for downloader handles created by this bridge. */
+        const val OWNER_TAG = "track-download"
     }
 }

@@ -6,11 +6,11 @@ import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.download.DownloadManager
 import xyz.botolog.ghostify.download.DownloadProgress
 import xyz.botolog.ghostify.download.DownloadRunState
-import xyz.botolog.ghostify.download.DownloadStatus
 import xyz.botolog.ghostify.ui.contract.LibraryContract
 import xyz.botolog.ghostify.ui.contract.LibraryContract.LibraryUiState
 import xyz.botolog.ghostify.ui.model.PlaylistUi
 import xyz.botolog.ghostify.ui.model.PlaylistStatus as UiPlaylistStatus
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import timber.log.Timber
 
@@ -59,6 +60,10 @@ class LibraryViewModel(
                         }
                     }
                 }
+                // Mapping every playlist row is driven by each playlist's progress
+                // stream; keep it off Main so a library of downloading playlists
+                // never blocks the UI thread.
+                .flowOn(Dispatchers.Default)
                 .catch { e ->
                     Timber.e(e, "LibraryViewModel: playlist stream FAILED")
                     _state.update { it.copy(loading = false) }
@@ -109,7 +114,7 @@ class LibraryViewModel(
      * @param progress the current download progress for this playlist.
      */
     private fun mapPlaylist(entity: PlaylistEntity, progress: DownloadProgress): PlaylistUi {
-        val downloaded = countDownloaded(progress)
+        val downloaded = progress.downloaded
         val isRunning = progress.state == DownloadRunState.RUNNING
         return PlaylistUi(
             id = entity.id,
@@ -125,13 +130,4 @@ class LibraryViewModel(
             lastSyncedAt = entity.lastSyncedAt,
         )
     }
-
-    /**
-     * Counts how many songs in the progress map have been fully downloaded.
-     *
-     * @param progress the download progress snapshot.
-     * @return the number of downloaded songs.
-     */
-    private fun countDownloaded(progress: DownloadProgress): Int =
-        progress.perSong.values.count { it.status == DownloadStatus.DOWNLOADED }
 }

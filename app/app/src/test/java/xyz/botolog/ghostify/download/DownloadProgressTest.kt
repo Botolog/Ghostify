@@ -426,4 +426,65 @@ class DownloadProgressTest {
             values,
         )
     }
+
+    // ── fromSongs — downloaded count ───────────────────────────────
+
+    @Test
+    fun `downloaded counts only DOWNLOADED songs, unlike done`() {
+        val songs = listOf(
+            song("s1", DownloadStatus.DOWNLOADED),
+            song("s2", DownloadStatus.FAILED),
+            song("s3", DownloadStatus.CANCELED),
+            song("s4", DownloadStatus.PENDING),
+        )
+        val result = DownloadProgressCalculator.fromSongs("pl1", songs)
+        assertEquals(4, result.total)
+        assertEquals(3, result.done)
+        assertEquals(1, result.downloaded)
+    }
+
+    // ── DownloadProgressTracker ────────────────────────────────────
+
+    @Test
+    fun `tracker reflects incremental status transitions`() {
+        val tracker = DownloadProgressTracker(
+            "pl1",
+            listOf(song("s1"), song("s2", DownloadStatus.DOWNLOADED)),
+        )
+        tracker.markQueued(listOf("s1"))
+        assertEquals(
+            DownloadStatus.QUEUED,
+            tracker.snapshot(DownloadRunState.RUNNING).perSong.getValue("s1").status,
+        )
+
+        tracker.markStatus("s1", DownloadStatus.DOWNLOADING)
+        assertEquals(
+            DownloadStatus.DOWNLOADING,
+            tracker.snapshot(DownloadRunState.RUNNING).perSong.getValue("s1").status,
+        )
+
+        tracker.applyResult("s1", TrackDownloadResult(songId = "s1", filePath = "/dl/s1.mp3"))
+        val snapshot = tracker.snapshot(DownloadRunState.RUNNING)
+        assertEquals(DownloadStatus.DOWNLOADED, snapshot.perSong.getValue("s1").status)
+        assertEquals(2, snapshot.downloaded)
+        assertEquals(2, snapshot.done)
+    }
+
+    @Test
+    fun `tracker applies cancel cleanup to in-flight and queued songs`() {
+        val tracker = DownloadProgressTracker(
+            "pl1",
+            listOf(
+                song("s1", DownloadStatus.DOWNLOADING),
+                song("s2", DownloadStatus.QUEUED),
+                song("s3", DownloadStatus.DOWNLOADED),
+            ),
+        )
+        tracker.applyCancelCleanup("Download canceled")
+        val snapshot = tracker.snapshot(DownloadRunState.CANCELED)
+        assertEquals(DownloadStatus.CANCELED, snapshot.perSong.getValue("s1").status)
+        assertEquals("Download canceled", snapshot.perSong.getValue("s1").error)
+        assertEquals(DownloadStatus.PENDING, snapshot.perSong.getValue("s2").status)
+        assertEquals(DownloadStatus.DOWNLOADED, snapshot.perSong.getValue("s3").status)
+    }
 }

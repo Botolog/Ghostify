@@ -250,7 +250,7 @@ class SettingsViewModel(
 
     override fun setConcurrency(count: Int) {
         Timber.i("SettingsViewModel.setConcurrency: START")
-        launch { settings.setConcurrency(count.coerceAtLeast(MIN_CONCURRENCY)) }
+        launch { settings.setConcurrency(count.coerceIn(MIN_CONCURRENCY, MAX_CONCURRENCY)) }
     }
 
     override fun setAutoDownload(enabled: Boolean) {
@@ -527,7 +527,9 @@ class SettingsViewModel(
             SettingsUiState(
                 bitrate = bitrateFromKbps(bitrate),
                 storagePath = storageDir,
-                concurrentDownloads = concurrency,
+                // Clamp on load too: a legacy/corrupt stored value above the cap
+                // must never multiply simultaneous native downloader sessions.
+                concurrentDownloads = concurrency.coerceIn(MIN_CONCURRENCY, MAX_CONCURRENCY),
                 autoDownloadOnAdd = autoDownload,
                 landscapeControlsSide = landscapeControlsSide,
             )
@@ -632,7 +634,22 @@ class SettingsViewModel(
     }
 
     companion object {
-        /** Minimum allowed value for concurrent downloads. */
-        private const val MIN_CONCURRENCY = 1
+        /**
+         * Minimum allowed value for concurrent downloads.
+         *
+         * Mirrors [SettingsRepository.MIN_CONCURRENCY] so the Settings UI and the
+         * repository clamp to the same bounds.
+         */
+        private const val MIN_CONCURRENCY = SettingsRepository.MIN_CONCURRENCY
+
+        /**
+         * Maximum allowed value for concurrent downloads.
+         *
+         * Each concurrent download holds a native Python downloader session
+         * (`libpython3.11.so`) plus its network/ffmpeg buffers, so an unbounded
+         * value multiplies native-heap pressure and per-tick load. Mirrors
+         * [SettingsRepository.MAX_CONCURRENCY].
+         */
+        private const val MAX_CONCURRENCY = SettingsRepository.MAX_CONCURRENCY
     }
 }

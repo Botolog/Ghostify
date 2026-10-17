@@ -60,6 +60,25 @@ class SettingsRepository(private val settingDao: SettingDao) {
         /** Default number of concurrent downloads. */
         const val DEFAULT_CONCURRENCY = 8
 
+        /**
+         * Minimum number of concurrent downloads.
+         *
+         * The repository clamps every read and write into
+         * [MIN_CONCURRENCY]..[MAX_CONCURRENCY], so no caller — including the
+         * pre-existing `concurrent_downloads` value stored by an older build —
+         * can ever drive more native downloader sessions than the cap allows.
+         */
+        const val MIN_CONCURRENCY = 1
+
+        /**
+         * Maximum number of concurrent downloads.
+         *
+         * Each concurrent download holds a native Python downloader session
+         * (`libpython3.11.so`) plus its network/ffmpeg buffers, so an unbounded
+         * value multiplies native-heap pressure. Matches [DEFAULT_CONCURRENCY].
+         */
+        const val MAX_CONCURRENCY = 8
+
         /** Default auto-download flag. */
         const val DEFAULT_AUTO_DOWNLOAD = false
 
@@ -246,12 +265,16 @@ class SettingsRepository(private val settingDao: SettingDao) {
     /**
      * Observes the maximum number of concurrent downloads.
      *
-     * @return A [Flow] emitting the concurrency limit.
+     * Always clamped into [MIN_CONCURRENCY]..[MAX_CONCURRENCY] so a legacy or
+     * corrupt stored value above the cap can never spawn more simultaneous
+     * native downloader sessions than the engine allows.
+     *
+     * @return A [Flow] emitting the clamped concurrency limit.
      */
     fun observeConcurrency(): Flow<Int> {
         Timber.i("SettingsRepository.observeConcurrency: START")
         val result = observe(KEY_CONCURRENCY, DEFAULT_CONCURRENCY.toString())
-            .map { it.toIntOrNull() ?: DEFAULT_CONCURRENCY }
+            .map { clampConcurrency(it.toIntOrNull() ?: DEFAULT_CONCURRENCY) }
         Timber.i("SettingsRepository.observeConcurrency: returning $result")
         return result
     }
@@ -259,24 +282,31 @@ class SettingsRepository(private val settingDao: SettingDao) {
     /**
      * One-shot fetch of the concurrency limit.
      *
-     * @return The concurrency limit.
+     * Always clamped into [MIN_CONCURRENCY]..[MAX_CONCURRENCY] for the same
+     * reason as [observeConcurrency]: this is the value [DownloadProvider] feeds
+     * to the download engine, so an out-of-range stored value must be capped at
+     * the source.
+     *
+     * @return The clamped concurrency limit.
      */
     suspend fun getConcurrency(): Int {
         Timber.i("SettingsRepository.getConcurrency: START")
-        val result = get(KEY_CONCURRENCY, DEFAULT_CONCURRENCY.toString())
-            .toIntOrNull() ?: DEFAULT_CONCURRENCY
+        val result = clampConcurrency(
+            get(KEY_CONCURRENCY, DEFAULT_CONCURRENCY.toString())
+                .toIntOrNull() ?: DEFAULT_CONCURRENCY,
+        )
         Timber.i("SettingsRepository.getConcurrency: returning $result")
         return result
     }
 
     /**
-     * Persists the concurrency limit.
+     * Persists the concurrency limit, clamped into [MIN_CONCURRENCY]..[MAX_CONCURRENCY].
      *
      * @param value The new concurrency limit.
      */
     suspend fun setConcurrency(value: Int) {
         Timber.i("SettingsRepository.setConcurrency: START")
-        set(KEY_CONCURRENCY, value.toString())
+        set(KEY_CONCURRENCY, clampConcurrency(value).toString())
     }
 
     // ── auto_download_on_add ──────────────────────────────────────────
@@ -539,6 +569,15 @@ class SettingsRepository(private val settingDao: SettingDao) {
             in FALSY_VALUES -> false
             else -> fallback
         }
+
+    /**
+     * Clamps a concurrency value into [MIN_CONCURRENCY]..[MAX_CONCURRENCY].
+     *
+     * Applied on read and write so a legacy stored value above the cap can never
+     * be served to [xyz.botolog.ghostify.download.DownloadProvider].
+     */
+    private fun clampConcurrency(value: Int): Int =
+        value.coerceIn(MIN_CONCURRENCY, MAX_CONCURRENCY)
 
     /**
      * Parses a stored app-scale string, falling back to [DEFAULT_APP_SCALE] for

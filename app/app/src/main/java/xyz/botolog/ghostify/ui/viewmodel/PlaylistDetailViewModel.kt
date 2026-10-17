@@ -11,7 +11,6 @@ import xyz.botolog.ghostify.sync.SyncException
 import xyz.botolog.ghostify.sync.SyncUseCase
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract
 import xyz.botolog.ghostify.ui.contract.PlaylistDetailContract.PlaylistDetailUiState
-import xyz.botolog.ghostify.ui.model.SongStatus as UiSongStatus
 import xyz.botolog.ghostify.ui.model.TrackUi
 import xyz.botolog.ghostify.ui.playlist.PlaylistSortSpec
 import xyz.botolog.ghostify.ui.playlist.isStoredOrder
@@ -34,6 +33,7 @@ import java.io.File
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 
 /**
@@ -161,6 +161,11 @@ class PlaylistDetailViewModel(
                 mapToUi(playlist, progress, isSyncing, loadError)
             }
                 .distinctUntilChanged()
+                // The combine transform rebuilds a TrackUi per song and is driven
+                // by every download status change; run the dedupe and the mapping
+                // on Default so a 1300-track playlist never blocks Main while a
+                // download streams.
+                .flowOn(Dispatchers.Default)
                 .catch { e ->
                     Timber.e(e, "PlaylistDetailViewModel: playlist stream FAILED")
                     _state.update {
@@ -289,19 +294,10 @@ class PlaylistDetailViewModel(
                 coverUrl = song.coverUrl,
                 coverArtLocalPath = song.coverArtLocalPath,
             )
-            // Prefer local cover file bytes so the ExoPlayer timeline (and thus the
-            // notification/lockscreen) carries artworkData instead of null.
-            val artBytes = withContext(Dispatchers.IO) {
-                try {
-                    song.coverArtLocalPath?.let { path ->
-                        val f = File(path)
-                        if (f.exists() && f.isFile) f.readBytes().takeIf { it.isNotEmpty() } else null
-                    }
-                } catch (_: Exception) {
-                    null
-                }
-            }
-            val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(coreItem, artBytes)
+            // A user-queued song is not the current item, so its media item must carry no
+            // artworkData (media3 decodes every queued item's art). PlayerController resolves
+            // and caches the cover from coverArtLocalPath and applies it on transition.
+            val mediaItem = xyz.botolog.ghostify.player.MediaItemMapper.toMediaItem(coreItem, null)
             player.addToQueueNext(song.id, mediaItem, song.coverUrl, song.coverArtLocalPath)
         }
     }
@@ -432,14 +428,13 @@ class PlaylistDetailViewModel(
      * and transient flags into a single snapshot.
      *
      * @param playlist the playlist entity, or `null` if not found.
-     * @param songs the full list of songs in the playlist.
-     * @param progress the current download progress, or `null` when idle.
+     * @param progress the current download progress (always present while the screen is open).
      * @param isSyncing whether a sync operation is in progress.
      * @param loadError the most recent error message, or `null`.
      */
     private fun mapToUi(
         playlist: xyz.botolog.ghostify.data.db.entity.PlaylistEntity?,
-        progress: xyz.botolog.ghostify.download.DownloadProgress?,
+        progress: xyz.botolog.ghostify.download.DownloadProgress,
         isSyncing: Boolean,
         loadError: String?,
     ): PlaylistDetailUiState {
@@ -450,8 +445,10 @@ class PlaylistDetailViewModel(
                 error = loadError ?: PLAYLIST_NOT_FOUND_ERROR,
             )
         }
-        val downloaded = cachedTracks.count { it.status == UiSongStatus.DOWNLOADED }
-        val isRunning = progress?.state == DownloadRunState.RUNNING
+        // `downloaded` is precomputed once per progress emission; counting the
+        // cached TrackUi list here instead was an O(N) pass on every emission.
+        val downloaded = progress.downloaded
+        val isRunning = progress.state == DownloadRunState.RUNNING
         return PlaylistDetailUiState(
             playlistId = playlistId,
             name = playlist.name,
@@ -462,7 +459,7 @@ class PlaylistDetailViewModel(
             trackCount = playlist.trackCount,
             loading = false,
             isDownloadingAll = isRunning,
-            downloadAllProgress = if (isRunning) progress?.overallPercent?.toInt() else null,
+            downloadAllProgress = if (isRunning) progress.overallPercent.toInt() else null,
             isSyncing = isSyncing,
             error = loadError,
             origin = playlist.origin.name,

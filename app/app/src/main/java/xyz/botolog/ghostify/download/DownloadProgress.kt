@@ -35,6 +35,15 @@ data class DownloadProgress(
     val overallPercent: Float,
     val playlistStatus: PlaylistStatus,
     val perSong: Map<String, SongProgress>,
+    /**
+     * Count of songs that are actually DOWNLOADED (a strict subset of [done]:
+     * FAILED and CANCELED are terminal but not downloaded).
+     *
+     * Precomputed here so UI layers can show a downloaded count without an
+     * additional O(N) pass over [perSong] on every emission. Additive and
+     * defaulted so existing construction sites stay source-compatible.
+     */
+    val downloaded: Int = 0,
 )
 
 /**
@@ -66,14 +75,23 @@ object DownloadProgressCalculator {
         fractions: Map<String, Float> = emptyMap(),
     ): DownloadProgress {
         val total = songs.size
-        val done = songs.count { it.status.isTerminal }
+        var done = 0
+        var downloaded = 0
+        // Single pass: no intermediate Pair allocations and no second scan for
+        // the downloaded count (progress is emitted thousands of times per run).
+        val perSong = LinkedHashMap<String, SongProgress>(total)
+        for (song in songs) {
+            if (song.status.isTerminal) done++
+            if (song.status == DownloadStatus.DOWNLOADED) downloaded++
+            perSong[song.id] = buildSongProgress(song, fractions)
+        }
         val overallPercent = computeOverallPercent(total, done)
-        val perSong = songs.associate { song -> buildSongProgress(song, fractions) }
         return DownloadProgress(
             playlistId = playlistId,
             state = state,
             total = total,
             done = done,
+            downloaded = downloaded,
             overallPercent = overallPercent,
             playlistStatus = playlistStatus,
             perSong = perSong,
@@ -93,14 +111,101 @@ object DownloadProgressCalculator {
     private fun buildSongProgress(
         song: SongRecord,
         fractions: Map<String, Float>,
-    ): Pair<String, SongProgress> {
+    ): SongProgress {
         val fraction = fractions[song.id]
             ?: if (song.status == DownloadStatus.DOWNLOADED) FULL_FRACTION else ZERO_FRACTION
-        return song.id to SongProgress(
+        return SongProgress(
             songId = song.id,
             status = song.status,
             fraction = fraction,
             error = song.error,
         )
+    }
+}
+
+/**
+ * Incremental, in-memory [DownloadProgress] source for one playlist run.
+ *
+ * The queue runner keeps a single instance alive for the whole run and mutates
+ * it as each status transition happens, so emitting a snapshot never has to
+ * re-read the playlist from the database and re-sort it (the old O(N²) pattern
+ * did exactly that twice per track). The full playlist is loaded once at the
+ * start of the run; after that everything is derived from memory.
+ *
+ * Mutations and snapshot building are guarded by a single lock so the bounded
+ * worker pool can update it concurrently and every snapshot is internally
+ * consistent. Snapshot construction is cheap (a map build over already-computed
+ * [SongProgress] values, no database access and no sorting).
+ *
+ * @param playlistId the playlist being tracked.
+ * @param songs the full playlist song list, loaded once when the run starts.
+ */
+internal class DownloadProgressTracker(
+    private val playlistId: String,
+    songs: List<SongRecord>,
+) {
+
+    private val lock = Any()
+    private val songs = songs.toMutableList()
+    private val indexById = HashMap<String, Int>(songs.size).apply {
+        songs.forEachIndexed { index, song -> put(song.id, index) }
+    }
+
+    /** Marks one song's status (and optional error) in the in-memory model. */
+    fun markStatus(songId: String, status: DownloadStatus, error: String? = null) {
+        synchronized(lock) {
+            val index = indexById[songId] ?: return
+            songs[index] = songs[index].copy(status = status, error = error)
+        }
+    }
+
+    /** Marks several songs as QUEUED (mirrors `setStatuses(ids, QUEUED)`). */
+    fun markQueued(songIds: Collection<String>) {
+        synchronized(lock) {
+            songIds.forEach { id ->
+                val index = indexById[id] ?: return@forEach
+                songs[index] = songs[index].copy(status = DownloadStatus.QUEUED)
+            }
+        }
+    }
+
+    /**
+     * Applies a finished [TrackDownloadResult], mirroring exactly the status and
+     * error the queue runner just wrote to the database for that song.
+     */
+    fun applyResult(songId: String, result: TrackDownloadResult) {
+        when {
+            result.error is DownloadError.Canceled ->
+                markStatus(songId, DownloadStatus.CANCELED, result.error.message)
+            result.isSuccess ->
+                markStatus(songId, DownloadStatus.DOWNLOADED, null)
+            else ->
+                markStatus(songId, DownloadStatus.FAILED, result.error?.message)
+        }
+    }
+
+    /**
+     * Mirrors the queue runner's cancellation cleanup: in-flight songs become
+     * CANCELED and still-queued songs go back to PENDING, so the final canceled
+     * snapshot matches what was just persisted.
+     */
+    fun applyCancelCleanup(cancelErrorMessage: String) {
+        synchronized(lock) {
+            for (index in songs.indices) {
+                val song = songs[index]
+                songs[index] = when (song.status) {
+                    DownloadStatus.DOWNLOADING ->
+                        song.copy(status = DownloadStatus.CANCELED, error = cancelErrorMessage)
+                    DownloadStatus.QUEUED ->
+                        song.copy(status = DownloadStatus.PENDING)
+                    else -> song
+                }
+            }
+        }
+    }
+
+    /** Builds an immutable snapshot from the current in-memory state. */
+    fun snapshot(state: DownloadRunState): DownloadProgress = synchronized(lock) {
+        DownloadProgressCalculator.fromSongs(playlistId, songs, state)
     }
 }

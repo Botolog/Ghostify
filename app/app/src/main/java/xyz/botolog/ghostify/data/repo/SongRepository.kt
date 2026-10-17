@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.data.repo
 
 import xyz.botolog.ghostify.data.db.TransactionRunner
 import xyz.botolog.ghostify.data.db.dao.SongDao
+import xyz.botolog.ghostify.data.db.dao.updateStatusInChunks
 import xyz.botolog.ghostify.data.db.entity.SongEntity
 import xyz.botolog.ghostify.data.model.SongStatus
 import kotlinx.coroutines.flow.Flow
@@ -163,6 +164,11 @@ class SongRepository(
     /**
      * Batch transition used by "download all": PENDING/FAILED → QUEUED → DOWNLOADING.
      *
+     * The ids are written in chunks of at most
+     * [xyz.botolog.ghostify.data.db.dao.SongDao.UPDATE_STATUS_CHUNK_SIZE] so a
+     * 1370-track playlist can never exceed SQLite's `IN (...)` variable limit,
+     * all inside a single transaction.
+     *
      * @param ids The song row ids to update.
      * @param status The target status.
      */
@@ -170,18 +176,27 @@ class SongRepository(
         Timber.i("SongRepository.setStatus: START")
         if (ids.isEmpty()) return
         Timber.d("SongRepository: state changed to $status")
-        transactions.withinTransaction { songDao.updateStatus(ids, status) }
+        transactions.withinTransaction {
+            updateStatusInChunks(ids, status) { chunk, target -> songDao.updateStatus(chunk, target) }
+        }
     }
 
     /**
      * Removes tracks that disappeared from the Spotify playlist during re-sync.
+     *
+     * The Spotify ids are written in chunks of at most
+     * [xyz.botolog.ghostify.data.db.dao.SongDao.UPDATE_STATUS_CHUNK_SIZE] inside a
+     * single transaction (via
+     * [xyz.botolog.ghostify.data.db.dao.SongDao.deleteBySpotifyIdsChunked]), so a
+     * large re-sync can never exceed SQLite's `IN (...)` variable limit.
      *
      * @param playlistId The playlist to delete from.
      * @param spotifyIds The Spotify track ids to remove.
      */
     suspend fun deleteBySpotifyIds(playlistId: String, spotifyIds: List<String>) {
         Timber.i("SongRepository.deleteBySpotifyIds: START")
-        transactions.withinTransaction { songDao.deleteBySpotifyIds(playlistId, spotifyIds) }
+        if (spotifyIds.isEmpty()) return
+        transactions.withinTransaction { songDao.deleteBySpotifyIdsChunked(playlistId, spotifyIds) }
     }
 
     // ── Aggregate ─────────────────────────────────────────────────────

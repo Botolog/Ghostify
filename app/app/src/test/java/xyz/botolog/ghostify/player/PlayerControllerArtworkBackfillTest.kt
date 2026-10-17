@@ -2,14 +2,11 @@ package xyz.botolog.ghostify.player
 
 import android.content.Context
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import io.mockk.clearMocks
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,20 +17,27 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import xyz.botolog.ghostify.player.core.PlayerQueueBuilder
 import xyz.botolog.ghostify.player.core.QueueBuildResult
 import xyz.botolog.ghostify.player.core.QueueItem
+import xyz.botolog.ghostify.player.core.RepeatMode
 import xyz.botolog.ghostify.player.core.Song
 import xyz.botolog.ghostify.player.core.SongStatus
 
 /**
- * The notification/lockscreen reads `MediaMetadata.artworkData` off the ExoPlayer timeline
- * (stock DefaultMediaNotificationProvider), so backfilled artwork must be mirrored onto the
- * timeline via `replaceMediaItem` — filling only the UI snapshot leaves every non-start item
- * without art in the notification.
+ * Only the *current* item may carry `MediaMetadata.artworkData`.
+ *
+ * media3's legacy session stub (`MediaSessionLegacyStub.updateQueue`) walks the whole timeline
+ * and decodes every item's `artworkData` into a full-resolution bitmap, so stamping artwork on
+ * the entire queue retains ~1.5 MiB native per item and OOMs the app. The stock
+ * `DefaultMediaNotificationProvider` only reads the current item, so the fix is: attach art to
+ * the item playback starts on, and (re)apply it — clearing the previous one — on every
+ * media-item transition.
  */
 class PlayerControllerArtworkBackfillTest {
 
@@ -45,6 +49,7 @@ class PlayerControllerArtworkBackfillTest {
     private var currentIndex = 0
     private var playWhenReady = true
     private var position = 5_000L
+    private var timelineApplied = false
 
     private fun artFor(id: String) = "art-$id".toByteArray()
 
@@ -54,6 +59,7 @@ class PlayerControllerArtworkBackfillTest {
         currentIndex = 0
         playWhenReady = true
         position = 5_000L
+        timelineApplied = false
         mediaItems = mutableListOf()
         exoPlayer = mockk(relaxed = true)
         every { exoPlayer.currentMediaItem } answers { mediaItems.getOrNull(currentIndex) }
@@ -77,6 +83,9 @@ class PlayerControllerArtworkBackfillTest {
         every { exoPlayer.replaceMediaItem(any<Int>(), any()) } answers {
             mediaItems[firstArg<Int>()] = secondArg()
         }
+        every { exoPlayer.addMediaItem(any<Int>(), any()) } answers {
+            mediaItems.add(firstArg<Int>(), secondArg())
+        }
         every { exoPlayer.seekTo(any<Int>(), any<Long>()) } answers {
             currentIndex = firstArg()
             position = secondArg()
@@ -84,6 +93,7 @@ class PlayerControllerArtworkBackfillTest {
         every { exoPlayer.setMediaItems(any<List<MediaItem>>(), any<Int>(), any<Long>()) } answers {
             mediaItems = firstArg<List<MediaItem>>().toMutableList()
             currentIndex = secondArg()
+            timelineApplied = true
         }
         every { exoPlayer.addMediaItems(any<List<MediaItem>>()) } answers {
             mediaItems.addAll(firstArg())
@@ -101,13 +111,19 @@ class PlayerControllerArtworkBackfillTest {
         if (uncaught.isNotEmpty()) throw AssertionError(uncaught.first())
     }
 
-    private fun buildController(extractor: ArtworkExtractor, coverProvider: ((String, String?) -> ByteArray?)? = null) {
+    private fun buildController(
+        extractor: ArtworkExtractor,
+        coverProvider: ((String, String?) -> ByteArray?)? = null,
+        restore: PlayerStatePersistence.SavedState? = null,
+    ) {
         uncaught.clear()
+        timelineApplied = false
         controllerScope = CoroutineScope(
             SupervisorJob() + Dispatchers.Unconfined + CoroutineExceptionHandler { _, e -> uncaught.add(e) },
         )
         val persistence = mockk<PlayerStatePersistence>(relaxed = true)
-        coEvery { persistence.load() } returns null
+        coEvery { persistence.load() } returns restore
+        coEvery { persistence.restoreSongs(any()) } returns ids().map(::queueItem).map(::song)
         val queueBuilder = mockk<PlayerQueueBuilder>()
         every { queueBuilder.build(any(), any()) } answers {
             QueueBuildResult.Ready(
@@ -155,79 +171,161 @@ class PlayerControllerArtworkBackfillTest {
         status = SongStatus.DOWNLOADED,
     )
 
-    @Test
-    fun backfillMirrorsArtOntoTimelineSoNotificationShowsIt() {
-        buildController(ArtworkExtractor { path -> artFor(path) })
-        controller.playPlaylist(ids().map(::queueItem).map(::song), startSongId = ids().first(), playlistId = "p1")
+    /** Polls until the queue has been applied to the (mocked) player. */
+    private fun awaitTimelineApplied(timeoutMs: Long = 5_000) =
+        awaitCondition("timeline applied", timeoutMs) { timelineApplied }
 
-        // Start item embedded synchronously; backfilled items must be replaced with art.
-        verify(timeout = 5_000) { exoPlayer.replaceMediaItem(any(), any()) }
+    /** Polls until [mediaId] carries artworkData on the timeline. */
+    private fun awaitArtwork(mediaId: String, timeoutMs: Long = 5_000) = awaitCondition(
+        "artwork on $mediaId",
+        timeoutMs,
+    ) { mediaItems.firstOrNull { it.mediaId == mediaId }?.mediaMetadata?.artworkData != null }
 
-        // Timeline items beyond the start must now carry artworkData for the notification.
-        var found = false
-        for (i in mediaItems.indices) {
-            val md = mediaItems[i].mediaMetadata
-            if (mediaItems[i].mediaId != "song-0") {
-                assertNotNull("item $i (${mediaItems[i].mediaId}) must have artworkData", md.artworkData)
-                found = true
+    private fun awaitCondition(what: String, timeoutMs: Long, predicate: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!predicate()) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("timed out waiting for $what")
+            Thread.sleep(10)
+        }
+    }
+
+    /** Asserts the current item carries art and every other queued item carries none. */
+    private fun assertOnlyCurrentItemHasArtwork() {
+        val currentId = mediaItems.getOrNull(currentIndex)?.mediaId
+        assertNotNull("expected a current item on the timeline", currentId)
+        var currentSeen = false
+        for (item in mediaItems) {
+            if (item.mediaId == currentId) {
+                currentSeen = true
+                assertNotNull("current item $currentId must carry artworkData", item.mediaMetadata.artworkData)
+            } else {
+                assertNull(
+                    "non-current item ${item.mediaId} must NOT carry artworkData",
+                    item.mediaMetadata.artworkData,
+                )
             }
         }
-        assert(found) { "expected backfilled items with art" }
+        assert(currentSeen) { "current item $currentId not found on the timeline" }
     }
 
     @Test
-    fun backfillDoesNotDisturbPlaybackPosition() {
+    fun playPlaylistOnlyCurrentItemCarriesArtwork() {
         buildController(ArtworkExtractor { path -> artFor(path) })
-        val startPos = position
         controller.playPlaylist(ids().map(::queueItem).map(::song), startSongId = ids().first(), playlistId = "p1")
 
-        verify(timeout = 5_000) { exoPlayer.replaceMediaItem(any(), any()) }
+        awaitTimelineApplied()
 
-        // Non-current backfills must not seek the player away.
-        // Current is song-0 (already has art, skipped), so position stays put.
-        assert(exoPlayer.currentMediaItem?.mediaId == "song-0" || mediaItems.getOrNull(currentIndex)?.mediaId == "song-0")
+        assertEquals(3, mediaItems.size)
+        assertOnlyCurrentItemHasArtwork()
+        assertArrayEquals(artFor("/music/song-0.mp3"), mediaItems[0].mediaMetadata.artworkData)
     }
 
     @Test
-    fun cheapCoverBytesAreEmbeddedSynchronously() {
-        // Extractor returns nothing; provider simulates covers/*.jpg bytes.
+    fun restoreOnlyCurrentItemCarriesArtwork() {
+        buildController(
+            extractor = ArtworkExtractor { path -> artFor(path) },
+            restore = savedState(currentSongId = "song-0"),
+        )
+
+        awaitTimelineApplied()
+
+        assertEquals(3, mediaItems.size)
+        assertOnlyCurrentItemHasArtwork()
+    }
+
+    @Test
+    fun notificationPathYieldsArtworkForRestoredCurrentItem() {
+        buildController(
+            extractor = ArtworkExtractor { path -> artFor(path) },
+            restore = savedState(currentSongId = "song-1"),
+        )
+
+        awaitTimelineApplied()
+
+        // The stock notification/lockscreen reads artworkData off the current timeline item.
+        val current = exoPlayer.currentMediaItem
+        assertNotNull("notification must find art for the current item", current?.mediaMetadata?.artworkData)
+        assertArrayEquals(artFor("/music/song-1.mp3"), current?.mediaMetadata?.artworkData)
+    }
+
+    @Test
+    fun transitionStampsNewCurrentAndClearsPrevious() {
+        buildController(ArtworkExtractor { path -> artFor(path) })
+        controller.playPlaylist(ids().map(::queueItem).map(::song), startSongId = ids().first(), playlistId = "p1")
+        awaitTimelineApplied()
+
+        // Simulate a skip to song-1.
+        currentIndex = 1
+        controller.onMediaItemTransition(
+            mediaItems[1],
+            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+        )
+
+        awaitArtwork("song-1")
+
+        assertOnlyCurrentItemHasArtwork()
+        assertNull("previous item must have been stripped", mediaItems[0].mediaMetadata.artworkData)
+        assertArrayEquals(artFor("/music/song-1.mp3"), mediaItems[1].mediaMetadata.artworkData)
+    }
+
+    @Test
+    fun transitionWithoutLocalCoverLeavesCurrentArtNull() {
+        buildController(ArtworkExtractor { null })
+        controller.playPlaylist(ids().map(::queueItem).map(::song), startSongId = ids().first(), playlistId = "p1")
+        awaitTimelineApplied()
+
+        currentIndex = 1
+        controller.onMediaItemTransition(mediaItems[1], Player.MEDIA_ITEM_TRANSITION_REASON_SEEK)
+
+        // No cover anywhere: the previous item is still stripped, and nothing is invented.
+        assertNull(mediaItems[0].mediaMetadata.artworkData)
+        assertNull(mediaItems[1].mediaMetadata.artworkData)
+    }
+
+    @Test
+    fun addToQueueNextDoesNotStampArtworkOnQueuedItem() {
+        buildController(
+            extractor = ArtworkExtractor { null },
+            coverProvider = { songId, _ -> artFor(songId) },
+        )
+        controller.playPlaylist(ids().map(::queueItem).map(::song), startSongId = ids().first(), playlistId = "p1")
+        awaitTimelineApplied()
+
+        // A user-queued item arrives with art attached (old view-model behaviour); the
+        // controller must strip it before inserting because it is not the current item.
+        val queued = queueItem("song-9")
+        val incoming = MediaItemMapper.toMediaItem(queued, artFor("song-9"))
+        controller.addToQueueNext("song-9", incoming, coverUrl = null, coverArtLocalPath = null)
+
+        val inserted = mediaItems.firstOrNull { it.mediaId == "song-9" }
+        assertNotNull("queued item must have been inserted", inserted)
+        assertNull("queued item must not carry artworkData", inserted?.mediaMetadata?.artworkData)
+        // The current item keeps its own art.
+        assertNotNull(mediaItems[0].mediaMetadata.artworkData)
+    }
+
+    @Test
+    fun cachedCoverBytesEmbeddedOnlyForCurrentItem() {
         buildController(
             extractor = ArtworkExtractor { null },
             coverProvider = { songId, _ -> artFor(songId) },
         )
         controller.playPlaylist(ids().map(::queueItem).map(::song), startSongId = ids().first(), playlistId = "p1")
 
-        verify(timeout = 5_000) { exoPlayer.setMediaItems(any<List<MediaItem>>(), any(), any()) }
+        awaitTimelineApplied()
 
-        // Even without extractor hits, timeline must carry art from local covers.
-        for (item in mediaItems) {
-            assertNotNull("timeline ${item.mediaId} must have art from covers", item.mediaMetadata.artworkData)
-            assertArrayEquals(artFor(item.mediaId), item.mediaMetadata.artworkData)
-        }
+        assertOnlyCurrentItemHasArtwork()
+        assertArrayEquals(artFor("song-0"), mediaItems[0].mediaMetadata.artworkData)
     }
 
-    @Test
-    fun reorderRebuildKeepsArtworkFromCache() {
-        buildController(ArtworkExtractor { path -> artFor(path) })
-        controller.playPlaylist(ids().map(::queueItem).map(::song), startSongId = ids().first(), playlistId = "p1")
-        verify(timeout = 5_000) { exoPlayer.setMediaItems(any<List<MediaItem>>(), any(), any()) }
-        verify(timeout = 5_000) { exoPlayer.replaceMediaItem(any(), any()) }
-        clearMocks(exoPlayer, answers = false)
-
-        // Re-mock minimal timeline access after clear.
-        every { exoPlayer.currentMediaItem } answers { mediaItems.getOrNull(currentIndex) }
-        every { exoPlayer.currentMediaItemIndex } answers { currentIndex }
-        every { exoPlayer.getMediaItemAt(any()) } answers { mediaItems[firstArg()] }
-        every { exoPlayer.mediaItemCount } answers { mediaItems.size }
-        every { exoPlayer.currentPosition } answers { position }
-        every { exoPlayer.isPlaying } answers { playWhenReady }
-        every { exoPlayer.playWhenReady } answers { playWhenReady }
-        every { exoPlayer.playbackState } returns Player.STATE_READY
-
-        // Force a full rebuild path by stubbing currentById miss is hard; at minimum
-        // verify cached art is reused when building a fresh MediaItem for a known song.
-        val cached = artFor("song-1")
-        val rebuilt = MediaItemMapper.toMediaItem(queueItem("song-1"), cached)
-        assertArrayEquals(cached, rebuilt.mediaMetadata.artworkData)
-    }
+    private fun savedState(currentSongId: String) = PlayerStatePersistence.SavedState(
+        currentSongId = currentSongId,
+        playlistId = "p1",
+        queueSongIds = ids(),
+        shuffleEnabled = false,
+        repeatMode = RepeatMode.OFF,
+        volume = 1f,
+        positionMs = 12_345L,
+        wasPlaying = false,
+    )
 }

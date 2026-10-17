@@ -228,4 +228,53 @@ class RecoveryLogicTest {
         )
         assertFalse(plan.isEmpty)
     }
+
+    // ── applyPlan chunking (SQLite variable limit) ────────────────────────
+
+    @Test
+    fun applyPlan_chunksLargeSongResetsUnderTheSqliteVariableLimit() {
+        val batches = mutableListOf<List<String>>()
+        val dao = object : RecoveryDao {
+            override fun songsSnapshot(): List<SongState> = emptyList()
+            override fun playlistsSnapshot(): List<PlaylistState> = emptyList()
+            override fun resetSongsToPending(ids: List<String>) {
+                batches += ids
+            }
+            override fun resetPlaylistStatus(id: String, toStatus: PlaylistStatus) = Unit
+        }
+        val plan = RecoveryPlan(songResets = (1..1370).map { SongReset("s$it") })
+
+        dao.applyPlan(plan)
+
+        assertEquals(2, batches.size)
+        assertTrue(
+            "every batch must respect the SQLite limit",
+            batches.all { it.size <= RecoveryDao.RESET_CHUNK_SIZE },
+        )
+        assertEquals("every id must be covered exactly once", 1370, batches.flatten().distinct().size)
+    }
+
+    @Test
+    fun applyPlan_appliesEveryPlaylistReset() {
+        val resets = mutableListOf<Pair<String, PlaylistStatus>>()
+        val dao = object : RecoveryDao {
+            override fun songsSnapshot(): List<SongState> = emptyList()
+            override fun playlistsSnapshot(): List<PlaylistState> = emptyList()
+            override fun resetSongsToPending(ids: List<String>) = Unit
+            override fun resetPlaylistStatus(id: String, toStatus: PlaylistStatus) {
+                resets += id to toStatus
+            }
+        }
+        val plan = RecoveryPlan(
+            songResets = listOf(SongReset("s1")),
+            playlistResets = listOf(
+                PlaylistReset("p1", PlaylistStatus.READY),
+                PlaylistReset("p2", PlaylistStatus.NEW),
+            ),
+        )
+
+        dao.applyPlan(plan)
+
+        assertEquals(listOf("p1" to PlaylistStatus.READY, "p2" to PlaylistStatus.NEW), resets)
+    }
 }

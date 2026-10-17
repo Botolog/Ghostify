@@ -1,10 +1,12 @@
 package xyz.botolog.ghostify.data.db.dao
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.RewriteQueriesToDropUnusedColumns
 import androidx.room.Transaction
 import androidx.room.Update
 import xyz.botolog.ghostify.data.db.entity.SongEntity
@@ -41,6 +43,35 @@ interface SongDao {
      */
     @Query("SELECT * FROM songs WHERE playlist_id = :playlistId ORDER BY position ASC, added_at ASC")
     suspend fun getSongsForPlaylist(playlistId: String): List<SongEntity>
+
+    /**
+     * Observes all songs in a playlist as a lyrics-free [SongDownloadRow] projection,
+     * ordered by position then insertion time.
+     *
+     * Identical filtering/ordering to [observeSongsForPlaylist] but Room rewrites the
+     * `SELECT *` (via [RewriteQueriesToDropUnusedColumns]) to only the columns the
+     * download path needs, so the large `lyrics` TEXT column is never materialised.
+     *
+     * @param playlistId The playlist to observe.
+     * @return A [Flow] emitting the lightweight rows on every DB change.
+     */
+    @RewriteQueriesToDropUnusedColumns
+    @Query("SELECT * FROM songs WHERE playlist_id = :playlistId ORDER BY position ASC, added_at ASC")
+    fun observeDownloadRowsForPlaylist(playlistId: String): Flow<List<SongDownloadRow>>
+
+    /**
+     * One-shot lyrics-free fetch of all songs in a playlist, ordered by position then
+     * insertion time.
+     *
+     * Identical filtering/ordering to [getSongsForPlaylist] but returns the lightweight
+     * [SongDownloadRow] projection so `lyrics` is never loaded.
+     *
+     * @param playlistId The playlist to query.
+     * @return The ordered list of lightweight rows.
+     */
+    @RewriteQueriesToDropUnusedColumns
+    @Query("SELECT * FROM songs WHERE playlist_id = :playlistId ORDER BY position ASC, added_at ASC")
+    suspend fun getDownloadRowsForPlaylist(playlistId: String): List<SongDownloadRow>
 
     /**
      * One-shot fetch of songs for a playlist, filtered to DOWNLOADED with a file path, paginated.
@@ -182,6 +213,24 @@ interface SongDao {
     suspend fun deleteBySpotifyIds(playlistId: String, spotifyIds: List<String>)
 
     /**
+     * Removes tracks that vanished from the Spotify playlist, splitting the ids
+     * into [UPDATE_STATUS_CHUNK_SIZE]-sized chunks so the generated `IN (...)`
+     * clause never exceeds SQLite's `SQLITE_MAX_VARIABLE_NUMBER` (classically
+     * 999).
+     *
+     * A re-sync of a large playlist can mark hundreds of tracks as removed at
+     * once; the whole call runs in one transaction (mirroring
+     * [updateStatusChunked]), so it stays atomic.
+     *
+     * @param playlistId The playlist to delete from.
+     * @param spotifyIds The Spotify track ids to remove.
+     */
+    @Transaction
+    suspend fun deleteBySpotifyIdsChunked(playlistId: String, spotifyIds: List<String>) {
+        forEachIdChunk(spotifyIds) { chunk -> deleteBySpotifyIds(playlistId, chunk) }
+    }
+
+    /**
      * Batch-updates the status for a set of songs.
      *
      * @param ids The song row ids to update.
@@ -189,6 +238,23 @@ interface SongDao {
      */
     @Query("UPDATE songs SET status = :status WHERE id IN (:ids)")
     suspend fun updateStatus(ids: List<String>, status: SongStatus)
+
+    /**
+     * Batch-updates the status for a set of songs, splitting the ids into
+     * [UPDATE_STATUS_CHUNK_SIZE]-sized chunks so the generated `IN (...)` clause
+     * never exceeds SQLite's `SQLITE_MAX_VARIABLE_NUMBER` (classically 999).
+     *
+     * A "download all" over a 1370-track playlist used to pass every id in a
+     * single statement, which throws `SQLiteException: too many SQL variables`.
+     * The whole call runs in one transaction, so it is still atomic.
+     *
+     * @param ids The song row ids to update.
+     * @param status The new status to apply.
+     */
+    @Transaction
+    suspend fun updateStatusChunked(ids: List<String>, status: SongStatus) {
+        updateStatusInChunks(ids, status) { chunk, target -> updateStatus(chunk, target) }
+    }
 
     /**
      * Single-row status write used by the download manager.
@@ -331,4 +397,107 @@ interface SongDao {
      */
     @Query("SELECT * FROM songs WHERE title LIKE '%' || :query || '%' OR artists LIKE '%' || :query || '%' ORDER BY title ASC")
     suspend fun searchByTitleOrArtist(query: String): List<SongEntity>
+
+    companion object {
+        /**
+         * Maximum number of ids written in a single `IN (...)` clause.
+         *
+         * SQLite's classic `SQLITE_MAX_VARIABLE_NUMBER` is 999; 900 leaves a safe
+         * margin for any other bound parameter on the same statement.
+         */
+        const val UPDATE_STATUS_CHUNK_SIZE = 900
+    }
 }
+
+/**
+ * Splits [ids] into [chunkSize]-sized batches and invokes [action] for each.
+ *
+ * The single shared implementation of the `IN (...)` chunking used by
+ * [SongDao.updateStatusChunked], [SongDao.deleteBySpotifyIdsChunked] and
+ * [xyz.botolog.ghostify.data.repo.SongRepository.setStatus], so the generated
+ * statement never exceeds SQLite's `SQLITE_MAX_VARIABLE_NUMBER` (classically
+ * 999). Extracted as a pure function so the chunking can be unit-tested without
+ * Room.
+ *
+ * @param ids The ids to split.
+ * @param chunkSize Maximum number of ids per call; defaults to
+ *   [SongDao.UPDATE_STATUS_CHUNK_SIZE].
+ * @param action The per-chunk write, e.g. `songDao.deleteBySpotifyIds(playlistId, chunk)`.
+ */
+internal suspend fun <T> forEachIdChunk(
+    ids: List<String>,
+    chunkSize: Int = SongDao.UPDATE_STATUS_CHUNK_SIZE,
+    action: suspend (List<String>) -> T,
+) {
+    if (ids.isEmpty()) return
+    for (chunk in ids.chunked(chunkSize)) {
+        action(chunk)
+    }
+}
+
+/**
+ * Splits [ids] into [chunkSize]-sized batches and invokes [update] for each.
+ *
+ * Thin wrapper over [forEachIdChunk] kept for the status-update call sites
+ * ([SongDao.updateStatusChunked], which runs the chunks in one transaction, and
+ * [xyz.botolog.ghostify.data.repo.SongRepository.setStatus]).
+ *
+ * @param ids The song row ids to update.
+ * @param status The status passed through to each [update] call.
+ * @param chunkSize Maximum number of ids per call; defaults to
+ *   [SongDao.UPDATE_STATUS_CHUNK_SIZE].
+ * @param update The per-chunk write, e.g. `songDao.updateStatus(chunk, status)`.
+ */
+internal suspend fun updateStatusInChunks(
+    ids: List<String>,
+    status: SongStatus,
+    chunkSize: Int = SongDao.UPDATE_STATUS_CHUNK_SIZE,
+    update: suspend (List<String>, SongStatus) -> Unit,
+) {
+    forEachIdChunk(ids, chunkSize) { chunk -> update(chunk, status) }
+}
+
+/**
+ * Lightweight projection of a `songs` row for the download/progress path.
+ *
+ * Holds exactly the columns [xyz.botolog.ghostify.download.SongRecord] is built
+ * from and deliberately **omits the `lyrics` TEXT column**, whose materialisation
+ * for all 1370 rows on every progress emission was a major source of the memory
+ * pressure. Queries returning this type are annotated with
+ * [RewriteQueriesToDropUnusedColumns] so Room rewrites `SELECT *` to just these
+ * columns.
+ *
+ * The `@ColumnInfo` names must match [SongEntity] exactly.
+ *
+ * @property id Unique row identifier.
+ * @property playlistId Foreign key to the parent playlist.
+ * @property spotifyId Spotify track id (or YouTube video id for YouTube rows).
+ * @property title Track title.
+ * @property artists Comma-separated artist names.
+ * @property album Album name, `null` when unknown.
+ * @property durationMs Track duration in milliseconds.
+ * @property coverUrl Remote artwork URL, `null` when unknown.
+ * @property coverArtLocalPath Persisted artwork path, `null` when none.
+ * @property ytId Resolved YouTube video id, `null` when unresolved.
+ * @property filePath Local file path once downloaded, `null` otherwise.
+ * @property error Last failure reason, `null` unless the row failed.
+ * @property status Current download lifecycle state.
+ * @property position 0-based playlist position.
+ */
+data class SongDownloadRow(
+    val id: String,
+    @ColumnInfo(name = "playlist_id") val playlistId: String,
+    @ColumnInfo(name = "spotify_id") val spotifyId: String,
+    val title: String,
+    val artists: String,
+    val album: String?,
+    @ColumnInfo(name = "duration_ms") val durationMs: Int,
+    @ColumnInfo(name = "cover_url") val coverUrl: String?,
+    @ColumnInfo(name = "cover_art_local_path") val coverArtLocalPath: String?,
+    @ColumnInfo(name = "yt_id") val ytId: String?,
+    @ColumnInfo(name = "file_path") val filePath: String?,
+    val error: String?,
+    val status: SongStatus,
+    val position: Int,
+)
+

@@ -7,7 +7,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -131,14 +134,30 @@ class DownloadManager(
      */
     fun observeProgress(playlistId: String): Flow<DownloadProgress> {
         Timber.i("DownloadManager.observeProgress: START")
-        val flow = combine(repo.observeSongs(playlistId), runState, fractions) { songs, runs, fracs ->
+        // Only re-derive when this playlist's fractions actually change, and
+        // conflate the (potentially bursty) Room song stream so a full playlist
+        // re-projection is never queued per individual row write.
+        val fractionsForPlaylist = fractions
+            .map { it[playlistId] ?: emptyMap() }
+            .distinctUntilChanged()
+        val flow = combine(
+            repo.observeSongs(playlistId).conflate(),
+            runState,
+            fractionsForPlaylist,
+        ) { songs, runs, songFractions ->
+            // `songs` already arrives ordered by position (`SongDao` orders by
+            // position, added_at) — re-sorting on every emission was pure churn.
             DownloadProgressCalculator.fromSongs(
                 playlistId = playlistId,
-                songs = songs.sortedBy { it.position },
+                songs = songs,
                 state = runs[playlistId] ?: DownloadRunState.IDLE,
-                fractions = fracs[playlistId] ?: emptyMap(),
+                fractions = songFractions,
             )
-        }.distinctUntilChanged()
+        }
+            .distinctUntilChanged()
+            // The projection builds a 1300+-entry map; keep it off the caller's
+            // dispatcher (in production the UI's Main dispatcher).
+            .flowOn(Dispatchers.Default)
         Timber.i("DownloadManager.observeProgress: returning flow")
         return flow
     }
@@ -184,28 +203,46 @@ class DownloadManager(
         playlistId: String,
         token: AtomicBoolean,
     ): RunOutcome {
-        val result = runner.run(
-            playlistId = playlistId,
-            cancellationToken = { token.get() },
-            onProgress = { p ->
-                runState.update { it + (playlistId to p.state) }
-                Timber.d("DownloadManager: state changed to ${p.state} for $playlistId")
-            },
-            onSongProgress = { songId, fraction ->
-                fractions.update { map ->
-                    val current = map[playlistId].orEmpty()
-                    map + (playlistId to (current + (songId to fraction)))
-                }
-            },
-        )
+        // Coalesce the per-track fraction stream: the downloader can report tens
+        // of ticks per second per track and every one of them would otherwise copy
+        // the whole per-playlist fraction map and re-project the entire playlist.
+        // Values accumulate and are published at most once per interval; the last
+        // value is force-published when the run ends so no state is dropped.
+        val coalescer = FractionCoalescer(FRACTION_THROTTLE_MILLIS)
+        val result = try {
+            runner.run(
+                playlistId = playlistId,
+                cancellationToken = { token.get() },
+                onProgress = { p ->
+                    runState.update { it + (playlistId to p.state) }
+                    Timber.d("DownloadManager: state changed to ${p.state} for $playlistId")
+                },
+                onSongProgress = { songId, fraction ->
+                    coalescer.offer(songId, fraction)?.let { publishFractions(playlistId, it) }
+                },
+            )
+        } finally {
+            coalescer.flush()?.let { publishFractions(playlistId, it) }
+        }
         Timber.i("DownloadManager.runSynchronously: returning $result")
         return result
+    }
+
+    private fun publishFractions(playlistId: String, delta: Map<String, Float>) {
+        fractions.update { map ->
+            val current = map[playlistId].orEmpty()
+            map + (playlistId to (current + delta))
+        }
     }
 
     private fun cleanupAfterRun(playlistId: String) {
         executions.remove(playlistId)
         tokens.remove(playlistId)
         runState.update { it - playlistId }
+        // Do not keep the per-playlist fraction map resident after the run:
+        // terminal statuses already carry the correct default fraction
+        // (DOWNLOADED = 1f), so a stale 1300+-entry map would only leak memory.
+        fractions.update { it - playlistId }
     }
 
     /**
@@ -258,5 +295,56 @@ class DownloadManager(
             Timber.i("DownloadManager.fetchLyricsForSong: no lyrics found")
         }
         return lyrics
+    }
+}
+
+/** Minimum interval between published per-playlist fraction updates (~5/sec). */
+private const val FRACTION_THROTTLE_MILLIS = 200L
+
+/**
+ * Time-gated coalescer for high-frequency per-song fraction updates.
+ *
+ * Mirrors `xyz.botolog.ghostify.perf.CoalescingThrottle` but keyed by song id:
+ * values offered within [intervalMillis] of the last publication are merged into
+ * a pending map and released on the next allowed offer or on [flush]. The latest
+ * value for each song always wins, and [flush] guarantees the final state of a
+ * run is never dropped.
+ *
+ * @param intervalMillis minimum milliseconds between publications.
+ * @param clock time source returning epoch millis (overridable in tests).
+ */
+internal class FractionCoalescer(
+    private val intervalMillis: Long,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+
+    private var lastPublishedAt = Long.MIN_VALUE
+    private val pending = LinkedHashMap<String, Float>()
+
+    /**
+     * Merges one fraction. Returns the per-song delta to publish now, or `null`
+     * when the update was coalesced into the next publication.
+     */
+    fun offer(songId: String, fraction: Float): Map<String, Float>? {
+        pending[songId] = fraction
+        val now = clock()
+        if (lastPublishedAt == Long.MIN_VALUE || now - lastPublishedAt >= intervalMillis) {
+            lastPublishedAt = now
+            return drain()
+        }
+        return null
+    }
+
+    /**
+     * Force-releases everything still pending (call when the run ends). Returns
+     * `null` when there is nothing new to publish.
+     */
+    fun flush(): Map<String, Float>? = drain()
+
+    private fun drain(): Map<String, Float>? {
+        if (pending.isEmpty()) return null
+        val snapshot = LinkedHashMap(pending)
+        pending.clear()
+        return snapshot
     }
 }

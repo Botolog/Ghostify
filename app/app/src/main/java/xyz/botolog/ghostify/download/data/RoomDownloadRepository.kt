@@ -2,6 +2,7 @@ package xyz.botolog.ghostify.download.data
 
 import xyz.botolog.ghostify.data.db.dao.PlaylistDao
 import xyz.botolog.ghostify.data.db.dao.SongDao
+import xyz.botolog.ghostify.data.db.dao.SongDownloadRow
 import xyz.botolog.ghostify.data.db.entity.SongEntity
 import xyz.botolog.ghostify.data.model.PlaylistStatus as CanonicalPlaylistStatus
 import xyz.botolog.ghostify.data.model.SongStatus as CanonicalSongStatus
@@ -33,7 +34,7 @@ class RoomDownloadRepository(
      */
     override suspend fun songsFor(playlistId: String): List<SongRecord> {
         Timber.i("RoomDownloadRepository.songsFor: START")
-        val result = songDao.getSongsForPlaylist(playlistId).map { it.toRecord() }
+        val result = songDao.getDownloadRowsForPlaylist(playlistId).map { it.toRecord() }
         Timber.i("RoomDownloadRepository.songsFor: returning ${result.size} songs")
         return result
     }
@@ -41,11 +42,14 @@ class RoomDownloadRepository(
     /**
      * Returns a live flow of songs for a playlist, mapped to [SongRecord] domain objects.
      *
+     * Uses the lyrics-free projection so progress emissions never load the large
+     * `lyrics` column for the whole playlist.
+     *
      * @param playlistId the playlist to observe.
      */
     override fun observeSongs(playlistId: String): Flow<List<SongRecord>> {
         Timber.i("RoomDownloadRepository.observeSongs: START")
-        val flow = songDao.observeSongsForPlaylist(playlistId).map { list -> list.map { it.toRecord() } }
+        val flow = songDao.observeDownloadRowsForPlaylist(playlistId).map { list -> list.map { it.toRecord() } }
         Timber.i("RoomDownloadRepository.observeSongs: returning flow")
         return flow
     }
@@ -93,6 +97,10 @@ class RoomDownloadRepository(
     /**
      * Bulk-updates the status of multiple songs without transition validation.
      *
+     * Ids are written in chunks (<= [xyz.botolog.ghostify.data.db.dao.SongDao.UPDATE_STATUS_CHUNK_SIZE])
+     * inside a single transaction so a whole-playlist selection never exceeds
+     * SQLite's `IN (...)` variable limit.
+     *
      * @param songIds the songs to update.
      * @param status the target status.
      */
@@ -101,7 +109,7 @@ class RoomDownloadRepository(
         status: DownloadStatus,
     ) {
         Timber.i("RoomDownloadRepository.setStatuses: START")
-        songDao.updateStatus(songIds.toList(), status.toSongStatus())
+        songDao.updateStatusChunked(songIds.toList(), status.toSongStatus())
         Timber.d("RoomDownloadRepository: ${songIds.size} songs state changed to $status")
     }
 
@@ -180,7 +188,24 @@ class RoomDownloadRepository(
         playlistDao.updateCoverArtLocalPath(playlistId, path)
     }
 
-    private fun SongEntity.toRecord(): SongRecord = SongRecord(
+    internal fun SongDownloadRow.toRecord(): SongRecord = SongRecord(
+        id = id,
+        playlistId = playlistId,
+        spotifyId = spotifyId,
+        title = title,
+        artists = artists,
+        position = position,
+        status = status.toDownloadStatus(),
+        filePath = filePath,
+        error = error,
+        ytId = ytId,
+        album = album,
+        durationMs = durationMs.toLong(),
+        coverUrl = coverUrl,
+        coverArtLocalPath = coverArtLocalPath,
+    )
+
+    internal fun SongEntity.toRecord(): SongRecord = SongRecord(
         id = id,
         playlistId = playlistId,
         spotifyId = spotifyId,

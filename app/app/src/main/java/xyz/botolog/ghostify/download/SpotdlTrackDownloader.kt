@@ -55,12 +55,22 @@ class SpotdlTrackDownloader(
     }
 
     /**
-     * Best-effort cancellation. The Python bridge is told to abort via its own
-     * channel; not needed for the queue's correctness since coroutine cancellation
-     * interrupts the download (the wrapper's suspend call is cancellable).
+     * Best-effort cancellation. Cancellation releases the Python downloader
+     * handle: the underlying [SpotdlCall] has the bridge drop the in-flight
+     * `PyObject`, and the per-call `finally` in the bridge guarantees the handle
+     * is disposed exactly once even if the download returns first.
+     *
+     * @param songId the song whose download should be cancelled.
      */
     override suspend fun cancel(songId: String) {
-        Timber.i("SpotdlTrackDownloader.cancel: START")
+        Timber.i("SpotdlTrackDownloader.cancel: START song=$songId")
+        try {
+            call.cancel(songId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Timber.e(e, "SpotdlTrackDownloader.cancel: FAILED song=$songId")
+        }
     }
 
     private companion object {
@@ -78,6 +88,19 @@ fun interface SpotdlCall {
      * @return the result of the download attempt.
      */
     suspend fun invoke(song: SongRecord, onProgress: (Float) -> Unit): TrackDownloadResult
+
+    /**
+     * Best-effort cancellation of an in-flight download for [songId].
+     *
+     * Implementations that own an abort channel (the Chaquopy bridge) override
+     * this so the underlying Python downloader handle is released; the default is
+     * a no-op so simple fakes and call implementations stay valid.
+     *
+     * @param songId the song whose download should be cancelled.
+     */
+    suspend fun cancel(songId: String) {
+        // No abort channel by default.
+    }
 }
 
 /**
@@ -114,6 +137,20 @@ class ChaquopySpotdlCall(
         }
         Timber.i("ChaquopySpotdlCall.invoke: returning ${if (result.isSuccess) "SUCCESS" else "FAILED"}")
         return result
+    }
+
+    /**
+     * Releases the Python downloader handles the bridge currently has in flight.
+     *
+     * The release is idempotent: if the download call returns first, its `finally`
+     * closes the handle and this becomes a no-op (no double-close).
+     *
+     * @param songId the song whose download should be cancelled (best-effort; the
+     *   bridge releases every in-flight downloader).
+     */
+    override suspend fun cancel(songId: String) {
+        Timber.i("ChaquopySpotdlCall.cancel: song=$songId")
+        bridge.cancel()
     }
 
     private suspend fun buildDownloadConfig(playlistId: String): TrackDownloadConfig {

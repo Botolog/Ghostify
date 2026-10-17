@@ -8,9 +8,10 @@ import org.junit.Test
 import xyz.botolog.ghostify.player.core.QueueItem
 
 /**
- * Mapper must embed artwork bytes into `artworkData` so the MediaSession and
- * the stock notification provider (which reads `artworkData`) show art for
- * every timeline item, not just the start item.
+ * Mapper must embed artwork bytes into `artworkData` when bytes are supplied, so the
+ * MediaSession and the stock notification provider (which reads `artworkData`) can show art
+ * for the current item. Callers pass bytes only for the currently-playing item; every other
+ * item is built without art.
  */
 class MediaItemMapperTest {
 

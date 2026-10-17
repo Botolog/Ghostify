@@ -216,4 +216,53 @@ class SettingsRepositoryTest {
 
         coVerify(exactly = 1) { settingDao.upsert(setting) }
     }
+
+    // ── concurrent_downloads clamp ────────────────────────────────────
+
+    @Test
+    fun getConcurrency_clampsLegacyStoredValueAboveTheMaximum() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_CONCURRENCY) } returns "99999"
+
+        assertEquals(SettingsRepository.MAX_CONCURRENCY, repository.getConcurrency())
+        assertEquals(8, repository.getConcurrency())
+    }
+
+    @Test
+    fun getConcurrency_clampsStoredValueBelowTheMinimum() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_CONCURRENCY) } returns "0"
+
+        assertEquals(SettingsRepository.MIN_CONCURRENCY, repository.getConcurrency())
+        assertEquals(1, repository.getConcurrency())
+    }
+
+    @Test
+    fun getConcurrency_fallsBackToDefaultWhenMissing() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_CONCURRENCY) } returns null
+
+        assertEquals(SettingsRepository.DEFAULT_CONCURRENCY, repository.getConcurrency())
+    }
+
+    @Test
+    fun observeConcurrency_clampsLegacyStoredValueAboveTheMaximum() = runTest {
+        every { settingDao.observeValue(SettingsRepository.KEY_CONCURRENCY) } returns flowOf("500")
+
+        assertEquals(8, repository.observeConcurrency().first())
+    }
+
+    @Test
+    fun observeConcurrency_clampsStoredValueBelowTheMinimum() = runTest {
+        every { settingDao.observeValue(SettingsRepository.KEY_CONCURRENCY) } returns flowOf("-3")
+
+        assertEquals(1, repository.observeConcurrency().first())
+    }
+
+    @Test
+    fun setConcurrency_clampsValueBeforePersisting() = runTest {
+        val clamped = SettingEntity(SettingsRepository.KEY_CONCURRENCY, "8")
+        coEvery { settingDao.upsert(clamped) } returns Unit
+
+        repository.setConcurrency(1000)
+
+        coVerify(exactly = 1) { settingDao.upsert(clamped) }
+    }
 }

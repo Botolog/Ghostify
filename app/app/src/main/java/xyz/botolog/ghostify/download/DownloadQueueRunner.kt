@@ -2,12 +2,12 @@ package xyz.botolog.ghostify.download
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -107,32 +107,31 @@ class DownloadQueueRunner(
         onSongProgress: (songId: String, fraction: Float) -> Unit = { _, _ -> },
     ): RunOutcome {
         Timber.i("DownloadQueueRunner.run: START for playlist=$playlistId")
-        recoverInFlight(playlistId)
+        // Load the playlist exactly once: recovery, selection and every progress
+        // snapshot during the run are derived from this in-memory list instead of
+        // re-querying the database per track (the old O(N²) behaviour).
+        val songs = recoverInFlight(playlistId)
 
-        val selected = selectSongs(playlistId)
-            ?: return idleOutcome(playlistId, onProgress)
-
-        preparePlaylist(playlistId, selected, onProgress)
-        return executeDownloadRun(playlistId, selected, cancellationToken, onProgress, onSongProgress)
-    }
-
-    private suspend fun selectSongs(playlistId: String): List<SongRecord>? {
-        val selected = DownloadSelector.select(repo.songsFor(playlistId))
+        val selected = DownloadSelector.select(songs)
         if (selected.isEmpty()) {
             Timber.i("DownloadQueueRunner.run: no songs selected, returning IDLE")
-            return null
+            return idleOutcome(playlistId, songs, onProgress)
         }
-        return selected
+
+        val progress = DownloadProgressTracker(playlistId, songs)
+        preparePlaylist(playlistId, selected, progress, onProgress)
+        return executeDownloadRun(playlistId, selected, progress, cancellationToken, onProgress, onSongProgress)
     }
 
     private suspend fun idleOutcome(
         playlistId: String,
+        songs: List<SongRecord>,
         onProgress: (DownloadProgress) -> Unit,
     ): RunOutcome {
         withContext(NonCancellable) {
             repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
             Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
-            onProgress(snapshot(repo, playlistId, DownloadRunState.IDLE))
+            onProgress(DownloadProgressCalculator.fromSongs(playlistId, songs, DownloadRunState.IDLE))
         }
         return RunOutcome.IDLE
     }
@@ -140,19 +139,23 @@ class DownloadQueueRunner(
     private suspend fun preparePlaylist(
         playlistId: String,
         selected: List<SongRecord>,
+        progress: DownloadProgressTracker,
         onProgress: (DownloadProgress) -> Unit,
     ) {
         repo.setPlaylistStatus(playlistId, PlaylistStatus.DOWNLOADING)
         Timber.d("DownloadQueueRunner: state changed to DOWNLOADING for playlist=$playlistId")
-        onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
+        onProgress(progress.snapshot(DownloadRunState.RUNNING))
 
-        repo.setStatuses(selected.map { it.id }, DownloadStatus.QUEUED)
-        onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
+        val selectedIds = selected.map { it.id }
+        repo.setStatuses(selectedIds, DownloadStatus.QUEUED)
+        progress.markQueued(selectedIds)
+        onProgress(progress.snapshot(DownloadRunState.RUNNING))
     }
 
     private suspend fun executeDownloadRun(
         playlistId: String,
         selected: List<SongRecord>,
+        progress: DownloadProgressTracker,
         cancellationToken: () -> Boolean,
         onProgress: (DownloadProgress) -> Unit,
         onSongProgress: (songId: String, fraction: Float) -> Unit,
@@ -162,26 +165,26 @@ class DownloadQueueRunner(
         val semaphore = Semaphore(concurrency)
 
         try {
-            downloadAllTracks(playlistId, selected, cancellationToken, concurrency, semaphore, onProgress, onSongProgress)
+            downloadAllTracks(selected, progress, cancellationToken, concurrency, semaphore, onProgress, onSongProgress)
             checkCancellation(cancellationToken)
         } catch (e: UserCanceledException) {
             Timber.i("DownloadQueueRunner.run: user cancelled")
             outcome = RunOutcome.CANCELED
-            cancelCleanup(repo, playlistId)
+            cancelCleanup(repo, playlistId, progress)
         } catch (e: CancellationException) {
             Timber.i("DownloadQueueRunner.run: coroutine cancelled")
-            cancelCleanup(repo, playlistId)
+            cancelCleanup(repo, playlistId, progress)
             throw e
         }
 
-        finalizeRun(playlistId, outcome, onProgress)
+        finalizeRun(playlistId, progress, outcome, onProgress)
         Timber.i("DownloadQueueRunner.run: returning $outcome")
         return outcome
     }
 
     private suspend fun downloadAllTracks(
-        playlistId: String,
         selected: List<SongRecord>,
+        progress: DownloadProgressTracker,
         cancellationToken: () -> Boolean,
         concurrency: Int,
         semaphore: Semaphore,
@@ -190,17 +193,40 @@ class DownloadQueueRunner(
     ) {
         val downloadIndex = AtomicInteger(0)
         coroutineScope {
-            selected.map { song ->
-                async {
-                    downloadSingleTrack(playlistId, song, cancellationToken, concurrency, semaphore, downloadIndex, onProgress, onSongProgress)
+            // One Channel fed with the whole selection and exactly `concurrency`
+            // consumers bounds the number of live coroutines by the pool size,
+            // not by the playlist length. (The old implementation launched one
+            // coroutine per song — up to ~1370 — with the Semaphore only
+            // throttling the network body.)
+            val queue = Channel<SongRecord>(capacity = concurrency)
+            val workers = List(concurrency) {
+                launch {
+                    for (song in queue) {
+                        downloadSingleTrack(
+                            song = song,
+                            progress = progress,
+                            cancellationToken = cancellationToken,
+                            concurrency = concurrency,
+                            semaphore = semaphore,
+                            downloadIndex = downloadIndex,
+                            onProgress = onProgress,
+                            onSongProgress = onSongProgress,
+                        )
+                    }
                 }
-            }.awaitAll()
+            }
+            try {
+                for (song in selected) queue.send(song)
+            } finally {
+                queue.close()
+            }
+            workers.forEach { it.join() }
         }
     }
 
     private suspend fun downloadSingleTrack(
-        playlistId: String,
         song: SongRecord,
+        progress: DownloadProgressTracker,
         cancellationToken: () -> Boolean,
         concurrency: Int,
         semaphore: Semaphore,
@@ -220,13 +246,15 @@ class DownloadQueueRunner(
             }
 
             repo.setStatus(song.id, DownloadStatus.DOWNLOADING)
+            progress.markStatus(song.id, DownloadStatus.DOWNLOADING)
             Timber.d("DownloadQueueRunner: song ${song.id} state changed to DOWNLOADING")
             val current = repo.getSong(song.id) ?: song
-            onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
+            onProgress(progress.snapshot(DownloadRunState.RUNNING))
 
             val result = downloadTrackOrCatch(current, onSongProgress)
             applyTrackResult(song.id, result)
-            onProgress(snapshot(repo, playlistId, DownloadRunState.RUNNING))
+            progress.applyResult(song.id, result)
+            onProgress(progress.snapshot(DownloadRunState.RUNNING))
         }
     }
 
@@ -283,9 +311,11 @@ class DownloadQueueRunner(
     private suspend fun cancelCleanup(
         repo: DownloadRepository,
         playlistId: String,
+        progress: DownloadProgressTracker,
     ) {
         withContext(NonCancellable) {
             cleanupOnCancel(repo, playlistId)
+            progress.applyCancelCleanup(CANCEL_ERROR_MESSAGE)
             repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
             Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
         }
@@ -293,6 +323,7 @@ class DownloadQueueRunner(
 
     private suspend fun finalizeRun(
         playlistId: String,
+        progress: DownloadProgressTracker,
         outcome: RunOutcome,
         onProgress: (DownloadProgress) -> Unit,
     ) {
@@ -303,9 +334,7 @@ class DownloadQueueRunner(
             repo.setPlaylistStatus(playlistId, PlaylistStatus.READY)
             Timber.d("DownloadQueueRunner: state changed to READY for playlist=$playlistId")
             onProgress(
-                snapshot(
-                    repo,
-                    playlistId,
+                progress.snapshot(
                     if (outcome == RunOutcome.CANCELED) DownloadRunState.CANCELED else DownloadRunState.COMPLETED,
                 ),
             )
@@ -367,31 +396,35 @@ class DownloadQueueRunner(
         }
     }
 
-    private suspend fun recoverInFlight(playlistId: String) {
-        repo.songsFor(playlistId)
-            .filter { it.status.isRecoverable }
-            .forEach { repo.setStatus(it.id, DownloadStatus.PENDING) }
-    }
+    /**
+     * Resets any in-flight leftovers from a previous (possibly killed) run to
+     * PENDING (T-051) and returns the playlist as one in-memory snapshot.
+     *
+     * This is the only full read the run performs: selection and every progress
+     * emission afterwards are derived from the returned list, so progress is O(1)
+     * in database reads instead of the old O(N) per song.
+     */
+    private suspend fun recoverInFlight(playlistId: String): List<SongRecord> =
+        repo.songsFor(playlistId).map { song ->
+            if (song.status.isRecoverable) {
+                repo.setStatus(song.id, DownloadStatus.PENDING)
+                song.copy(status = DownloadStatus.PENDING, error = null)
+            } else {
+                song
+            }
+        }
 
     private suspend fun cleanupOnCancel(
         repo: DownloadRepository,
         playlistId: String,
     ) {
-        repo.songsFor(playlistId)
+        val songs = repo.songsFor(playlistId)
+        songs
             .filter { it.status == DownloadStatus.DOWNLOADING }
             .forEach { repo.setStatus(it.id, DownloadStatus.CANCELED, error = CANCEL_ERROR_MESSAGE) }
-        repo.songsFor(playlistId)
+        songs
             .filter { it.status == DownloadStatus.QUEUED }
             .forEach { repo.setStatus(it.id, DownloadStatus.PENDING) }
-    }
-
-    private suspend fun snapshot(
-        repo: DownloadRepository,
-        playlistId: String,
-        state: DownloadRunState,
-    ): DownloadProgress {
-        val songs = repo.songsFor(playlistId).sortedBy { it.position }
-        return DownloadProgressCalculator.fromSongs(playlistId, songs, state)
     }
 
     private companion object {

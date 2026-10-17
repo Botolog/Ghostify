@@ -10,7 +10,6 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import xyz.botolog.ghostify.background.PlaybackService
-import xyz.botolog.ghostify.player.core.ArtworkBackfillBatcher
 import xyz.botolog.ghostify.player.core.ErrorAction
 import xyz.botolog.ghostify.player.core.PlaybackConstants
 import xyz.botolog.ghostify.player.core.PlayerError
@@ -58,9 +57,11 @@ import java.io.File
  *   explicitly asks to [playPlaylist] again, so a mid-play DB refresh can never disturb the
  *   current song.
  *
- * Playback starts as soon as the queue is built: embedded artwork is only extracted
- * synchronously for the item playback starts on; every other item is backfilled in the
- * background ([ArtworkBackfillBatcher] batches the resulting UI updates).
+ * Playback starts as soon as the queue is built: embedded artwork is attached to the
+ * currently-playing item only. media3's legacy session stub decodes every queued item's
+ * `artworkData` into a full-resolution bitmap when it updates the platform session, so
+ * stamping the whole queue leaks native memory; instead the current item's cover is
+ * (re)applied on every media-item transition.
  *
  * All player access happens on the main thread (the player's own thread); queue building and
  * artwork extraction run on [Dispatchers.IO].
@@ -94,8 +95,19 @@ class PlayerController private constructor(
     private var nothingToPlay = false
     private var lastError: PlayerError? = null
     private var tickerJob: Job? = null
-    private var artworkBackfillJob: Job? = null
     private var saveJob: Job? = null
+
+    /**
+     * Song id whose artwork is currently stamped on the timeline's current item, or `null`.
+     *
+     * media3's legacy session stub decodes *every* item's `artworkData` into a bitmap when it
+     * updates the platform session, so at most one item — the current one — may carry art. This
+     * tracks which item that is, so the art can be cleared again the moment playback moves on.
+     */
+    private var currentArtworkSongId: String? = null
+
+    /** Guards the artwork writes against the re-entrant transition their own replace triggers. */
+    private var isAdjustingArtwork = false
 
     /**
      * The last state actually written by [saveState], or `null` when nothing has been written
@@ -190,8 +202,6 @@ class PlayerController private constructor(
         Timber.i("playPlaylist: ${songs.size} songs, startSongId=$startSongId, playlistId=$playlistId")
         currentPlaylistId = playlistId
         val generation = ++queueGeneration
-        // A new playlist supersedes any in-flight artwork backfill from the previous queue.
-        cancelArtworkBackfill("superseded by new playPlaylist")
         backfillJob?.cancel()
         backfillJob = null
         scope.launch(Dispatchers.IO) {
@@ -223,7 +233,6 @@ class PlayerController private constructor(
         Timber.i("playPlaylistLazy: initialBatch=${initialBatch.size}, startSongId=$startSongId, playlistId=$playlistId")
         currentPlaylistId = playlistId
         val generation = ++queueGeneration
-        cancelArtworkBackfill("superseded by new playPlaylistLazy")
         backfillJob?.cancel()
         scope.launch(Dispatchers.IO) {
             val lazyBuilder = LazyPlayerQueueBuilder()
@@ -275,26 +284,17 @@ class PlayerController private constructor(
                 if (batch.isEmpty()) break
                 val newItems = lazyBuilder.loadMore(batch)
                 if (newItems.isNotEmpty()) {
-                    // Prefer already-cached/file artwork so lazily-appended items carry
-                    // artworkData for the notification immediately instead of null.
-                    // IO thread: only file reads here (no artworkByMediaId touch).
-                    val pairs = newItems.map { item -> item to cheapFileArtwork(item) }
-                    val mediaItems = pairs.map { (item, art) ->
-                        MediaItemMapper.toMediaItem(item, art)
-                    }
+                    // Lazily-appended items are never the current item, so they must not carry
+                    // artworkData: media3's legacy session stub decodes every queued item's
+                    // artworkData into a bitmap, which is what leaks native heap on a large
+                    // queue. The transition hook resolves a cover when one becomes current.
+                    val mediaItems = newItems.map { item -> MediaItemMapper.toMediaItem(item, null) }
                     val appended = withContext(Dispatchers.Main.immediate) {
                         if (generation != queueGeneration) {
                             false
                         } else {
                             queueManager.appendItems(newItems)
                             exoPlayer.addMediaItems(mediaItems)
-                            for ((item, art) in pairs) {
-                                if (art != null) artworkByMediaId[item.songId] = art
-                            }
-                            for ((index, pair) in pairs.withIndex()) {
-                                val art = mediaItems.getOrNull(index)?.mediaMetadata?.artworkData
-                                if (art != null) artworkByMediaId[pair.first.songId] = art
-                            }
                             true
                         }
                     }
@@ -303,20 +303,6 @@ class PlayerController private constructor(
                         return@launch
                     }
                     Timber.d("playPlaylistLazy: appended ${newItems.size} items, total=${lazyBuilder.totalItems}")
-                    // Backfill anything that had no cheap/cached bytes via extractor,
-                    // updating the ExoPlayer timeline so the notification picks it up.
-                    for ((item, cheap) in pairs) {
-                        if (cheap != null) continue
-                        ensureActive()
-                        if (generation != queueGeneration) return@launch
-                        val art = runCatching { artworkExtractor.extractArtwork(item.filePath) }.getOrNull()
-                            ?: continue
-                        withContext(Dispatchers.Main.immediate) {
-                            if (generation != queueGeneration) return@withContext
-                            artworkByMediaId[item.songId] = art
-                            replaceExoPlayerArtwork(item.songId, art)
-                        }
-                    }
                     withContext(Dispatchers.Main.immediate) {
                         if (generation == queueGeneration) publishSnapshot()
                     }
@@ -343,8 +329,7 @@ class PlayerController private constructor(
             Timber.w("playPlaylist: nothing to play")
             nothingToPlay = true
             lastError = null
-            // The artwork map is cleared here, so a stale backfill must not keep writing into it.
-            cancelArtworkBackfill("nothing to play")
+            currentArtworkSongId = null
             artworkByMediaId.clear()
             queueManager.clear()
             exoPlayer.clearMediaItems()
@@ -407,10 +392,10 @@ class PlayerController private constructor(
 
         val mediaItems = buildMediaItems(currentItems, startIndex)
 
-        val applied = withContext(Dispatchers.Main.immediate) {
+        withContext(Dispatchers.Main.immediate) {
             if (generation != queueGeneration) {
                 Timber.i("handleQueueReady: queue replaced while building, discarding result")
-                return@withContext false
+                return@withContext
             }
             nothingToPlay = false
             lastError = null
@@ -421,11 +406,12 @@ class PlayerController private constructor(
             exoPlayer.setMediaItems(mediaItems.items, startIndex, PlaybackConstants.TIME_UNSET)
             exoPlayer.prepare()
             exoPlayer.play()
+            // Record which item carries art so it can be cleared when playback moves on.
+            currentArtworkSongId = mediaItems.items.getOrNull(startIndex)?.mediaId
+                ?.takeIf { mediaItems.artwork.containsKey(it) }
             publishSnapshot()
             startPlaybackService()
-            true
         }
-        if (applied) launchArtworkBackfill(currentItems, startIndex)
     }
 
     /** Holds a batch of built [MediaItem]s together with their extracted artwork bytes. */
@@ -494,25 +480,45 @@ class PlayerController private constructor(
     }
 
     /**
-     * Replaces the ExoPlayer item for [songId] with one carrying [art] in
-     * `artworkData`, so the MediaSession/notification (which reads
-     * `MediaMetadata.artworkData` via DefaultMediaNotificationProvider) shows art
-     * for backfilled items, not just the start item.
+     * Stamps [art] onto — or clears it (`art == null`) from — the timeline item for [songId],
+     * returning `true` when the timeline changed.
      *
-     * Must run on the main thread. Indices are resolved via [findExoPlayerIndex]
-     * and the current item's position/play state is restored around the replace so
-     * there is no audible glitch or restart.
+     * Carrying art is exclusive to the current item. media3's legacy session stub
+     * (`MediaSessionLegacyStub.updateQueue`) walks the whole timeline and decodes every item's
+     * `artworkData` into a full-resolution bitmap, so setting art on a non-current item is
+     * refused here; clearing is allowed anywhere so a previously-current item can be stripped
+     * as playback moves on. `DefaultMediaNotificationProvider` reads only the current item, so
+     * current-item art is all the notification/lockscreen needs.
      *
-     * @return true when an item was replaced.
+     * Must run on the main thread. Indices are resolved via [findExoPlayerIndex] and the
+     * current item's position/play state are restored around the replace so there is no
+     * audible glitch or restart.
+     *
+     * @return true when the timeline was changed.
      */
-    private fun replaceExoPlayerArtwork(songId: String, art: ByteArray): Boolean {
+    private fun setExoPlayerArtwork(songId: String, art: ByteArray?): Boolean {
         val idx = findExoPlayerIndex(songId) ?: return false
         val existing = try {
             exoPlayer.getMediaItemAt(idx)
         } catch (_: Exception) {
             return false
         }
-        if (existing.mediaMetadata.artworkData != null) return false
+        val isCurrent = try {
+            idx == exoPlayer.currentMediaItemIndex
+        } catch (_: Exception) {
+            false
+        }
+        if (art != null) {
+            // Never stamp art onto a non-current item: that is what leaks native memory.
+            if (!isCurrent) return false
+            // Already carries art: idempotent no-op (also breaks the replace-induced loop).
+            if (existing.mediaMetadata.artworkData != null) {
+                currentArtworkSongId = songId
+                return false
+            }
+        } else if (existing.mediaMetadata.artworkData == null) {
+            return false
+        }
         val queueItem = try {
             queueManager.getOrNull(idx)?.takeIf { it.songId == songId }
         } catch (_: Exception) {
@@ -520,7 +526,7 @@ class PlayerController private constructor(
         }
         // Rebuild from the canonical QueueItem when available so edited titles
         // stay in sync; otherwise reuse the timeline item's metadata.
-        val updated = if (queueItem != null) {
+        val updated = if (art != null && queueItem != null) {
             MediaItemMapper.toMediaItem(queueItem, art)
         } else {
             val meta = existing.mediaMetadata.buildUpon()
@@ -528,18 +534,21 @@ class PlayerController private constructor(
                 .build()
             existing.buildUpon().setMediaMetadata(meta).build()
         }
-        val isCurrent = try {
-            idx == exoPlayer.currentMediaItemIndex
-        } catch (_: Exception) {
-            false
-        }
         val savedPosition = try { exoPlayer.currentPosition.coerceAtLeast(0L) } catch (_: Exception) { 0L }
         val wasPlaying = try { exoPlayer.isPlaying } catch (_: Exception) { false }
+        isAdjustingArtwork = true
         try {
             exoPlayer.replaceMediaItem(idx, updated)
         } catch (t: Exception) {
-            Timber.e(t, "replaceExoPlayerArtwork: FAILED for $songId at $idx")
+            Timber.e(t, "setExoPlayerArtwork: FAILED for $songId at $idx")
             return false
+        } finally {
+            isAdjustingArtwork = false
+        }
+        if (art != null) {
+            currentArtworkSongId = songId
+        } else if (currentArtworkSongId == songId) {
+            currentArtworkSongId = null
         }
         if (isCurrent) {
             try {
@@ -547,31 +556,42 @@ class PlayerController private constructor(
                 if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
                 if (wasPlaying && !exoPlayer.isPlaying) exoPlayer.play()
             } catch (t: Exception) {
-                Timber.e(t, "replaceExoPlayerArtwork: restore FAILED for $songId")
+                Timber.e(t, "setExoPlayerArtwork: restore FAILED for $songId")
             }
         }
         return true
     }
 
+    /** Returns [item] without `artworkData`, or [item] unchanged when it carries none. */
+    private fun stripArtworkData(item: MediaItem): MediaItem {
+        if (item.mediaMetadata.artworkData == null) return item
+        val meta = item.mediaMetadata.buildUpon()
+            .setArtworkData(null, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            .build()
+        return item.buildUpon().setMediaMetadata(meta).build()
+    }
+
     /**
-     * Converts each [QueueItem] into a Media3 [MediaItem].
+     * Converts each [QueueItem] into a Media3 [MediaItem], attaching artwork to the current
+     * item ([startIndex]) only.
      *
-     * Cheap local sources (`coverArtLocalPath` / `covers/<songId>.jpg`) are embedded
-     * synchronously for every item; the MP3 tag is only parsed for the start item so
-     * `setMediaItems`/`play` are never delayed. Everything else is backfilled by
-     * [launchArtworkBackfill].
+     * Every other item is built without `artworkData`: media3's legacy session stub decodes
+     * each queued item's art into a bitmap, so embedding art for the whole queue leaks native
+     * memory. `DefaultMediaNotificationProvider` only reads the current item, so this is all
+     * the notification/lockscreen needs; later transitions re-apply art via
+     * [refreshCurrentItemArtwork].
      *
      * @param items queue items in playlist order.
-     * @param startIndex index playback starts at; its artwork is embedded synchronously.
-     * @return the MediaItem list plus a map of songId -> artwork bytes for embedded items.
+     * @param startIndex index playback starts at; only its artwork is embedded.
+     * @return the MediaItem list plus a map of songId -> artwork bytes for the current item.
      */
     private fun buildMediaItems(items: List<QueueItem>, startIndex: Int): BuiltMediaItems {
         val mediaItems = ArrayList<MediaItem>(items.size)
-        val artwork = HashMap<String, ByteArray>(items.size.coerceAtMost(8))
+        val artwork = HashMap<String, ByteArray>(1)
         for ((index, item) in items.withIndex()) {
-            val cheap = cheapFileArtwork(item)
-            val art = cheap ?: if (index == startIndex) {
-                runCatching { artworkExtractor.extractArtwork(item.filePath) }.getOrNull()
+            val art = if (index == startIndex) {
+                cheapFileArtwork(item)
+                    ?: runCatching { artworkExtractor.extractArtwork(item.filePath) }.getOrNull()
             } else {
                 null
             }
@@ -582,63 +602,55 @@ class PlayerController private constructor(
     }
 
     /**
-     * Extracts artwork for every queued item except [startIndex] in the background and
-     * mirrors each hit onto the ExoPlayer timeline via [replaceExoPlayerArtwork].
+     * Ensures exactly the current item carries artwork.
      *
-     * Previously this only filled [artworkByMediaId] + UI snapshot, so the
-     * notification/lockscreen (which reads `artworkData` off the timeline) kept showing
-     * art only for the start item. Now each hit updates the timeline item in place,
-     * preserving the current position/play state.
+     * Any previously-current item is stripped first, then the current item's cover is resolved
+     * (bounded cache -> local cover file -> embedded MP3 tag) and stamped, so the
+     * notification/lockscreen always shows the right art while no other item retains any.
      *
-     * Runs one item at a time on [Dispatchers.IO]; map writes + timeline replaces happen
-     * on the main thread where all player access lives. Exactly one backfill runs per
-     * controller: a new call cancels the previous job. Aborts when [queueGeneration]
-     * moves on so a stale queue can never write art into its replacement.
-     *
-     * @param items queue items in playlist order.
-     * @param startIndex index whose artwork was already extracted during queue building.
+     * Must run on the main thread.
      */
-    private fun launchArtworkBackfill(items: List<QueueItem>, startIndex: Int) {
-        cancelArtworkBackfill("queue swapped")
-        val generation = queueGeneration
-        val pending = items.filterIndexed { index, _ -> index != startIndex }
-        if (pending.isEmpty()) return
-        Timber.i("launchArtworkBackfill: START pending=${pending.size}, startIndex=$startIndex")
-        artworkBackfillJob = scope.launch(Dispatchers.IO) {
-            val batcher = ArtworkBackfillBatcher()
-            for (item in pending) {
-                ensureActive()
-                if (generation != queueGeneration) {
-                    Timber.i("launchArtworkBackfill: superseded, aborting")
-                    return@launch
-                }
-                val art = cheapFileArtwork(item)
-                    ?: runCatching { artworkExtractor.extractArtwork(item.filePath) }.getOrNull()
-                    ?: continue
-                val shouldPublish = withContext(Dispatchers.Main.immediate) {
-                    if (generation != queueGeneration) return@withContext null
-                    artworkByMediaId[item.songId] = art
-                    replaceExoPlayerArtwork(item.songId, art)
-                    val currentMediaId = try { exoPlayer.currentMediaItem?.mediaId } catch (_: Exception) { null }
-                    batcher.shouldPublish(item.songId, currentMediaId)
-                }
-                if (shouldPublish == true) {
-                    withContext(Dispatchers.Main.immediate) {
-                        if (generation == queueGeneration) publishSnapshot()
-                    }
-                }
-            }
-            Timber.i("launchArtworkBackfill: DONE (${pending.size} items)")
+    private fun refreshCurrentItemArtwork() {
+        if (isAdjustingArtwork) return
+        val current = try { exoPlayer.currentMediaItem } catch (_: Exception) { null } ?: return
+        val songId = current.mediaId
+        currentArtworkSongId?.let { previous ->
+            if (previous != songId) setExoPlayerArtwork(previous, null)
         }
+        if (current.mediaMetadata.artworkData != null) {
+            currentArtworkSongId = songId
+            return
+        }
+        val cached = artworkByMediaId[songId]
+        if (cached != null) {
+            setExoPlayerArtwork(songId, cached)
+            return
+        }
+        applyArtworkToCurrent(songId)
     }
 
-    /** Cancels any running artwork backfill (e.g. when a new queue supersedes it). */
-    private fun cancelArtworkBackfill(reason: String) {
-        artworkBackfillJob?.let { job ->
-            Timber.d("cancelArtworkBackfill: cancelling ($reason)")
-            job.cancel()
+    /**
+     * Resolves [songId]'s cover off the main thread and stamps it onto the current item.
+     *
+     * The bounded [artworkByMediaId] cache is written on the main thread only. Aborts when the
+     * queue generation moved on or the track is no longer current, so a slow read can never
+     * paint art onto the wrong item.
+     */
+    private fun applyArtworkToCurrent(songId: String) {
+        val generation = queueGeneration
+        val queueItem = queueManager.getOrNull(queueManager.indexOf(songId)) ?: return
+        val filePath = queueItem.filePath
+        scope.launch(Dispatchers.IO) {
+            val art = cheapFileArtwork(queueItem)
+                ?: runCatching { artworkExtractor.extractArtwork(filePath) }.getOrNull()
+                ?: return@launch
+            withContext(Dispatchers.Main.immediate) {
+                if (generation != queueGeneration) return@withContext
+                if (exoPlayer.currentMediaItem?.mediaId != songId) return@withContext
+                artworkByMediaId[songId] = art
+                setExoPlayerArtwork(songId, art)
+            }
         }
-        artworkBackfillJob = null
     }
 
     // --- State persistence --------------------------------------------------------
@@ -708,10 +720,10 @@ class PlayerController private constructor(
                 val mediaItems = withContext(Dispatchers.IO) {
                     buildMediaItems(currentItems, startIndex)
                 }
-                val applied = withContext(Dispatchers.Main.immediate) {
+                withContext(Dispatchers.Main.immediate) {
                     if (generation != queueGeneration) {
                         Timber.i("restoreSavedState: queue replaced while restoring, discarding result")
-                        return@withContext false
+                        return@withContext
                     }
                     nothingToPlay = false
                     lastError = null
@@ -729,6 +741,10 @@ class PlayerController private constructor(
                     if (saved.wasPlaying) {
                         exoPlayer.play()
                     }
+                    // Only the restored current item carries art; record it so it can be
+                    // cleared when playback moves on.
+                    currentArtworkSongId = mediaItems.items.getOrNull(startIndex)?.mediaId
+                        ?.takeIf { mediaItems.artwork.containsKey(it) }
                     publishSnapshot()
                     // Connect the service (a binder connection through the MediaController) even
                     // on a paused restore: the restored queue, position and notification must be
@@ -737,9 +753,7 @@ class PlayerController private constructor(
                     // `startForegroundService()`, so there is no 5s foreground contract to break
                     // while the player is prepared-but-paused.
                     startPlaybackService()
-                    true
                 }
-                if (applied) launchArtworkBackfill(currentItems, startIndex)
                 Timber.i("PlayerController.restoreSavedState: restored successfully")
             }
         }
@@ -1008,35 +1022,30 @@ class PlayerController private constructor(
         if (exoPlayer.mediaItemCount == 0) return
         val currentIdx = exoPlayer.currentMediaItemIndex
 
-        // Prefer already-available local art so user-queued items carry artworkData
-        // for the notification instead of null.
-        var effectiveMediaItem = mediaItem
-        if (effectiveMediaItem.mediaMetadata.artworkData == null) {
-            val cached = artworkByMediaId[songId]
-                ?: readFileBytes(coverArtLocalPath)
-                ?: readCachedCoverFile(songId)
-                ?: coverBytesProvider?.invoke(songId, coverArtLocalPath)
-            if (cached != null) {
-                val meta = effectiveMediaItem.mediaMetadata.buildUpon()
-                    .setArtworkData(cached, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                    .build()
-                effectiveMediaItem = effectiveMediaItem.buildUpon().setMediaMetadata(meta).build()
-                artworkByMediaId[songId] = cached
-            }
-        } else {
-            effectiveMediaItem.mediaMetadata.artworkData?.let { artworkByMediaId[songId] = it }
-        }
+        // Resolve any available local cover for the queued song and keep it in the bounded cache
+        // so it can be stamped when the song becomes current. The inserted item itself must
+        // carry NO artworkData: media3's legacy session stub decodes every queued item's art
+        // into a bitmap, which is what leaks native memory on a large queue.
+        val art = mediaItem.mediaMetadata.artworkData
+            ?: artworkByMediaId[songId]
+            ?: readFileBytes(coverArtLocalPath)
+            ?: readCachedCoverFile(songId)
+            ?: coverBytesProvider?.invoke(songId, coverArtLocalPath)
+        if (art != null) artworkByMediaId[songId] = art
+        val effectiveMediaItem = stripArtworkData(mediaItem)
 
         val mutation = queueManager.addToQueueNext(songId, effectiveMediaItem, currentIdx, coverUrl, coverArtLocalPath)
         if (mutation == null) {
-            // Already correctly positioned: still patch the timeline when we now have
-            // art it was missing, otherwise schedule an extractor backfill.
-            val art = effectiveMediaItem.mediaMetadata.artworkData
-            if (art != null) {
-                if (replaceExoPlayerArtwork(songId, art)) publishSnapshot()
-            } else {
-                val qIdx = queueManager.indexOf(songId)
-                queueManager.getOrNull(qIdx)?.let { launchSingleArtworkBackfill(it.songId, it.filePath) }
+            // Either the song is already playing or already correctly positioned. Only the
+            // currently-playing item may carry art; a repositioned queued item just has its
+            // cover cached for the next transition.
+            val isCurrent = try {
+                exoPlayer.currentMediaItem?.mediaId == songId
+            } catch (_: Exception) {
+                false
+            }
+            if (isCurrent && art != null) {
+                if (setExoPlayerArtwork(songId, art)) publishSnapshot()
             }
             return
         }
@@ -1063,38 +1072,6 @@ class PlayerController private constructor(
         }
         if (wasPlaying && !exoPlayer.isPlaying) exoPlayer.play()
         publishSnapshot()
-        if (mutation is QueueMutation.Add && mutation.mediaItem.mediaMetadata.artworkData == null) {
-            queueManager.getOrNull(mutation.index)?.let { launchSingleArtworkBackfill(it.songId, it.filePath) }
-        }
-    }
-
-    /**
-     * Extracts artwork for a single user-queued song and mirrors it onto the timeline.
-     * Used when `addToQueueNext` had no cheap local bytes to embed synchronously.
-     */
-    private fun launchSingleArtworkBackfill(songId: String, filePath: String) {
-        val generation = queueGeneration
-        scope.launch(Dispatchers.IO) {
-            ensureActive()
-            if (generation != queueGeneration) return@launch
-            val art = cheapFileArtwork(
-                queueManager.getOrNull(queueManager.indexOf(songId)) ?: QueueItem(
-                    songId = songId,
-                    title = null,
-                    artist = null,
-                    album = null,
-                    durationMs = null,
-                    filePath = filePath,
-                    indexInQueue = -1,
-                ),
-            ) ?: runCatching { artworkExtractor.extractArtwork(filePath) }.getOrNull()
-            ?: return@launch
-            withContext(Dispatchers.Main.immediate) {
-                if (generation != queueGeneration) return@withContext
-                artworkByMediaId[songId] = art
-                if (replaceExoPlayerArtwork(songId, art)) publishSnapshot()
-            }
-        }
     }
 
     /**
@@ -1273,7 +1250,6 @@ class PlayerController private constructor(
         saveJob?.cancel()
         backfillJob?.cancel()
         cancelSleepTimerJob()
-        cancelArtworkBackfill("controller released")
         exoPlayer.removeListener(this)
         mediaController?.release()
         mediaController = null
@@ -1293,8 +1269,8 @@ class PlayerController private constructor(
      *
      * Everything a background job could still write is cancelled or invalidated first — the
      * pending state save (which would otherwise re-persist the deleted playlist two seconds
-     * later), the lazy queue backfill and the artwork backfill — and the queue generation is
-     * bumped so an in-flight build result is discarded instead of re-populating the queue.
+     * later) and the lazy queue backfill — and the queue generation is bumped so an in-flight
+     * build result is discarded instead of re-populating the queue.
      * `stop()` also drops the player to `STATE_IDLE`, which is what makes `PlaybackService`
      * tear down its foreground notification.
      *
@@ -1315,10 +1291,10 @@ class PlayerController private constructor(
         saveJob = null
         backfillJob?.cancel()
         backfillJob = null
-        cancelArtworkBackfill("playlist deleted")
         nothingToPlay = false
         lastError = null
         endOfQueueHandled = false
+        currentArtworkSongId = null
         artworkByMediaId.clear()
         queueManager.clear()
         exoPlayer.shuffleModeEnabled = false
@@ -1344,6 +1320,9 @@ class PlayerController private constructor(
         if (completedRepeatAllCycle) {
             startNextQueueCycle(reshuffle = true)
         } else {
+            // Stamp art on the new current item and strip it from the previous one, so the
+            // notification/lockscreen keep following the track without leaking native memory.
+            refreshCurrentItemArtwork()
             publishSnapshot()
         }
     }
@@ -1439,6 +1418,9 @@ class PlayerController private constructor(
         } finally {
             isSyncingExoPlayer = false
         }
+        // A reorder/shuffle can leave the newly-current item without art (or an old current
+        // item holding it), so re-assert the current-item-only artwork invariant.
+        refreshCurrentItemArtwork()
     }
 
     private fun restorePlayWhenReady(wasPlayWhenReady: Boolean) {
@@ -1544,19 +1526,24 @@ class PlayerController private constructor(
             if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
             Timber.i("syncExoPlayerFromQueueManager: reordered ${currentCount} items in one transaction")
         } else {
+            val savedItemIndex = savedMediaId?.let { queueManager.indexOf(it) } ?: -1
+            val startIndex = savedItemIndex.coerceAtLeast(0)
             val mediaItems = ArrayList<MediaItem>(desiredCount)
             for (index in 0 until desiredCount) {
                 val queueItem = queueManager.getOrNull(index) ?: return
-                mediaItems.add(
-                    currentById[queueItem.songId]
+                val reusable = currentById[queueItem.songId]
+                val mediaItem = if (index == startIndex) {
+                    // Only the rebuilt current item may carry art.
+                    reusable?.takeIf { it.mediaMetadata.artworkData != null }
                         ?: MediaItemMapper.toMediaItem(
                             queueItem,
                             artworkByMediaId[queueItem.songId] ?: cheapFileArtwork(queueItem),
-                        ),
-                )
+                        )
+                } else {
+                    reusable?.let(::stripArtworkData) ?: MediaItemMapper.toMediaItem(queueItem, null)
+                }
+                mediaItems.add(mediaItem)
             }
-            val savedItemIndex = savedMediaId?.let { queueManager.indexOf(it) } ?: -1
-            val startIndex = savedItemIndex.coerceAtLeast(0)
             val startPosition = if (savedItemIndex >= 0) savedPosition else 0L
             exoPlayer.setMediaItems(mediaItems, startIndex, startPosition)
             if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
@@ -1583,6 +1570,7 @@ class PlayerController private constructor(
         } finally {
             isSyncingExoPlayer = false
         }
+        refreshCurrentItemArtwork()
         publishSnapshot()
     }
 
