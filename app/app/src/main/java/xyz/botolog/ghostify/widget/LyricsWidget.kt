@@ -94,7 +94,10 @@ class LyricsWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         // Live snapshot when the UI process is up, otherwise persisted-state + Room.
-        val initial = WidgetStateProvider.latest(context)
+        // Wrapped so a failed cold read degrades to the empty state instead of Glance's
+        // error UI (`onCompositionError`); `latest` already guards internally.
+        val initial = runCatching { WidgetStateProvider.latest(context) }
+            .getOrElse { WidgetSnapshot.EMPTY }
         provideContent {
             // `update`/`updateAll` do NOT restart `provideGlance` while the Glance session
             // is alive — they only recompose. So the snapshot must be observed *inside*
@@ -349,7 +352,7 @@ private fun LyricRow(line: LyricsWindowLine, currentLineIndex: Int, layout: Lyri
     }
     val vertical = if (line.isCurrent) 3.dp else 2.dp
     Text(
-        text = line.text,
+        text = clampLyricLine(line.text),
         style = style,
         maxLines = 1,
         modifier = GlanceModifier

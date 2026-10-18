@@ -88,8 +88,8 @@ import java.io.ByteArrayOutputStream
  * composition observes those flows, so publishing recomposes the widget; we also call
  * `updateAll` to (re)start sessions.
  *
- * Scenarios: player_playing | player_paused | player_empty |
- *            lyrics_synced_mid | lyrics_synced_end | lyrics_plain | lyrics_none |
+ * Scenarios: player_playing | player_paused | player_empty | player_huge_cover |
+ *            lyrics_synced_mid | lyrics_synced_end | lyrics_plain | lyrics_none | lyrics_real_lrc |
  *            sleep_active_mid | sleep_active_almost_done | sleep_inactive |
  *            nextup_many | nextup_one | nextup_empty |
  *            roulette_shuffle_on | roulette_shuffle_off |
@@ -667,6 +667,23 @@ object LabScenarios {
                 lyrics = texts, current = idxAt(40_500L),
             )
 
+            // Regression: a real song ships a full-resolution cover (~1368x1368). Decoded
+            // unbounded it blows the system's RemoteViews bitmap cap and Glance paints its
+            // "Can't show content" error layout. The fix bounds it before it reaches Glance.
+            "player_huge_cover" -> base(
+                isPlaying = true, positionMs = 40_500L,
+                lyrics = texts, current = idxAt(40_500L),
+                cover = hugeCoverBytes,
+            )
+
+            // Regression: real stored lyrics are long (hundreds of lines) and some lines are
+            // very long. Parsed through the app's real parseLrc.
+            "lyrics_real_lrc" -> base(
+                isPlaying = true, positionMs = 144_000L,
+                lyrics = realLyricTexts(), current = 96,
+                cover = hugeCoverBytes,
+            )
+
             "lyrics_synced_mid" -> base(
                 isPlaying = true, positionMs = 40_500L,
                 lyrics = texts, current = 20,
@@ -836,6 +853,7 @@ object LabScenarios {
         nextUp: List<NextUpItem> = emptyList(),
         queueCount: Int = 0,
         queueIndex: Int = -1,
+        cover: ByteArray = synthCover(),
     ) = WidgetSnapshot(
         songId = SONG_ID,
         title = TITLE,
@@ -845,7 +863,7 @@ object LabScenarios {
         positionMs = positionMs,
         durationMs = DURATION_MS,
         hasQueue = queueCount > 0,
-        coverBytes = synthCover(),
+        coverBytes = cover,
         lyricsLines = lyrics,
         currentLineIndex = current,
         sleepTimerActive = sleepActive,
@@ -870,6 +888,36 @@ object LabScenarios {
     }
 
     private fun plainFixtures(): List<String> = lyricPool.take(14)
+
+    /**
+     * A full-resolution cover, like a real song's embedded artwork (~1368x1368). Cached so
+     * the once-a-second heartbeat does not re-encode a multi-megabyte JPEG every tick.
+     */
+    private val hugeCoverBytes: ByteArray by lazy { encodeCover(1368) }
+
+    /**
+     * A long, real-world-sized LRC (200 timestamped lines, every 17th ~400 chars) decoded
+     * through the app's real [parseLrc], to pin the "many/long lines" path.
+     */
+    private fun realLyricTexts(): List<String> {
+        val raw = buildString {
+            for (i in 0 until 200) {
+                val ms = i * 1_500L
+                val min = ms / 60_000
+                val sec = (ms % 60_000) / 1_000
+                val cs = (ms % 1_000) / 10
+                val text = if (i % 17 == 0) longLyricLine else "Line $i — ${lyricPool[i % lyricPool.size]}"
+                append("[%02d:%02d.%02d] %s".format(min, sec, cs, text))
+                if (i < 199) append('\n')
+            }
+        }
+        return parseLrc(raw).map { it.text }
+    }
+
+    private val longLyricLine: String =
+        "And the static keeps on blooming through the wire while the midnight vessel " +
+            "drifts across a sea of carrier waves, every echo of a chorus I have never " +
+            "learned to sing, fading into silence, fading into noise, fading into you"
 
     private val lyricPool = listOf(
         "City lights are bleeding through the rain",
@@ -934,6 +982,25 @@ object LabScenarios {
         }
         val out = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        bmp.recycle()
+        return out.toByteArray()
+    }
+
+    /** A [px]x[px] gradient cover, encoded as JPEG like a real song's embedded artwork. */
+    private fun encodeCover(px: Int): ByteArray {
+        val size = px.coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f, 0f, size.toFloat(), size.toFloat(),
+                intArrayOf(0xFF7C4DFF.toInt(), 0xFF00BFA5.toInt(), 0xFFFF6E40.toInt()),
+                null, Shader.TileMode.CLAMP,
+            )
+        }
+        c.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
         bmp.recycle()
         return out.toByteArray()
     }

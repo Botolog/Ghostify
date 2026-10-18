@@ -53,6 +53,22 @@ fun plainLyricsLines(raw: String?): List<String> =
     raw?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
 
 /**
+ * Hard cap on the characters a single lyric line may carry into the widget.
+ *
+ * Real stored lyrics occasionally hold a whole verse (or a whole song) on one line; this
+ * keeps the RemoteViews payload bounded and the row readable. Pure, so it is JVM-tested.
+ */
+const val WIDGET_LYRIC_MAX_CHARS: Int = 160
+
+/**
+ * Truncates one lyric [text] to [WIDGET_LYRIC_MAX_CHARS] with a trailing ellipsis. Pure.
+ *
+ * A no-op for the overwhelmingly common short line, so real lyrics render verbatim.
+ */
+fun clampLyricLine(text: String, maxChars: Int = WIDGET_LYRIC_MAX_CHARS): String =
+    ellipsize(text, maxChars)
+
+/**
  * Chooses the rows the widget paints: the synced (timestamped) lines when they exist,
  * otherwise the static plain-text fallback. Pure.
  *

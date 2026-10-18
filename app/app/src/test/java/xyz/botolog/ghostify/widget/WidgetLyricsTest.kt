@@ -192,4 +192,22 @@ class WidgetLyricsTest {
     fun bothEmptyYieldNoLines() {
         assertTrue(widgetLyricsLines(emptyList(), null).isEmpty())
     }
+
+    // ── clampLyricLine: bound a pathological long line ───────────────────
+
+    @Test
+    fun shortLyricLinesPassThroughVerbatim() {
+        assertEquals("Line 12 — Neon Tides", clampLyricLine("Line 12 — Neon Tides"))
+        assertEquals("", clampLyricLine(""))
+    }
+
+    @Test
+    fun longLyricLineIsClampedWithAnEllipsis() {
+        val clamped = clampLyricLine("x".repeat(5_000))
+        assertEquals(WIDGET_LYRIC_MAX_CHARS, clamped.length)
+        assertTrue(clamped.endsWith("…"))
+        // A line that only just fits is left untouched.
+        val exact = "y".repeat(WIDGET_LYRIC_MAX_CHARS)
+        assertEquals(exact, clampLyricLine(exact))
+    }
 }

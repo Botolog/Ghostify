@@ -2,7 +2,6 @@ package xyz.botolog.ghostify.widget
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -92,7 +91,10 @@ class PlayerWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         // Live snapshot when the UI process is up, otherwise persisted-state + Room.
-        val initial = WidgetStateProvider.latest(context)
+        // Wrapped so a failed cold read degrades to the empty state instead of Glance's
+        // error UI (`onCompositionError`); `latest` already guards internally.
+        val initial = runCatching { WidgetStateProvider.latest(context) }
+            .getOrElse { WidgetSnapshot.EMPTY }
         provideContent {
             // `update`/`updateAll` do NOT restart `provideGlance` while the Glance session
             // is alive — they only recompose. So the snapshot must be observed *inside*
@@ -109,18 +111,6 @@ class PlayerWidget : GlanceAppWidget() {
         }
     }
 }
-
-/**
- * Decodes snapshot cover bytes into a [Bitmap] for Glance, or `null` when there is none.
- *
- * Shared by every widget (the host process cannot read our private cover files, so
- * artwork travels as bytes in the snapshot and is decoded here, off the composition
- * thread).
- */
-internal fun decodeCover(bytes: ByteArray?): Bitmap? =
-    bytes?.takeIf { it.isNotEmpty() }?.let {
-        runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
-    }
 
 /** Registers [PlayerWidget] with the system; wired in the manifest. */
 class PlayerWidgetReceiver : GlanceAppWidgetReceiver() {
