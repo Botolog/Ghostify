@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "Next up" / queue peek widget provider info (large, 4x3 cells).
+
+  Text-only: no per-item artwork is ever carried (the OOM lesson). initialLayout points at
+  Glance's bundled loading layout; updatePeriodMillis=0 disables polling (the app pushes).
+
+  minResizeWidth/minResizeHeight let the user shrink it freely; NextUpWidget derives how
+  many two-line rows fit from the real height and drops the header / "Now playing" line as
+  the cell gets shorter.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_nextup_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="250dp"
+    android:minHeight="180dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="60dp"
+    android:previewImage="@drawable/ic_no_song_cover"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="4"
+    android:targetCellHeight="3"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    tools:targetApi="31" />

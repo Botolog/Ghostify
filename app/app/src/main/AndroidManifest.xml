@@ -76,6 +76,113 @@
             </intent-filter>
         </service>
 
+        <!-- Home-screen "Now Playing" widget (4x2). exported=false per the
+             current official Glance docs ("Create an app widget with Glance"):
+             the system delivers ACTION_APPWIDGET_UPDATE to this explicit
+             component, and Glance's own trampoline activity/receivers are merged
+             in from the glance-appwidget library manifest. Transport buttons use
+             Glance ActionCallbacks, which need no extra manifest entries. -->
+        <receiver
+            android:name=".widget.PlayerWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_player_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/player_widget_info" />
+        </receiver>
+
+        <!-- Home-screen "Lyrics" widget (large, 4x4). Same cold-start rules as the
+             player widget: rendered from persisted state + Room only, with live
+             pushes from WidgetUpdateCoordinator. -->
+        <receiver
+            android:name=".widget.LyricsWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_lyrics_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/lyrics_widget_info" />
+        </receiver>
+
+        <!-- Home-screen "Sleep timer" widget (2x2). Same cold-start rules as the player
+             widget: rendered from persisted state only (the countdown itself is never
+             persisted), with live pushes from WidgetUpdateCoordinator while the app process
+             is alive. Its buttons reach the container on tap. -->
+        <receiver
+            android:name=".widget.SleepTimerWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_sleep_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sleep_widget_info" />
+        </receiver>
+
+        <!-- Home-screen "Next up" / queue peek widget (4x3). Text-only; rendered from
+             persisted state + Room on a cold start. -->
+        <receiver
+            android:name=".widget.NextUpWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_nextup_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/nextup_widget_info" />
+        </receiver>
+
+        <!-- Home-screen "Shuffle Roulette" widget (4x2). Same cold-start rules; SPIN runs
+             only on tap (container access) via ShuffleRouletteActionCallback. -->
+        <receiver
+            android:name=".widget.ShuffleRouletteWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_roulette_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/roulette_widget_info" />
+        </receiver>
+
+        <!-- Home-screen "Playlists" widget (4x2). A tile grid of the user's playlists;
+             tapping a tile starts that playlist's playback on tap (container access) via
+             PlaylistTileActionCallback. Cold start reads persisted state + Room only. -->
+        <receiver
+            android:name=".widget.PlaylistLauncherWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_playlist_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/playlist_widget_info" />
+        </receiver>
+
+        <!-- Home-screen "Library" widget (4x2): global sync status + library stats. Cold
+             start reads Room aggregates + the persisted last-synced timestamp; the running
+             app pushes live updates from WidgetUpdateCoordinator. -->
+        <receiver
+            android:name=".widget.LibraryStatsWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_library_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/library_widget_info" />
+        </receiver>
+
         <!-- FileProvider for sharing log files from Settings. -->
         <provider
             android:name="androidx.core.content.FileProvider"

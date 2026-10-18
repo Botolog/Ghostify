@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Small "stats / bar chart" glyph for the "Library" widget header. Rendered at 18-22dp and
+  tinted by the caller. Rect bars only, so the vector stays trivial.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,13h3.5v7H4zM10.25,8h3.5v12h-3.5zM16.5,4h3.5v16h-3.5z" />
+</vector>

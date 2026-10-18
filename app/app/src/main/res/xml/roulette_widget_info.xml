@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Shuffle Roulette widget provider info (medium, 4x2 cells).
+
+  initialLayout points at Glance's bundled loading layout; updatePeriodMillis=0 disables
+  periodic polling (the running app pushes updates via WidgetUpdateCoordinator).
+
+  minResizeWidth/minResizeHeight are held at the 2x2 floor: below that the SPIN pill and the
+  status readout stop fitting.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_roulette_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:previewImage="@drawable/ic_widget_dice"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    tools:targetApi="31" />

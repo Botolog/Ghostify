@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import xyz.botolog.ghostify.ui.GhostifyApp
 import xyz.botolog.ghostify.ui.GhostifyDependencies
+import xyz.botolog.ghostify.widget.WidgetUpdateCoordinator
 
 /**
  * Launcher activity: the single Compose entry point.
@@ -49,6 +50,11 @@ class MainActivity : ComponentActivity() {
                 openPlayerRequest = OpenPlayerRequests.Process.requestCount,
             )
         }
+        // Home-screen widget live updates are started here — and ONLY here, in the
+        // real UI process. A widget-only cold start (which never launches this
+        // activity) therefore renders from persisted state without ever touching
+        // the player. The coordinator is idempotent, so re-entry is a no-op.
+        WidgetUpdateCoordinator.start(applicationContext)
     }
 
     override fun onNewIntent(intent: Intent) {

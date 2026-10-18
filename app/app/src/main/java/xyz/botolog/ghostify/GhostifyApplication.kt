@@ -15,6 +15,7 @@ import xyz.botolog.ghostify.crash.FileLogCrashReporter
 import xyz.botolog.ghostify.crash.GhostifyCrashHandler
 import xyz.botolog.ghostify.crash.PrefsCrashMarker
 import xyz.botolog.ghostify.data.db.AppDatabase
+import xyz.botolog.ghostify.data.repo.LibraryStatsRepository
 import xyz.botolog.ghostify.data.repo.PlaylistRepository
 import xyz.botolog.ghostify.data.repo.SettingsRepository
 import xyz.botolog.ghostify.data.repo.SongRepository
@@ -171,6 +172,11 @@ class GhostifyContainer(private val context: Application) {
         SongRepository(database.songDao(), database.transactionRunner())
     }
 
+    /** Whole-library aggregates for the "Library" widget (see [LibraryStatsRepository]). */
+    val libraryStatsRepository: LibraryStatsRepository by lazy {
+        LibraryStatsRepository(database.songDao(), database.playlistDao())
+    }
+
     val deletePlaylist: xyz.botolog.ghostify.data.repo.DeletePlaylistUseCase by lazy {
         xyz.botolog.ghostify.data.repo.DeletePlaylistUseCase(
             playlistDao = database.playlistDao(),
@@ -234,6 +240,10 @@ class GhostifyContainer(private val context: Application) {
                     }.getOrNull()
                 }
             },
+            // Persist the library-wide "last synced" timestamp so the "Library" widget can
+            // render it on a cold start (a widget-only process has no SyncStatusHolder
+            // history — see SyncStatusHolder).
+            onSyncFinished = { epochMs -> settingsRepository.setLastSyncedAt(epochMs) },
         )
     }
 

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG-ONLY manifest overlay (src/debug). Never merged into release builds.
+
+  Adds the WidgetLab harness activity used to render the two Glance widgets with
+  synthetic snapshots for design iteration. Exported so it can be launched from adb
+  (with the intent extra "scenario", e.g. lyrics_synced_mid; see the class kdoc).
+
+  It is intentionally NOT a LAUNCHER entry (we don't want it in the app drawer).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name="xyz.botolog.ghostify.widgetlab.WidgetLabActivity"
+            android:exported="true"
+            android:label="Widget Lab"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="xyz.botolog.ghostify.intent.action.WIDGET_LAB" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

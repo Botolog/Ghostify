@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sleep timer widget provider info (small, 2x2 cells).
+
+  initialLayout points at Glance's bundled loading layout; Glance replaces it with the
+  composed RemoteViews. updatePeriodMillis=0 disables periodic polling: the running app
+  pushes updates instead (see WidgetUpdateCoordinator).
+
+  The countdown is app-process-only (never persisted), so the cold state is the idle one.
+  minResizeWidth/minResizeHeight are held at the 2x2 default: below that the ring / number
+  and the Cancel button no longer fit legibly.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_sleep_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:previewImage="@drawable/ic_widget_sleep"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    tools:targetApi="31" />

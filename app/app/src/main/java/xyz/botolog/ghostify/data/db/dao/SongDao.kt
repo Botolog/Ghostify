@@ -88,6 +88,22 @@ interface SongDao {
     suspend fun getDownloadedSongsPaged(playlistId: String, limit: Int, offset: Int): List<SongEntity>
 
     /**
+     * Picks one random *playable* song across the whole library.
+     *
+     * Used only by the "Shuffle Roulette" widget's empty-queue spin, as the minimal
+     * cross-library random start the player has no dedicated API for. `ORDER BY RANDOM()`
+     * is fine here because it runs on tap, over the downloaded rows, and returns at most
+     * one row.
+     *
+     * @return A random downloaded song with a real file path, or `null` when none exists.
+     */
+    @Query(
+        "SELECT * FROM songs WHERE status = 'DOWNLOADED' AND file_path IS NOT NULL AND file_path != '' " +
+            "ORDER BY RANDOM() LIMIT 1",
+    )
+    suspend fun getRandomDownloaded(): SongEntity?
+
+    /**
      * Observes songs filtered by status within a playlist.
      *
      * @param playlistId The playlist to filter within.
@@ -306,6 +322,37 @@ interface SongDao {
      */
     @Query("SELECT COUNT(*) FROM songs WHERE playlist_id = :playlistId AND status = :status")
     suspend fun countForPlaylistByStatus(playlistId: String, status: SongStatus): Int
+
+    // ── Library-wide aggregates (the "Library" widget's stats) ────────
+    //
+    // Deliberately one scalar query per figure rather than a single multi-column
+    // projection: every query keeps an explicit `FROM songs`, so Room's invalidation
+    // tracker observes the table and re-emits on any write. They are combined into a
+    // `LibraryStats` by `LibraryStatsRepository`.
+
+    /** Observes the total number of songs in the library. */
+    @Query("SELECT COUNT(*) FROM songs")
+    fun observeSongCount(): Flow<Int>
+
+    /** Observes the number of downloaded (offline-playable) songs. */
+    @Query("SELECT COUNT(*) FROM songs WHERE status = 'DOWNLOADED'")
+    fun observeDownloadedCount(): Flow<Int>
+
+    /** Observes the number of songs that carry non-blank lyrics text. */
+    @Query("SELECT COUNT(*) FROM songs WHERE lyrics IS NOT NULL AND lyrics != ''")
+    fun observeLyricsCount(): Flow<Int>
+
+    /** One-shot total number of songs (cold widget path). */
+    @Query("SELECT COUNT(*) FROM songs")
+    suspend fun countSongs(): Int
+
+    /** One-shot number of downloaded songs (cold widget path). */
+    @Query("SELECT COUNT(*) FROM songs WHERE status = 'DOWNLOADED'")
+    suspend fun countDownloadedSongs(): Int
+
+    /** One-shot number of songs with non-blank lyrics (cold widget path). */
+    @Query("SELECT COUNT(*) FROM songs WHERE lyrics IS NOT NULL AND lyrics != ''")
+    suspend fun countSongsWithLyrics(): Int
 
     /**
      * Updates the display position of a single song.

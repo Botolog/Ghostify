@@ -65,6 +65,85 @@
     <string name="player_volume">Volume</string>
     <string name="player_seek">Seek</string>
 
+    <!-- Home-screen widget ("Now Playing", 4x2). Body reuses player_nothing_playing
+         and the player_play/pause/next/previous action labels above. -->
+    <string name="widget_player_label">Now Playing</string>
+    <string name="widget_player_description">Shows the current track and playback controls on your home screen.</string>
+
+    <!-- Home-screen widget ("Lyrics", 4x4). Transport reuses the player_* action labels. -->
+    <string name="widget_lyrics_label">Lyrics</string>
+    <string name="widget_lyrics_description">Shows the current track\'s lyrics, following along as it plays.</string>
+    <string name="widget_lyrics_content_description">Lyrics</string>
+    <string name="widget_lyrics_no_lyrics">No lyrics</string>
+
+    <!-- Home-screen widget ("Sleep timer", 2x2). Body reuses player_nothing_playing
+         nowhere: it has its own idle/active states. -->
+    <string name="widget_sleep_label">Sleep timer</string>
+    <string name="widget_sleep_description">Pauses playback when the countdown ends.</string>
+    <string name="widget_sleep_title">Sleep timer</string>
+    <string name="widget_sleep_preset">%1$d minutes</string>
+    <string name="widget_sleep_preset_label">%1$d min</string>
+    <string name="widget_sleep_start_single">Start %1$d min</string>
+    <string name="widget_sleep_cancel">Cancel</string>
+
+    <!-- Home-screen widget ("Next up", 4x3). Text-only queue peek. -->
+    <string name="widget_nextup_label">Next up</string>
+    <string name="widget_nextup_description">Shows the upcoming tracks in your queue.</string>
+    <string name="widget_nextup_header">Next up</string>
+    <string name="widget_nextup_position">%1$d of %2$d</string>
+    <string name="widget_nextup_now_playing">Now playing: %1$s</string>
+    <string name="widget_nextup_more">+%1$d more</string>
+    <string name="widget_nextup_empty">Nothing queued</string>
+    <string name="widget_nextup_untitled">Untitled</string>
+
+    <!-- Home-screen widget ("Shuffle Roulette", 4x2). -->
+    <string name="widget_roulette_label">Shuffle Roulette</string>
+    <string name="widget_roulette_description">Spin to shuffle and jump to a random track.</string>
+    <string name="widget_roulette_header">Shuffle Roulette</string>
+    <string name="widget_roulette_spin">SPIN</string>
+    <string name="widget_roulette_on">SHUFFLE ON</string>
+    <string name="widget_roulette_off">SHUFFLE OFF</string>
+    <string name="widget_roulette_toggle">Toggle shuffle</string>
+    <string name="widget_roulette_idle">Tap SPIN to shuffle</string>
+
+    <!-- Home-screen widget ("Playlists", 4x2). A tile per playlist; tapping one starts
+         that playlist's playback (container access on tap, like the sleep timer). -->
+    <string name="widget_playlist_label">Playlists</string>
+    <string name="widget_playlist_description">Tap a playlist to start playing it.</string>
+    <string name="widget_playlist_header">Playlists</string>
+    <string name="widget_playlist_empty">No playlists yet</string>
+    <string name="widget_playlist_untitled">Untitled playlist</string>
+    <string name="widget_playlist_play">Play %1$s</string>
+
+    <!-- Home-screen widget ("Library", 4x2): global sync status + library stats. -->
+    <string name="widget_library_label">Library</string>
+    <string name="widget_library_description">Shows sync status and your library stats.</string>
+    <string name="widget_library_header">Library</string>
+    <string name="widget_library_syncing">Syncing…</string>
+    <string name="widget_library_never_synced">Never synced</string>
+    <string name="widget_library_synced_just_now">Synced just now</string>
+    <string name="widget_library_synced_ago">Synced %1$s ago</string>
+    <!-- Short readouts for the dedicated sync line on a narrow cell, where the full label
+         would be cut mid-word ("Synced 3 min…"). -->
+    <string name="widget_library_synced_just_now_short">Just now</string>
+    <string name="widget_library_synced_ago_short">%1$s ago</string>
+    <string name="widget_library_ago_minutes">%1$d min</string>
+    <string name="widget_library_ago_hours">%1$d h</string>
+    <string name="widget_library_ago_days">%1$d d</string>
+    <string name="widget_library_stat_separator"> · </string>
+    <string name="widget_library_stat_songs">%1$s songs</string>
+    <string name="widget_library_stat_downloaded">%1$s downloaded</string>
+    <string name="widget_library_stat_lyrics">%1$s with lyrics</string>
+    <string name="widget_library_stat_playlists">%1$s playlists</string>
+    <!-- Shorter figure labels, used when the full label would not fit its cell (a large
+         number, or the narrow 2-wide column). -->
+    <string name="widget_library_stat_downloaded_short">%1$s dl</string>
+    <string name="widget_library_stat_lyrics_short">%1$s lyrics</string>
+    <string name="widget_library_stat_playlists_short">%1$s lists</string>
+    <string name="widget_library_downloaded_label">Downloaded</string>
+    <string name="widget_library_downloaded_of">%1$s of %2$s</string>
+    <string name="widget_library_percent">%1$d%%</string>
+
     <!-- Settings -->
     <string name="settings_title">Settings</string>
     <string name="settings_storage_location">Storage location</string>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Lyrics widget provider info (large, 4x4 cells).
+
+  initialLayout points at Glance's bundled loading layout; Glance replaces it with
+  the composed RemoteViews. updatePeriodMillis=0 disables periodic polling: the
+  running app pushes updates instead (see WidgetUpdateCoordinator).
+
+  targetCellWidth/targetCellHeight are API 31+ attributes; older launchers fall
+  back to minWidth/minHeight. minWidth/minHeight describe the default 4x4 cell;
+  minResizeWidth/minResizeHeight let the user shrink it freely, including
+  vertically: LyricsWidget derives how many lines fit from the real height and
+  drops the header/progress/transport as the cell gets short.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_lyrics_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="250dp"
+    android:minHeight="250dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:previewImage="@drawable/ic_no_song_cover"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="4"
+    android:targetCellHeight="4"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    tools:targetApi="31" />

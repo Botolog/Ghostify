@@ -21,8 +21,8 @@ android {
         applicationId = "xyz.botolog.ghostify"
         minSdk = 26
         targetSdk = 35
-        versionCode = 95
-        versionName = "0.4.19"
+        versionCode = 96
+        versionName = "0.4.20"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -136,6 +136,12 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-svg:2.7.0")
     implementation("androidx.navigation:navigation-compose:2.8.5")
+
+    // Home-screen widgets (Jetpack Glance). glance-appwidget brings the core
+    // `glance` runtime + RemoteViews translation; glance-material3 supplies the
+    // Material 3 ColorScheme -> Glance ColorProviders bridge used by WidgetTheme.
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.room:room-runtime:2.6.1")

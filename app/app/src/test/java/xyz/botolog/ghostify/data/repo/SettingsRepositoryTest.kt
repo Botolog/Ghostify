@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -264,5 +265,53 @@ class SettingsRepositoryTest {
         repository.setConcurrency(1000)
 
         coVerify(exactly = 1) { settingDao.upsert(clamped) }
+    }
+
+    // ── library_last_synced_at (the "Library" widget's timestamp) ────────
+
+    @Test
+    fun observeLastSyncedAt_readsStoredEpochMillis() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_LAST_SYNCED_AT)
+        } returns flowOf("1700000000000")
+
+        assertEquals(1_700_000_000_000L, repository.observeLastSyncedAt().first())
+    }
+
+    @Test
+    fun observeLastSyncedAt_isNullWhenMissingOrUnparseable() = runTest {
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_LAST_SYNCED_AT)
+        } returns flowOf(null)
+        assertNull(repository.observeLastSyncedAt().first())
+
+        every {
+            settingDao.observeValue(SettingsRepository.KEY_LAST_SYNCED_AT)
+        } returns flowOf("not-a-number")
+        assertNull(repository.observeLastSyncedAt().first())
+    }
+
+    @Test
+    fun getLastSyncedAt_readsStoredEpochMillis() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_LAST_SYNCED_AT) } returns "1700000000000"
+
+        assertEquals(1_700_000_000_000L, repository.getLastSyncedAt())
+    }
+
+    @Test
+    fun getLastSyncedAt_isNullWhenMissing() = runTest {
+        coEvery { settingDao.getValue(SettingsRepository.KEY_LAST_SYNCED_AT) } returns null
+
+        assertNull(repository.getLastSyncedAt())
+    }
+
+    @Test
+    fun setLastSyncedAt_persistsEpochMillisAsString() = runTest {
+        val stored = SettingEntity(SettingsRepository.KEY_LAST_SYNCED_AT, "1700000000000")
+        coEvery { settingDao.upsert(stored) } returns Unit
+
+        repository.setLastSyncedAt(1_700_000_000_000L)
+
+        coVerify(exactly = 1) { settingDao.upsert(stored) }
     }
 }

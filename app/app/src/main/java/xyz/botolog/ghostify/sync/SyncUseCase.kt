@@ -47,6 +47,10 @@ import timber.log.Timber
  *   on `Dispatchers.IO` (same fetcher/downloader as `DownloadQueueRunner`, same
  *   `covers/playlist_<id>.jpg` file). `null` (default) keeps the legacy behaviour:
  *   the stale local path is cleared so the new URL shows, without downloading.
+ * @property onSyncFinished Invoked with the finish timestamp after a **successful** sync,
+ *   so production can persist the library-wide last-synced value
+ *   (`SettingsRepository.setLastSyncedAt`). Defaults to `null` (no persistence) to keep
+ *   the constructor test-friendly; a failure inside it never fails the sync.
  */
 class SyncUseCase(
     private val playlists: PlaylistDao,
@@ -59,6 +63,7 @@ class SyncUseCase(
     private val now: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
     private val playlistCoverDownloader: (suspend (playlistId: String, coverUrl: String) -> String?)? = null,
+    private val onSyncFinished: (suspend (epochMs: Long) -> Unit)? = null,
 ) {
 
     /**
@@ -68,6 +73,10 @@ class SyncUseCase(
      * applies all mutations atomically, cleans up orphaned files, and enqueues
      * any new downloads.
      *
+     * Also publishes to the process-wide [SyncStatusHolder]: it flips to "syncing" for the
+     * duration and records the finish timestamp on success, so the "Library" widget can
+     * show a global state without any screen being open.
+     *
      * @param playlistId The local playlist id to re-sync.
      * @return A [SyncResult] summarising what changed.
      * @throws SyncException.PlaylistNotFound if the playlist does not exist locally.
@@ -75,9 +84,22 @@ class SyncUseCase(
      */
     suspend fun syncPlaylist(playlistId: String): SyncResult {
         Timber.i("SyncUseCase.syncPlaylist: START playlistId=$playlistId")
-        val result = locks.withPlaylistLock(playlistId) { doSync(playlistId) }
-        Timber.i("SyncUseCase.syncPlaylist: returning $result")
-        return result
+        SyncStatusHolder.beginSync()
+        try {
+            val result = locks.withPlaylistLock(playlistId) { doSync(playlistId) }
+            val finishedAt = now()
+            SyncStatusHolder.markSynced(finishedAt)
+            // Local val so the nullable hook smart-casts inside the lambda.
+            val persistLastSynced = onSyncFinished
+            if (persistLastSynced != null) {
+                runCatching { persistLastSynced.invoke(finishedAt) }
+                    .onFailure { Timber.w(it, "SyncUseCase: persisting last-synced failed") }
+            }
+            Timber.i("SyncUseCase.syncPlaylist: returning $result")
+            return result
+        } finally {
+            SyncStatusHolder.endSync()
+        }
     }
 
     /**

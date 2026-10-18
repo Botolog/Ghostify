@@ -49,6 +49,14 @@ class SettingsRepository(private val settingDao: SettingDao) {
         /** Preference key for the global UI scale (browser-zoom style, e.g. "1.0"). */
         const val KEY_APP_SCALE = "app_scale"
 
+        /**
+         * Preference key for the **library-wide** last-successful-sync timestamp (epoch
+         * millis, as a string). Distinct from the per-playlist `lastSyncedAt` column: it is
+         * what the "Library" widget shows on a cold start, when no playlist row (or player
+         * state) is involved.
+         */
+        const val KEY_LAST_SYNCED_AT = "library_last_synced_at"
+
         // ── Defaults ──────────────────────────────────────────────────
 
         /** Default storage directory name. */
@@ -551,6 +559,34 @@ class SettingsRepository(private val settingDao: SettingDao) {
     suspend fun setAppScale(value: Float) {
         Timber.i("SettingsRepository.setAppScale: value=$value")
         set(KEY_APP_SCALE, clampAppScale(value).toString())
+    }
+
+    // ── library_last_synced_at (global sync timestamp) ─────────────────
+
+    /**
+     * Observes the library-wide last-synced timestamp.
+     *
+     * @return A [Flow] emitting the epoch-millis timestamp, or `null` when the library has
+     *   never been synced (or the stored value is unparseable).
+     */
+    fun observeLastSyncedAt(): Flow<Long?> =
+        observe(KEY_LAST_SYNCED_AT, "").map { it.toLongOrNull() }
+
+    /**
+     * One-shot fetch of the library-wide last-synced timestamp.
+     *
+     * @return Epoch millis, or `null` when never synced / unparseable.
+     */
+    suspend fun getLastSyncedAt(): Long? =
+        get(KEY_LAST_SYNCED_AT, "").toLongOrNull()
+
+    /**
+     * Persists the library-wide last-synced timestamp.
+     *
+     * @param epochMs when the most recent successful sync finished.
+     */
+    suspend fun setLastSyncedAt(epochMs: Long) {
+        set(KEY_LAST_SYNCED_AT, epochMs.toString())
     }
 
     // ── Private helpers ───────────────────────────────────────────────

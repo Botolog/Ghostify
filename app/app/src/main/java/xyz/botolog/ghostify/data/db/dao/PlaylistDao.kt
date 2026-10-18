@@ -120,6 +120,15 @@ interface PlaylistDao {
     suspend fun count(): Int
 
     /**
+     * Observes the total number of playlists.
+     *
+     * The playlist half of the "Library" widget's stats block; combined with the song
+     * counts by [xyz.botolog.ghostify.data.repo.LibraryStatsRepository].
+     */
+    @Query("SELECT COUNT(*) FROM playlists")
+    fun observeCount(): Flow<Int>
+
+    /**
      * Returns the download status of a playlist.
      *
      * @param id The playlist row id.
