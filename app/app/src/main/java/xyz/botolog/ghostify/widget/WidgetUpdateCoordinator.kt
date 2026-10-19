@@ -2,7 +2,6 @@ package xyz.botolog.ghostify.widget
 
 import android.content.Context
 import android.os.SystemClock
-import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -139,13 +138,18 @@ object WidgetUpdateCoordinator {
                 // additionally (re)starts a session when none is running.
                 WidgetStateProvider.publish(snapshot)
                 try {
-                    playerWidget.updateAll(app)
-                    lyricsWidget.updateAll(app)
-                    sleepTimerWidget.updateAll(app)
-                    nextUpWidget.updateAll(app)
-                    shuffleRouletteWidget.updateAll(app)
+                    // Repaint each widget's own instances (see [updateAllInstances]); Glance's
+                    // `updateAll` would resolve them by class name and is not minification-safe.
+                    playerWidget.updateAllInstances(app, PlayerWidgetReceiver::class.java)
+                    lyricsWidget.updateAllInstances(app, LyricsWidgetReceiver::class.java)
+                    sleepTimerWidget.updateAllInstances(app, SleepTimerWidgetReceiver::class.java)
+                    nextUpWidget.updateAllInstances(app, NextUpWidgetReceiver::class.java)
+                    shuffleRouletteWidget.updateAllInstances(
+                        app,
+                        ShuffleRouletteWidgetReceiver::class.java,
+                    )
                 } catch (t: Throwable) {
-                    Timber.e(t, "WidgetUpdateCoordinator: updateAll failed")
+                    Timber.e(t, "WidgetUpdateCoordinator: widget repaint failed")
                 }
             }
         }
@@ -168,7 +172,10 @@ object WidgetUpdateCoordinator {
                         playlistTilesFrom(rows) { readSmallCoverBytes(it.coverArtLocalPath) }
                     }
                     WidgetStateProvider.publishPlaylists(tiles)
-                    playlistWidget.updateAll(app)
+                    playlistWidget.updateAllInstances(
+                        app,
+                        PlaylistLauncherWidgetReceiver::class.java,
+                    )
                 }
             } catch (t: Throwable) {
                 Timber.e(t, "WidgetUpdateCoordinator: playlist observation failed")
@@ -181,7 +188,7 @@ object WidgetUpdateCoordinator {
             try {
                 container.libraryStatsRepository.observe().collect { stats ->
                     WidgetStateProvider.publishStats(stats)
-                    libraryWidget.updateAll(app)
+                    libraryWidget.updateAllInstances(app, LibraryStatsWidgetReceiver::class.java)
                 }
             } catch (t: Throwable) {
                 Timber.e(t, "WidgetUpdateCoordinator: library stats observation failed")
@@ -193,7 +200,7 @@ object WidgetUpdateCoordinator {
             try {
                 SyncStatusHolder.state.collect { sync ->
                     WidgetStateProvider.publishLastSyncedAt(sync.lastSyncedAtMs)
-                    libraryWidget.updateAll(app)
+                    libraryWidget.updateAllInstances(app, LibraryStatsWidgetReceiver::class.java)
                 }
             } catch (t: Throwable) {
                 Timber.e(t, "WidgetUpdateCoordinator: sync-status observation failed")

@@ -8,14 +8,15 @@ import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
-import androidx.glance.appwidget.updateAll
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import xyz.botolog.ghostify.GhostifyApplication
 import xyz.botolog.ghostify.background.PlaybackService
@@ -40,6 +41,12 @@ import kotlin.random.Random
  * UI is not open. Nothing here touches the process-wide `ExoPlayer` directly: every
  * command flows through the same MediaSession the notification and lock screen use, so
  * existing playback behaviour is unchanged.
+ *
+ * A tap can be the *only* reason the process is alive (the launcher delivers the action to
+ * our broadcast receiver). `PlaybackService` then hosts a player with no queue, and every
+ * command would be a silent no-op — see [PlayerWidgetActionCallback.ensureRestoredQueue].
+ * After the command the widget is repainted here so the button state the user just changed
+ * is visible without waiting for a UI process to publish it.
  */
 
 /** Parameter key identifying which transport command a button issued. */
@@ -91,6 +98,7 @@ class PlayerWidgetActionCallback : ActionCallback {
                 return@withContext
             }
             try {
+                ensureRestoredQueue(appContext, controller)
                 when (command) {
                     ACTION_TOGGLE -> if (controller.isPlaying) controller.pause() else controller.play()
                     ACTION_NEXT -> controller.seekToNext()
@@ -105,10 +113,45 @@ class PlayerWidgetActionCallback : ActionCallback {
                 MediaController.releaseFuture(future)
             }
         }
+        // Start the live push (idempotent) and repaint now, so the transport state the user
+        // just changed shows up even if no UI process was open to publish it.
+        WidgetUpdateCoordinator.start(context)
+        runCatching {
+            PlayerWidget().updateAllInstances(context, PlayerWidgetReceiver::class.java)
+        }
+    }
+
+    /**
+     * Gives the session a queue before a transport command is issued.
+     *
+     * When this process was started by the widget tap itself, `PlaybackService` owns a player
+     * with no media items and the persisted queue has not been restored, so `play()`,
+     * `seekToNext()` and friends all do nothing. The queue is restored by the app container's
+     * [xyz.botolog.ghostify.player.PlayerController] on creation (its `init` ->
+     * `restoreSavedState`), which is exactly what the sleep-timer and roulette callbacks
+     * already reach for; touching the controller is therefore what brings the queue back.
+     * Wait briefly for that restore to land, then issue the command against a real queue.
+     */
+    private suspend fun ensureRestoredQueue(appContext: Context, controller: MediaController) {
+        if (controller.mediaItemCount > 0) return
+        val app = appContext as? GhostifyApplication ?: return
+        Timber.i("PlayerWidgetActionCallback: session has no queue; awaiting restore")
+        val restored = withTimeoutOrNull(QUEUE_RESTORE_WAIT_MS) {
+            app.container.playerController.state.first { it.queue.isNotEmpty() }
+        }
+        Timber.i("PlayerWidgetActionCallback: queue restore ${if (restored != null) "landed" else "timed out"}")
     }
 
     private companion object {
         const val COMMAND_FLUSH_MS = 300L
+
+        /**
+         * How long to wait for the container's queue restore before issuing the command.
+         *
+         * Bounded because the tap must stay responsive; a genuinely empty library (nothing
+         * ever played) has no queue to restore and the command is a no-op either way.
+         */
+        const val QUEUE_RESTORE_WAIT_MS = 5_000L
     }
 }
 
@@ -169,7 +212,9 @@ class SleepTimerWidgetActionCallback : ActionCallback {
         // The timer is app-process-only: start the live push (idempotent) and repaint now
         // so the ring reflects the new state even if the UI process was never opened.
         WidgetUpdateCoordinator.start(context)
-        runCatching { SleepTimerWidget().updateAll(context) }
+        runCatching {
+            SleepTimerWidget().updateAllInstances(context, SleepTimerWidgetReceiver::class.java)
+        }
     }
 
     private companion object {
@@ -231,7 +276,12 @@ class ShuffleRouletteActionCallback : ActionCallback {
             }
         }
         WidgetUpdateCoordinator.start(context)
-        runCatching { ShuffleRouletteWidget().updateAll(context) }
+        runCatching {
+            ShuffleRouletteWidget().updateAllInstances(
+                context,
+                ShuffleRouletteWidgetReceiver::class.java,
+            )
+        }
     }
 
     private suspend fun spin(
@@ -304,7 +354,12 @@ class PlaylistTileActionCallback : ActionCallback {
             }
         }
         WidgetUpdateCoordinator.start(context)
-        runCatching { PlaylistLauncherWidget().updateAll(context) }
+        runCatching {
+            PlaylistLauncherWidget().updateAllInstances(
+                context,
+                PlaylistLauncherWidgetReceiver::class.java,
+            )
+        }
     }
 
     private suspend fun play(app: GhostifyApplication, playlistId: String) {
