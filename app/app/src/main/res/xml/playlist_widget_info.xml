@@ -18,7 +18,7 @@
     android:minHeight="110dp"
     android:minResizeWidth="110dp"
     android:minResizeHeight="110dp"
-    android:previewImage="@drawable/ic_widget_playlist"
+    android:previewImage="@drawable/widget_preview_playlists"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"
     android:targetCellHeight="2"

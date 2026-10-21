@@ -56,6 +56,8 @@ import xyz.botolog.ghostify.widget.WidgetSnapshot
 import xyz.botolog.ghostify.widget.WidgetStateProvider
 import xyz.botolog.ghostify.widget.lyricsWindow
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * DEBUG-ONLY widget lab (src/debug): renders the real Ghostify Glance widgets with
@@ -78,7 +80,9 @@ import java.io.ByteArrayOutputStream
  * ```
  * Extras: `w`/`h` (dp), `size` (`WxH` **cells**, e.g. `4x2`), `which`
  * (`player` | `lyrics` | `sleep` | `nextup` | `roulette` | `playlists` | `library` | `both` | `bothb` | `all`, default `both`),
- * `scenario`, `reset`.
+ * `scenario`, `reset`. `export` (`--ez export true`) renders each bound widget's surface to
+ * `<slot>.png` (scale via `--ei export_scale N`, default 3) under `getExternalFilesDir("previews")`
+ * and finishes — used to capture the widget-picker previews. Ignored otherwise.
  *
  * State injection: because `src/debug` shares the module + package root, this class can
  * call the widget internals directly — [WidgetStateProvider.publish] to install a
@@ -496,6 +500,66 @@ class WidgetLabActivity : Activity() {
                 "window=${window.joinToString(" | ")}",
         )
         startHeartbeat()
+        scheduleExportIfRequested()
+    }
+
+    // ── Preview export (debug tooling) ─────────────────────────────────────
+
+    /** If this launch asked for a preview export, render once composed, then finish. */
+    private fun scheduleExportIfRequested() {
+        if (intent?.getBooleanExtra(EXTRA_EXPORT, false) != true) return
+        // The composition needs a moment to land: let the 1s heartbeat repaint a few times.
+        scenarioView.postDelayed({ exportPreviews() }, EXPORT_DELAY_MS)
+    }
+
+    /**
+     * Renders each bound widget's surface — the RemoteViews root inside the
+     * [AppWidgetHostView], so no lab chrome / grey background — to `<slot>.png` under
+     * `getExternalFilesDir("previews")`, at [EXTRA_EXPORT_SCALE]x, then finishes the activity.
+     */
+    private fun exportPreviews() {
+        val scale = (intent?.getIntExtra(EXTRA_EXPORT_SCALE, DEFAULT_EXPORT_SCALE) ?: DEFAULT_EXPORT_SCALE)
+            .coerceIn(1, 8)
+        val dir = getExternalFilesDir(EXPORT_DIR) ?: filesDir
+        dir.mkdirs()
+        for ((slot, container) in containers) {
+            val hostView = container.getChildAt(0)
+            if (hostView == null || hostView.width <= 0 || hostView.height <= 0) {
+                Log.e(TAG, "export ${slotName(slot)} skipped: host not laid out " +
+                    "(${hostView?.width}x${hostView?.height})")
+                continue
+            }
+            // The RemoteViews root draws in its own coordinate space (0,0), so drawing it
+            // directly yields the padded surface exactly. Fall back to the host view,
+            // translated by its padding and clipped to the content area, if it is absent.
+            val root = (hostView as? ViewGroup)?.getChildAt(0)
+            val surfaceW = root?.width ?: (hostView.width - hostView.paddingLeft - hostView.paddingRight)
+            val surfaceH = root?.height ?: (hostView.height - hostView.paddingTop - hostView.paddingBottom)
+            if (surfaceW <= 0 || surfaceH <= 0) {
+                Log.e(TAG, "export ${slotName(slot)} skipped: empty surface ${surfaceW}x${surfaceH}")
+                continue
+            }
+            val bmp = Bitmap.createBitmap(surfaceW * scale, surfaceH * scale, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            canvas.scale(scale.toFloat(), scale.toFloat())
+            if (root != null) {
+                root.draw(canvas)
+            } else {
+                canvas.translate(-hostView.paddingLeft.toFloat(), -hostView.paddingTop.toFloat())
+                hostView.draw(canvas)
+            }
+            val file = File(dir, "${slotName(slot)}.png")
+            runCatching { FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+                .onFailure { Log.e(TAG, "export ${slotName(slot)} write failed", it) }
+            bmp.recycle()
+            Log.i(
+                TAG,
+                "export ${slotName(slot)} -> ${file.absolutePath} " +
+                    "${surfaceW * scale}x${surfaceH * scale}px surface=${surfaceW}x${surfaceH}px " +
+                    "scale=$scale bytes=${file.length()}",
+            )
+        }
+        finish()
     }
 
     /**
@@ -556,6 +620,11 @@ class WidgetLabActivity : Activity() {
         const val EXTRA_H = "h"
         const val EXTRA_SIZE = "size"
         const val EXTRA_WHICH = "which"
+        const val EXTRA_EXPORT = "export"
+        const val EXTRA_EXPORT_SCALE = "export_scale"
+        const val DEFAULT_EXPORT_SCALE = 3
+        const val EXPORT_DELAY_MS = 3_000L
+        const val EXPORT_DIR = "previews"
         const val DEFAULT_SCENARIO = "player_playing"
         const val WHICH_PLAYER = "player"
         const val WHICH_LYRICS = "lyrics"
