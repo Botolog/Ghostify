@@ -178,6 +178,20 @@ class WidgetLayoutTest {
     }
 
     @Test
+    fun playerThreeByTwoIsCompactRatherThanClippingTheStandardTransport() {
+        // 3x2 ≈ 164x94dp: just above the old `w < 160 || h < 90` gates, it fell into
+        // STANDARD and its painted transport (~150dp) overflowed the ~86dp text column,
+        // slicing the play button in half at the right edge.
+        val layout = playerLayout(164, 94)
+        assertEquals(PlayerLayoutKind.COMPACT, layout.kind)
+        val needed = layout.coverDp + 3 + 22 + 5 + layout.playDp
+        assertTrue("compact layout overflows at 164x94 (needed $needed)", needed <= 94 - 16)
+        // The 4x2 reference and the wider standard cells keep their design.
+        assertEquals(PlayerLayoutKind.STANDARD, playerLayout(234, 94).kind)
+        assertEquals(PlayerLayoutKind.STANDARD, playerLayout(304, 94).kind)
+    }
+
+    @Test
     fun shortAlwaysWinsOverWide() {
         // A short-but-wide cell (e.g. 6x1) must still be a single row.
         assertEquals(PlayerLayoutKind.SHORT, playerLayout(400, 70).kind)
@@ -327,7 +341,8 @@ class WidgetLayoutTest {
         assertEquals(2, lyricLinesForFreeHeight(row * 2 + extra))
         assertEquals(5, lyricLinesForFreeHeight(row * 5 + extra))
         assertEquals(8, lyricLinesForFreeHeight(row * 8 + extra))
-        assertEquals(8, lyricLinesForFreeHeight(row * 8 + extra + 100))
+        // Beyond the tall-window threshold the cap grows to the RemoteViews child cap.
+        assertEquals(10, lyricLinesForFreeHeight(row * 8 + extra + 100))
     }
 
     @Test
@@ -383,5 +398,42 @@ class WidgetLayoutTest {
         val wide = lyricsLayout(250, 250)
         assertTrue(narrow.headerCoverDp < wide.headerCoverDp)
         assertTrue(narrow.titleSp < wide.titleSp)
+    }
+
+    @Test
+    fun narrowCellsFallBackToAPlayOnlyTransport() {
+        // 2x3/2x4 ≈ 94dp wide: the trio (30+34+30 + 2x10 gaps ≈ 114dp) exceeds the ~77dp
+        // inner width and sliced both skip glyphs at the widget edges. Those cells paint
+        // the play/pause pill alone; the trio fits everywhere else with the transport.
+        assertFalse(lyricsLayout(94, 164).showSkip)
+        assertFalse(lyricsLayout(94, 234).showSkip)
+        assertTrue("3x3 keeps the full trio", lyricsLayout(164, 164).showSkip)
+        assertTrue("4x4 keeps the full trio", lyricsLayout(234, 234).showSkip)
+        for (w in listOf(94, 110, 234, 370)) {
+            for (h in listOf(164, 234, 373, 500)) {
+                val layout = lyricsLayout(w, h)
+                if (!layout.showTransport) continue
+                val needed = if (layout.showSkip) {
+                    layout.skipDp * 2 + layout.playDp + 2 * LYRICS_TRANSPORT_GAP_DP
+                } else {
+                    layout.playDp
+                }
+                assertTrue(
+                    "transport overflows at ${w}x$h (needed $needed)",
+                    needed <= w - 16,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun aSixBySixCellGrowsTheWindowToTheChildCap() {
+        // 6x6 ≈ 369x373dp: the flat 8-row cap left ~53dp dead above and below the lyric
+        // block. A genuine tall cell fills to the RemoteViews 10-child cap instead.
+        val layout = lyricsLayout(369, 373)
+        assertTrue(layout.showTransport)
+        assertEquals(WIDGET_COLUMN_MAX_CHILDREN, layout.windowSize)
+        // Mid-size cells keep the modest cap that fits their height.
+        assertEquals(8, lyricsLayout(234, 304).windowSize)
     }
 }

@@ -11,11 +11,15 @@
   minResizeWidth/minResizeHeight let the user shrink it freely, including
   vertically: LyricsWidget derives how many lines fit from the real height and
   drops the header/progress/transport as the cell gets short.
+  maxResizeWidth/maxResizeHeight cap the size at the sweep-verified envelope:
+  6 columns (~390dp) by 6 rows (~390dp); larger was never layout-verified.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:description="@string/widget_lyrics_description"
     android:initialLayout="@layout/glance_default_loading_layout"
+    android:maxResizeWidth="390dp"
+    android:maxResizeHeight="390dp"
     android:minWidth="250dp"
     android:minHeight="250dp"
     android:minResizeWidth="110dp"

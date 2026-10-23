@@ -105,7 +105,9 @@ private fun ShuffleRouletteWidgetContent(snapshot: WidgetSnapshot) {
                     modifier = GlanceModifier.defaultWeight(),
                     horizontalAlignment = Alignment.Start,
                 ) {
-                    ShuffleStateText(snapshot, layout)
+                    if (layout.showStatus) {
+                        ShuffleStateText(snapshot, layout)
+                    }
                     TrackText(snapshot, layout, fill = true)
                 }
                 Spacer(GlanceModifier.width(12.dp))
@@ -122,7 +124,9 @@ private fun ShuffleRouletteWidgetContent(snapshot: WidgetSnapshot) {
                 modifier = GlanceModifier.fillMaxSize(),
                 horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
             ) {
-                StatusRow(snapshot, layout)
+                if (layout.showStatus) {
+                    StatusRow(snapshot, layout)
+                }
                 Spacer(GlanceModifier.defaultWeight())
                 TrackText(snapshot, layout, fill = !centered)
                 Spacer(GlanceModifier.defaultWeight())

@@ -125,7 +125,7 @@ data class PlayerLayout(
  *  - `height < 88`            → [PlayerLayoutKind.SHORT]   (4x1 ≈ 44 content)
  *  - `height >= 150`          → [PlayerLayoutKind.TALL]    (4x3 ≈ 164, 4x4 ≈ 234)
  *  - `width >= 320`           → [PlayerLayoutKind.WIDE]    (6x2 ≈ 374)
- *  - `width < 160 || h < 90`  → [PlayerLayoutKind.COMPACT] (2x2 ≈ 94x94)
+ *  - `width < 232 || h < 90`  → [PlayerLayoutKind.COMPACT] (2x2 ≈ 94x94, 3x2 ≈ 164x94)
  *  - otherwise                → [PlayerLayoutKind.STANDARD](4x2 ≈ 234x94)
  */
 fun playerLayout(widthDp: Int, heightDp: Int): PlayerLayout {
@@ -227,7 +227,7 @@ fun playerLayout(widthDp: Int, heightDp: Int): PlayerLayout {
             timeSp = 11,
         )
 
-        w < COMPACT_MAX_WIDTH || h < COMPACT_MAX_HEIGHT -> {
+        w < STANDARD_MIN_WIDTH || h < COMPACT_MAX_HEIGHT -> {
             // Size the cover and the play button from the height that is left after the
             // title line and the two gaps, not from the raw side. At the 2x2 reference
             // (110x110dp) the old side-derived buttons overflowed the padded height, so
@@ -314,6 +314,15 @@ const val COMPACT_MAX_WIDTH: Int = 160
  */
 const val COMPACT_MAX_HEIGHT: Int = 90
 
+/**
+ * `width` at/below which the STANDARD text column cannot fit its own transport, so the cell
+ * falls back to [PlayerLayoutKind.COMPACT] instead: 16dp of surface padding + the 52dp cover
+ * + the 10dp cover gap + the ~60dp `elapsed / duration` cluster (11 chars at 11sp × 0.5) +
+ * the 94dp skip/play/skip transport ≈ 232dp. A 3x2 (164x94dp) used to slip the old
+ * `w < 160 || h < 90` gate into the STANDARD branch and clipped the transport at both edges.
+ */
+const val STANDARD_MIN_WIDTH: Int = 232
+
 // ── Playlist launcher ─────────────────────────────────────────────────
 
 /**
@@ -338,6 +347,8 @@ const val COMPACT_MAX_HEIGHT: Int = 90
  * @property nameMaxLines name lines the tile affords.
  * @property countChars character budget for the track-count line.
  * @property tileGapDp gap between tiles, both directions.
+ * @property overflowCount playlists that exist but do not fit; the composable surfaces this
+ *   as an explicit "+N" indicator instead of silently hiding them. `0` when nothing is hidden.
  */
 data class PlaylistLayout(
     val columns: Int,
@@ -355,6 +366,7 @@ data class PlaylistLayout(
     val nameMaxLines: Int,
     val countChars: Int,
     val tileGapDp: Int,
+    val overflowCount: Int,
 ) {
     /** How many tiles this layout paints (never above [PLAYLIST_TILE_CAP]). */
     val tiles: Int get() = (columns * rows).coerceAtMost(PLAYLIST_TILE_CAP)
@@ -440,6 +452,12 @@ private const val PLAYLIST_HEADER_DP: Int = 20
 /** Vertical gap below the header. */
 private const val PLAYLIST_HEADER_GAP_DP: Int = 6
 
+/** Characters of the header label ("Playlists") at the header's own `sp`. */
+private const val PLAYLIST_HEADER_LABEL_CHARS: Int = 9
+
+/** The widest overflow marker ("+99 more") that can ride the header line. */
+private const val PLAYLIST_HEADER_MORE_MAX_CHARS: Int = 8
+
 /**
  * Picks the tile grid for a widget of [widthDp] x [heightDp].
  *
@@ -470,25 +488,57 @@ fun playlistLayout(widthDp: Int, heightDp: Int, tileCount: Int = PLAYLIST_TILE_C
     // Spend no more columns than there are tiles to fill them, so two playlists on a 6x2 are
     // two comfortable tiles rather than two tiles beside two empty ones.
     val columns = columnFit.coerceAtMost(available.coerceAtLeast(1))
+    val canCover = w >= PLAYLIST_COVER_MIN_WIDTH
+    val maxRows = if (canCover) PLAYLIST_MAX_ROWS else PLAYLIST_TILE_CAP
+    // Rows painted for [freeGrid] dp of grid height, once all chrome is removed. Shared by
+    // the two passes below (with and without the overflow line). The floor rule keeps at
+    // least one tile: a cell whose free height cannot afford the readable row pitch used to
+    // collapse to zero tiles and paint a false "No playlists yet" over two real ones.
+    fun rowsFor(freeGrid: Int): Int {
+        var rows = (freeGrid / PLAYLIST_ROW_PITCH_DP).coerceIn(0, maxRows)
+        if (rows == 0 && available > 0 && freeGrid >= PLAYLIST_TILE_PITCH_DP) rows = 1
+        while (rows > 0 && columns * rows > PLAYLIST_TILE_CAP) rows--
+        val neededRows = (available + columns - 1) / columns
+        return minOf(rows, if (available > 0) neededRows else 0)
+    }
     var chrome = PLAYLIST_OUTER_PADDING_DP * 2
     if (showHeader) chrome += PLAYLIST_HEADER_DP + PLAYLIST_HEADER_GAP_DP
     val free = (h - chrome).coerceAtLeast(0)
-    // Rows are counted with the readable pitch (name + count + gap) for both kinds of tile:
-    // a covered tile is additionally capped at [PLAYLIST_MAX_ROWS], because the cap exists to
-    // bound the artwork, while a text-only tile may fill the cell up to [PLAYLIST_TILE_CAP].
-    val canCover = w >= PLAYLIST_COVER_MIN_WIDTH
-    val maxRows = if (canCover) PLAYLIST_MAX_ROWS else PLAYLIST_TILE_CAP
-    var rows = (free / PLAYLIST_ROW_PITCH_DP).coerceIn(0, maxRows)
-    // Drop rows until the grid is within the cover cap (e.g. 4 columns × 2 rows) and until
-    // every painted row has a tile.
-    while (rows > 0 && columns * rows > PLAYLIST_TILE_CAP) rows--
-    val neededRows = (available + columns - 1) / columns
-    rows = minOf(rows, neededRows)
+    var rows = rowsFor(free)
+    // Overflow affordance: with the header on screen the count rides the header line (no
+    // extra height); headerless cells reserve a compact line under the grid instead, and
+    // only when doing so does not collapse the grid below one compact row.
+    var overflow = available - columns * rows
+    var overflowChrome = 0
+    if (overflow > 0 && !showHeader) {
+        val withLine = rowsFor((free - PLAYLIST_OVERFLOW_TOTAL_DP).coerceAtLeast(0))
+        if (withLine > 0) {
+            rows = withLine
+            overflowChrome = PLAYLIST_OVERFLOW_TOTAL_DP
+            overflow = available - columns * rows
+        } else if (rows > 0) {
+            // The line cannot be afforded, and the floor rule above already kept a tile:
+            // 2x1/3x1/4x1 (~44dp tall) end here with one compact tile painted. An
+            // unreserved "+N" under that tile would draw out of the cell, so the hidden
+            // playlists go unmarked rather than clipped — and the empty message is never
+            // shown while tiles fit.
+            overflow = 0
+        }
+    }
+    // On header cells the count rides the header line — but only when both strings fit on
+    // it: a narrow header cell (2x2 ≈ 93dp wide) used to clip the trailing marker mid-glyph
+    // at the squircle edge (sibling of the headerless rule above, which hides the count
+    // rather than afford a line it cannot fit). "Playlists +99 more" ≈ 17 characters.
+    val headerSp = if (w < COMPACT_MAX_WIDTH) 12 else 13
+    if (showHeader && overflow > 0) {
+        val headerBudget = textCharBudget(w - PLAYLIST_OUTER_PADDING_DP * 2, headerSp)
+        if (headerBudget < PLAYLIST_HEADER_LABEL_CHARS + PLAYLIST_HEADER_MORE_MAX_CHARS) overflow = 0
+    }
     // Rows are counted with the readable pitch (name + count + gap) but then *pinned* to a
     // fixed height that also absorbs the inter-row gaps, so `rows * rowHeight + gaps == free`
     // and the grid fills the cell instead of pooling the remainder into a band above the
     // bottom edge (the old 4x4 left ~74dp of empty card under the tiles).
-    val rowHeight = if (rows > 0) (free - (rows - 1) * PLAYLIST_TILE_GAP_DP) / rows else free
+    val rowHeight = if (rows > 0) (free - overflowChrome - (rows - 1) * PLAYLIST_TILE_GAP_DP) / rows else free
     val compact = w < COMPACT_MAX_WIDTH
     val showCover = canCover && rows > 0
     // A tall covered row switches from "cover beside the name" to "cover above a full-width
@@ -535,16 +585,20 @@ fun playlistLayout(widthDp: Int, heightDp: Int, tileCount: Int = PLAYLIST_TILE_C
         rowHeightDp = rowHeight,
         nameSp = nameSp,
         countSp = countSp,
-        headerSp = if (compact) 12 else 13,
+        headerSp = headerSp,
         nameChars = textCharBudget(textWidth, nameSp),
         nameMaxLines = nameMaxLines,
         countChars = textCharBudget(textWidth, countSp, WIDGET_COUNT_CHAR_WIDTH_RATIO),
         tileGapDp = PLAYLIST_TILE_GAP_DP,
+        overflowCount = overflow.coerceAtLeast(0),
     )
 }
 
 /** Gap (dp) between tiles, both directions. */
 internal const val PLAYLIST_TILE_GAP_DP: Int = 6
+
+/** Vertical cost (line + gap) of the compact "+N more" overflow line on a headerless cell. */
+internal const val PLAYLIST_OVERFLOW_TOTAL_DP: Int = 22
 
 // ── Library stats + sync ──────────────────────────────────────────────
 
@@ -614,6 +668,15 @@ fun libraryStatRows(
  * @property badgeChars character budget for the header badge label (it shares the line with
  *   the "Library" title, so it is only part of the width).
  * @property syncChars character budget for the dedicated sync line (full width).
+ * @property singleLine `true` on the shortest headerless cells: the figures and the sync
+ *   readout fold into **one** combined line rather than a dedicated line eating the whole
+ *   budget (the old 3x1/4x1 dropped every figure; the old 2x1 dropped the readout).
+ * @property syncOnLine whether the combined line attempts the short sync readout's words
+ *   after the figures; when the budget cannot hold them the sync-state dot still marks it.
+ * @property singleLineChars character budget for the combined single line.
+ * @property topAlign `true` when the content column is pinned to the top instead of being
+ *   vertically centred: a tall cell with the progress block but not the hero figure pools a
+ *   ~40dp band above AND below the group when centred.
  */
 data class StatsLayout(
     val showHeader: Boolean,
@@ -633,6 +696,10 @@ data class StatsLayout(
     val statItemChars: Int,
     val badgeChars: Int,
     val syncChars: Int,
+    val singleLine: Boolean,
+    val syncOnLine: Boolean,
+    val singleLineChars: Int,
+    val topAlign: Boolean,
 ) {
     /** Stat rows the composable paints. */
     val statRows: List<List<LibraryStatKind>> get() = libraryStatRows(statItems, itemsPerRow)
@@ -666,6 +733,12 @@ const val STATS_HERO_MIN_HEIGHT: Int = 200
 /** Library-widget surface padding (dp), mirrored by `WidgetDimens.outerPadding`. */
 private const val STATS_OUTER_PADDING_DP: Int = 8
 
+/**
+ * Width (dp) reserved ahead of the combined single line for the sync-state dot plus its gap
+ * (see [StatsLayout.singleLine]) — the dot marks the sync state even where no readout fits.
+ */
+private const val STATS_SINGLE_DOT_RESERVE_DP: Int = 12
+
 /** Height reserved for the header line (it also carries the sync badge). */
 private const val STATS_HEADER_DP: Int = 20
 
@@ -696,27 +769,46 @@ fun statsLayout(widthDp: Int, heightDp: Int): StatsLayout {
     val w = widthDp.coerceAtLeast(1)
     val h = heightDp.coerceAtLeast(1)
     val showHeader = h >= STATS_HEADER_MIN_HEIGHT
-    val showSyncText = w >= STATS_SYNC_TEXT_MIN_WIDTH
+    // The shortest headerless cells fold everything into one combined line: a dedicated
+    // sync line plus a figure row needs `padding + line + gap + pitch` (~60dp), and cells
+    // below that used to let the line eat the whole budget (the 3x1/4x1 "Synced 3 min ago"
+    // with zero figures). On those the figures and the readout share one line, led by the
+    // sync-state dot.
+    val singleLine = !showHeader &&
+        (h - STATS_OUTER_PADDING_DP * 2 - STATS_SYNC_LINE_DP - STATS_GAP_DP) < STATS_SINGLE_LINE_ROW_PITCH_DP
+    val showSyncText = !singleLine && w >= STATS_SYNC_TEXT_MIN_WIDTH
     // With the header there, the badge owns the readout on a wide cell, and only a narrow
     // cell needs the extra line. Without the header, the line is the readout on a wide cell.
-    val showSyncLine = if (showSyncText) !showHeader else h >= STATS_SYNC_LINE_MIN_HEIGHT
+    val showSyncLine = if (singleLine) {
+        false
+    } else if (showSyncText) {
+        !showHeader
+    } else {
+        h >= STATS_SYNC_LINE_MIN_HEIGHT
+    }
     val showProgress = h >= STATS_PROGRESS_MIN_HEIGHT
     val compact = w < STATS_COMPACT_WIDTH
-    val itemsPerRow = if (compact) 1 else 2
+    val rowPitch = if (h >= STATS_HERO_MIN_HEIGHT) 30 else 22
+    val itemsPerRow = when {
+        singleLine -> if (w >= STATS_SYNC_TEXT_MIN_WIDTH) 2 else 1
+        compact -> 1
+        else -> 2
+    }
     var chrome = STATS_OUTER_PADDING_DP * 2
     if (showHeader) chrome += STATS_HEADER_DP + STATS_GAP_DP
     if (showSyncLine) chrome += STATS_SYNC_LINE_DP + STATS_GAP_DP
     if (showProgress) chrome += STATS_PROGRESS_DP + STATS_GAP_DP
     val free = (h - chrome).coerceAtLeast(0)
-    val rowPitch = if (h >= STATS_HERO_MIN_HEIGHT) 30 else 22
     val rowsFit = (free / rowPitch).coerceIn(0, 3)
     val items = (rowsFit * itemsPerRow).coerceIn(0, LIBRARY_STAT_ORDER.size)
     // Figures stay at 13sp on the 4-column-wide cells (4x2/4x3/4x4/4x5) and drop to 12sp on
     // the narrow 2-wide cells. 13sp does not fit "742 with lyrics" beside a separator in a
     // 234dp cell (see [STATS_WIDE_WIDTH]), and it also cut the grouped large figures
     // ("12,345 songs" → "12,345 son…") in a 94dp one, so the narrow cells run a hair smaller
-    // and the grouped thousands read whole. Only the truly wide 6x2/6x3 cells use 14sp.
+    // and the grouped thousands read whole. Only the truly wide 6x2/6x3 cells use 14sp. The
+    // combined single line runs at 10sp: both figures and the readout share one 44dp cell.
     val statSp = when {
+        singleLine -> 10
         w >= STATS_WIDE_WIDTH -> 14
         w < STATS_COMPACT_WIDTH -> 12
         else -> 13
@@ -729,7 +821,7 @@ fun statsLayout(widthDp: Int, heightDp: Int): StatsLayout {
         showHeader = showHeader,
         showSyncText = showSyncText,
         showSyncLine = showSyncLine,
-        shortSync = compact,
+        shortSync = compact || singleLine,
         showProgress = showProgress,
         showHeroPercent = h >= STATS_HERO_MIN_HEIGHT,
         // The "Downloaded 76%" caption keeps its word only where the readout itself is wide
@@ -750,8 +842,24 @@ fun statsLayout(widthDp: Int, heightDp: Int): StatsLayout {
         statItemChars = textCharBudget(figureWidth, statSp),
         badgeChars = textCharBudget((innerWidth / 2).coerceAtLeast(1), syncSp),
         syncChars = textCharBudget(innerWidth, syncSp),
+        singleLine = singleLine,
+        syncOnLine = singleLine && w >= STATS_SYNC_TEXT_MIN_WIDTH,
+        singleLineChars = textCharBudget(
+            (innerWidth - STATS_SINGLE_DOT_RESERVE_DP).coerceAtLeast(1),
+            statSp,
+        ),
+        // The progress-only tall cells (4x3/6x3) pool a ~40dp band above AND below the
+        // centred group, so they are pinned to the top; the hero figure (the taller filler)
+        // keeps its centring.
+        topAlign = showProgress && !singleLine && h < STATS_HERO_MIN_HEIGHT,
     )
 }
+
+/**
+ * Vertical pitch (dp) a plain stat figure row needs. A headerless cell that cannot hold a
+ * sync line AND this pitch folds its content into the combined single line instead.
+ */
+private const val STATS_SINGLE_LINE_ROW_PITCH_DP: Int = 22
 
 // ── Lyrics ────────────────────────────────────────────────────────────
 
@@ -771,6 +879,9 @@ fun statsLayout(widthDp: Int, heightDp: Int): StatsLayout {
  * @property titleSp / [artistSp] header text sizes.
  * @property currentSp / [neighborSp] highlighted / faded lyric text sizes.
  * @property headerCoverDp header cover thumb side.
+ * @property showSkip whether the prev/next buttons flank the play button. When the
+ *   three-button cluster cannot fit the cell's inner width it overflows and slices the skip
+ *   glyphs at both edges, so a narrow cell falls back to the play/pause pill alone.
  * @property skipDp / [playDp] transport button diameters.
  */
 data class LyricsLayout(
@@ -785,6 +896,7 @@ data class LyricsLayout(
     val currentSp: Int,
     val neighborSp: Int,
     val headerCoverDp: Int,
+    val showSkip: Boolean,
     val skipDp: Int,
     val playDp: Int,
 )
@@ -845,6 +957,9 @@ private const val LYRICS_PROGRESS_DP: Int = 3
 /** Transport row height (the play button dominates it). */
 private const val LYRICS_TRANSPORT_DP: Int = 38
 
+/** Horizontal gap between the transport buttons; mirrored by `LyricsWidget`'s Row. */
+internal const val LYRICS_TRANSPORT_GAP_DP: Int = 10
+
 /**
  * Chooses how many lyric rows fit in [heightDp] once the header, progress bar, transport
  * row and inter-block gaps the composer will actually paint have been subtracted. Pure and
@@ -865,11 +980,20 @@ fun lyricLinesForFreeHeight(freeDp: Int): Int {
     // The window always rolls around the highlighted row, which is taller than the rest,
     // so subtract its extra height before dividing by the plain row pitch.
     val fit = (freeDp - LYRICS_CURRENT_ROW_EXTRA_DP) / LYRICS_ROW_HEIGHT_DP
+    // A modest 8-row default keeps mid-size cells from over-reserving rows they cannot
+    // fill; a genuinely tall cell (6x6 leaves ~260dp free) fills to the RemoteViews
+    // child cap instead ([WIDGET_COLUMN_MAX_CHILDREN]), which is what bounds the window.
     return fit
         .coerceAtLeast(1)
-        .coerceAtMost(LYRICS_MAX_WINDOW_SIZE)
-        .coerceAtMost(WIDGET_COLUMN_MAX_CHILDREN)
+        .coerceAtMost(if (freeDp >= LYRICS_MAX_WINDOW_FREE_DP) WIDGET_COLUMN_MAX_CHILDREN else LYRICS_MAX_WINDOW_SIZE)
 }
+
+/**
+ * Free height (dp, all chrome removed) at/above which the visible window may grow from
+ * [LYRICS_MAX_WINDOW_SIZE] rows to [WIDGET_COLUMN_MAX_CHILDREN].
+ */
+internal const val LYRICS_MAX_WINDOW_FREE_DP: Int =
+    WIDGET_COLUMN_MAX_CHILDREN * LYRICS_ROW_HEIGHT_DP + LYRICS_CURRENT_ROW_EXTRA_DP
 
 // ── Sleep timer ring ──────────────────────────────────────────────────
 
@@ -945,6 +1069,30 @@ const val SLEEP_LABEL_TEXT_MIN_WIDTH: Int = 110
 /** Width (dp) at/above which the three 15/30/60 presets fit instead of a single start. */
 const val SLEEP_PRESETS_MIN_WIDTH: Int = 170
 
+/**
+ * Narrowest row width (dp) at which the wide active row may still be used with a **shrunk**
+ * ring: the 3x2 (~164dp) misses the classic [SLEEP_PRESETS_MIN_WIDTH] gate by 6dp, which
+ * used to strand its small stacked ring between two ~46dp gutters.
+ */
+const val SLEEP_WIDE_ROW_MIN_WIDTH: Int = 164
+
+/** Horizontal gap (dp) between the wide row's ring and its caption/Cancel column. */
+internal const val SLEEP_WIDE_RING_GAP_DP: Int = 12
+
+/**
+ * Narrowest caption/Cancel column (dp) the wide row accepts: enough for the "× Cancel" pill
+ * at its compact sizing (~72dp painted). A wider cell is not forced to shrink its ring for
+ * the row to count as "fitting".
+ */
+const val SLEEP_WIDE_COLUMN_MIN_DP: Int = 76
+
+/**
+ * Height (dp) of the wide-row Cancel pill when the ring has been shrunk to leave the column
+ * its minimum width: the pill's own painted width grows with its size, so a narrow column
+ * borrows the compact 4x2 reference sizing instead of the roomy tall-cell pill.
+ */
+const val SLEEP_WIDE_SHRUNK_CANCEL_DP: Int = 28
+
 /** Height (dp) at/above which the presets stack as full-width pills instead of a circle row. */
 const val SLEEP_STACK_PRESETS_MIN_HEIGHT: Int = 190
 
@@ -985,6 +1133,13 @@ const val SLEEP_STACK_GAP_DP: Int = 8
  *  - **small square** (2x2): the caption is dropped and a compact Cancel shrinks, so the
  *    ring — with the countdown inside it — still fits rather than degrading to a bar.
  *
+ * A cell that misses the classic gate of the wide row by a hair (the 3x2's 164dp or the
+ * 4x3's 1.43 aspect) still gets the row when the ring can shrink far enough to leave the
+ * caption/Cancel column its width **and** the shrunk ring beats the stacked one — otherwise
+ * it keeps the stacked shape. The stacked ring is additionally capped by the cell width, so
+ * a narrow tall cell (2x4) keeps its arcs inside the squircle instead of running them off
+ * both edges.
+ *
  * Only a cell below the 2x2 minimum (no ring above [SLEEP_COMPACT_RING_MIN_DP] can be
  * afforded) falls back to a large `mm:ss` over a thick rounded bar.
  *
@@ -994,9 +1149,8 @@ const val SLEEP_STACK_GAP_DP: Int = 8
 fun sleepLayout(widthDp: Int, heightDp: Int): SleepLayout {
     val w = widthDp.coerceAtLeast(1)
     val h = heightDp.coerceAtLeast(1)
-    val wide = w >= SLEEP_PRESETS_MIN_WIDTH && w >= h * 3 / 2
+    val wideByRule = w >= SLEEP_PRESETS_MIN_WIDTH && w >= h * 3 / 2
     val showLabel = h >= SLEEP_LABEL_MIN_HEIGHT
-    val showLabelText = w >= SLEEP_LABEL_TEXT_MIN_WIDTH
     val showPresets = w >= SLEEP_PRESETS_MIN_WIDTH && h >= 88
     val caption = if (showLabel) SLEEP_CAPTION_DP + SLEEP_STACK_GAP_DP else 0
     // A very tall cell would leave the circle row floating in empty space, so the presets
@@ -1031,13 +1185,38 @@ fun sleepLayout(widthDp: Int, heightDp: Int): SleepLayout {
     val ringNoCaption = h - SLEEP_OUTER_PADDING_DP * 2 - (fullCancel + SLEEP_STACK_GAP_DP)
     val ringCompactCancel =
         h - SLEEP_OUTER_PADDING_DP * 2 - SLEEP_COMPACT_CANCEL_DP - SLEEP_STACK_GAP_DP
+    // The ring the stacked shapes would afford; the wide-row comparison below needs it, so
+    // it is resolved from the same chain of shrinking choices.
+    val stackedCandidate = when {
+        !wideByRule && ringWithCaption >= SLEEP_COMPACT_RING_MIN_DP -> ringWithCaption
+        !wideByRule && ringNoCaption >= SLEEP_COMPACT_RING_MIN_DP -> ringNoCaption
+        !wideByRule && ringCompactCancel >= SLEEP_COMPACT_RING_MIN_DP -> ringCompactCancel
+        else -> 0
+    }
+    // Wide row: sometimes the ring must shrink below its height-derived side so the
+    // caption/Cancel column fits the width. A cell the classic aspect rule misses by a hair
+    // (the 3x2, 6dp under the width gate; the 4x3, 12dp under the `w >= h*3/2` gate) still
+    // gets the row when the shrunk ring is *bigger* than the ring stacking would afford —
+    // otherwise it keeps the stacked shape instead of trading 2×46dp ridged gutters for it.
+    val ringByHeight = h - SLEEP_OUTER_PADDING_DP * 2
+    val wideRingShrunk = ringByHeight
+        .coerceAtMost(w - SLEEP_OUTER_PADDING_DP * 2 - SLEEP_WIDE_RING_GAP_DP - SLEEP_WIDE_COLUMN_MIN_DP)
+    val wide = wideByRule ||
+        (w >= SLEEP_WIDE_ROW_MIN_WIDTH &&
+            wideRingShrunk >= SLEEP_COMPACT_RING_MIN_DP &&
+            wideRingShrunk > stackedCandidate)
     val activeCaption: Boolean
     val cancel: Int
     val stackedRing: Int
     when {
-        wide -> {
-            stackedRing = h - SLEEP_OUTER_PADDING_DP * 2
+        wide && wideByRule -> {
+            stackedRing = ringByHeight
             cancel = fullCancel
+            activeCaption = showLabel
+        }
+        wide -> {
+            stackedRing = wideRingShrunk
+            cancel = minOf(fullCancel, SLEEP_WIDE_SHRUNK_CANCEL_DP)
             activeCaption = showLabel
         }
         ringWithCaption >= SLEEP_COMPACT_RING_MIN_DP -> {
@@ -1056,7 +1235,13 @@ fun sleepLayout(widthDp: Int, heightDp: Int): SleepLayout {
             activeCaption = false
         }
     }
-    val ring = stackedRing.coerceIn(40, 168)
+    // The stacked ring derives from the height alone, so on a narrow tall cell (2x4: 93dp
+    // wide, ring up to ~141dp) the arcs ran off both edges of the squircle. Cap it by the
+    // cell's padded width as well; the inner glyph and countdown scale with it below. The
+    // cap itself floors at [40] so a degenerate (0dp) width still resolves to a ring.
+    val ring = stackedRing
+        .coerceAtLeast(40)
+        .coerceAtMost(minOf(168, (w - SLEEP_OUTER_PADDING_DP * 2).coerceAtLeast(40)))
     val activeRing = ring >= SLEEP_COMPACT_RING_MIN_DP
     // A tall-but-narrow cell (2x3/2x4: ~94dp wide) can afford the full-height Cancel pill but
     // not its roomy padding — "× Cancel" would ellipsise to "× Ca…". Tighten the pill's own
@@ -1081,7 +1266,13 @@ fun sleepLayout(widthDp: Int, heightDp: Int): SleepLayout {
             (h * 24 / 100).coerceIn(22, 34)
         },
         showLabel = showLabel,
-        showLabelText = showLabelText,
+        // A shrunk-ring wide row leaves only a ~76dp column; when the cell is that tight the
+        // caption rides as its moon glyph alone, since the words would not fit beside it.
+        showLabelText = if (wide && stackedRing < ringByHeight) {
+            false
+        } else {
+            w >= SLEEP_LABEL_TEXT_MIN_WIDTH
+        },
         labelSp = if (w < COMPACT_MAX_WIDTH) 13 else 15,
         showPresets = showPresets,
         singlePresetMinutes = 30,
@@ -1229,13 +1420,17 @@ fun nextUpLayout(widthDp: Int, heightDp: Int, hasMore: Boolean = false): NextUpL
 /**
  * Metrics for the "Shuffle Roulette" widget.
  *
+ * @property showStatus whether the shuffle state readout ("SHUFFLE ON/OFF", or the header
+ *   row when [showHeader]) is painted. A 1-row cell (44dp) drops it — the status block plus
+ *   even a minimum SPIN pill overflows the ~28dp inner height.
  * @property showHeader whether the "Shuffle Roulette" header row is painted.
  * @property showTitle whether the current-track title is painted.
  * @property showArtist whether the current-track artist is painted.
  * @property showShuffleToggle whether the small shuffle toggle accompanies SPIN.
- * @property spread `true` for a **wide, short** cell with no header (6x2): the state +
+ * @property spread `true` for a **wide, short** cell with no header (4x2 5x2 6x2): the state +
  *   current track sit on the left and SPIN on the right, so the extra width is used instead
- *   of leaving two ~130dp dead gutters around a centred stack (mirrors `LyricsLayout.spreadHeader`).
+ *   of leaving two mid-size dead gutters around a centred stack (mirrors
+ *   `LyricsLayout.spreadHeader`).
  * @property showHint whether the small "Tap SPIN to shuffle" hint is painted under SPIN.
  *   On a tall cell (4x4/4x5) SPIN alone cannot absorb all the spare height, so the hint
  *   fills the bottom band instead of leaving a lopsided void between the header and the
@@ -1245,6 +1440,7 @@ fun nextUpLayout(widthDp: Int, heightDp: Int, hasMore: Boolean = false): NextUpL
  * @property headerSp / [titleSp] / [artistSp] text sizes.
  */
 data class RouletteLayout(
+    val showStatus: Boolean,
     val showHeader: Boolean,
     val showTitle: Boolean,
     val showArtist: Boolean,
@@ -1261,14 +1457,20 @@ data class RouletteLayout(
 /** Height (dp) at/above which the "Shuffle Roulette" header is kept. */
 const val ROULETTE_HEADER_MIN_HEIGHT: Int = 130
 
+/**
+ * Height (dp) at/above which the shuffle state readout is kept. A 1-row cell (~44dp) drops
+ * it: the 18dp status block plus even a minimum SPIN pill overflows the ~28dp inner column.
+ */
+const val ROULETTE_STATUS_MIN_HEIGHT: Int = 64
+
 /** Height (dp) at/above which the current artist line is kept. */
 const val ROULETTE_ARTIST_MIN_HEIGHT: Int = 120
 
 /** Width (dp) at/above which the shuffle toggle sits beside SPIN. */
 const val ROULETTE_TOGGLE_MIN_WIDTH: Int = 150
 
-/** Width (dp) at/above which a headerless cell spreads text + SPIN side by side (6x2). */
-const val ROULETTE_SPREAD_MIN_WIDTH: Int = 320
+/** Width (dp) at/above which a headerless cell spreads text + SPIN side by side (4x2+). */
+const val ROULETTE_SPREAD_MIN_WIDTH: Int = 234
 
 /** Height (dp) at/above which the "Tap SPIN to shuffle" hint is painted under SPIN. */
 const val ROULETTE_HINT_MIN_HEIGHT: Int = 196
@@ -1276,14 +1478,24 @@ const val ROULETTE_HINT_MIN_HEIGHT: Int = 196
 /** Upper bound for the SPIN pill; on a tall cell the extra room also feeds the hint. */
 const val ROULETTE_SPIN_MAX_DP: Int = 112
 
+/** Floor for the SPIN pill diameter on a cell tall enough for it (see [rouletteLayout]). */
+const val ROULETTE_SPIN_MIN_DP: Int = 34
+
+/** Smallest shuffle-toggle circle the wide shapes paint. */
+const val ROULETTE_TOGGLE_MIN_DP: Int = 30
+
+/** Largest shuffle-toggle circle (the tall cells' SPIN companion). */
+const val ROULETTE_TOGGLE_MAX_DP: Int = 48
+
 /**
  * Picks the roulette composition for a widget of [widthDp] x [heightDp].
  *
- * The 4x2 reference is a compact status/title/SPIN stack with no header; taller cells add
- * the header and the artist line and grow SPIN, and the tallest cells add the hint line so
- * the space between the header and the title stays tight. Wider cells add the small shuffle
- * toggle beside SPIN; a wide *and* short cell ([spread]) moves the text beside SPIN instead
- * of stacking, so the width is used rather than left as dead gutters.
+ * The 4x2 reference is a compact status/title/SPIN stack — wide enough now to spread the
+ * text beside SPIN rather than strand it mid-cell. Taller cells add the header and the
+ * artist line and grow SPIN, and the tallest cells add the hint line so the space between
+ * the header and the title stays tight. Wider cells add the small shuffle toggle beside
+ * SPIN; a wide *and* short cell ([spread]) moves the text beside SPIN instead of stacking,
+ * so the width is used rather than left as dead gutters.
  */
 fun rouletteLayout(widthDp: Int, heightDp: Int): RouletteLayout {
     val w = widthDp.coerceAtLeast(1)
@@ -1292,21 +1504,33 @@ fun rouletteLayout(widthDp: Int, heightDp: Int): RouletteLayout {
     val showTitle = h >= 64
     val showArtist = h >= ROULETTE_ARTIST_MIN_HEIGHT
     val showHint = h >= ROULETTE_HINT_MIN_HEIGHT
-    val statusBlock = ROULETTE_STATUS_BLOCK_DP
+    // A 1-row cell (~28dp of inner height) cannot afford the status block AND a minimum
+    // read pill, so the state line is dropped there and the pill takes the whole height.
+    val showStatus = h >= ROULETTE_STATUS_MIN_HEIGHT
+    val statusBlock = if (showStatus) ROULETTE_STATUS_BLOCK_DP else 0
     val titleBlock = if (showTitle) ROULETTE_TITLE_BLOCK_DP else 0
     val artistBlock = if (showArtist) ROULETTE_ARTIST_BLOCK_DP else 0
     val hintBlock = if (showHint) ROULETTE_HINT_BLOCK_DP else 0
-    val spin = (h - ROULETTE_OUTER_PADDING_DP * 2 - statusBlock - titleBlock - artistBlock - hintBlock)
-        .coerceIn(34, ROULETTE_SPIN_MAX_DP)
+    val raw = (h - ROULETTE_OUTER_PADDING_DP * 2 - statusBlock - titleBlock - artistBlock - hintBlock)
+    // The 34dp floor keeps the pill readable and tappable on every cell that affords it,
+    // but never above the height that is actually left: a 44dp cell shrinks the pill to
+    // its available height instead of slicing it flat by the bottom edge (the old floor
+    // overflowed the inner column by ~24dp).
+    val spin = raw.coerceAtMost(ROULETTE_SPIN_MAX_DP)
+        .coerceAtLeast(minOf(ROULETTE_SPIN_MIN_DP, raw).coerceAtLeast(0))
     return RouletteLayout(
+        showStatus = showStatus,
         showHeader = showHeader,
         showTitle = showTitle,
         showArtist = showArtist,
         showShuffleToggle = w >= ROULETTE_TOGGLE_MIN_WIDTH,
-        spread = !showHeader && w >= ROULETTE_SPREAD_MIN_WIDTH,
+        // The spread shape covers the headerless, short cells from the 4x2 (~234dp) up: at
+        // the old 320dp gate the 4x2/5x2 stranded their centred stack between 59–94dp of
+        // dead gutters on each side.
+        spread = !showHeader && showStatus && w >= ROULETTE_SPREAD_MIN_WIDTH,
         showHint = showHint,
         spinDp = spin,
-        shuffleDp = (spin * 3 / 4).coerceIn(30, 48),
+        shuffleDp = (spin * 3 / 4).coerceIn(minOf(ROULETTE_TOGGLE_MIN_DP, spin), ROULETTE_TOGGLE_MAX_DP),
         headerSp = 12,
         titleSp = if (w < COMPACT_MAX_WIDTH) 13 else if (showHint) 17 else 15,
         artistSp = if (w < COMPACT_MAX_WIDTH) 10 else if (showHint) 13 else 12,
@@ -1352,6 +1576,14 @@ fun lyricsLayout(widthDp: Int, heightDp: Int): LyricsLayout {
     val showTransport = h >= LYRICS_TRANSPORT_MIN_HEIGHT
     val showProgress = h >= LYRICS_PROGRESS_MIN_HEIGHT && showTransport
     val spreadHeader = showHeader && !showTransport && w >= WIDE_MIN_WIDTH
+    val skipDp = if (compact) 30 else 34
+    val playDp = if (compact) 34 else 38
+    // The three-button cluster (2 × skip + play + two gaps) must fit the padded width: on a
+    // ~94dp-wide cell (~77dp inner) the ~114dp cluster overflowed by ~37dp and sliced the
+    // skip glyphs at both widget edges. A cell that tight falls back to the play/pause pill
+    // alone — still centred and tappable — and keeps the full trio wherever it fits.
+    val showSkip = showTransport &&
+        skipDp * 2 + playDp + 2 * LYRICS_TRANSPORT_GAP_DP <= w - LYRICS_OUTER_PADDING_DP * 2
     return LyricsLayout(
         // When the header is beside the lyrics it costs no vertical space, so the line
         // count is derived without its chrome.
@@ -1371,7 +1603,8 @@ fun lyricsLayout(widthDp: Int, heightDp: Int): LyricsLayout {
         currentSp = if (compact) 15 else 16,
         neighborSp = if (compact) 12 else 13,
         headerCoverDp = if (compact) 30 else 38,
-        skipDp = if (compact) 30 else 34,
-        playDp = if (compact) 34 else 38,
+        showSkip = showSkip,
+        skipDp = skipDp,
+        playDp = playDp,
     )
 }

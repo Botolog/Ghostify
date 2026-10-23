@@ -8,15 +8,20 @@
   minResizeWidth/minResizeHeight let the user shrink it freely; NextUpWidget derives how
   many two-line rows fit from the real height and drops the header / "Now playing" line as
   the cell gets shorter.
+  maxResizeWidth/maxResizeHeight cap the size at the sweep-verified envelope: 4 columns —
+  the widget's 250dp design width, slack appears to the right in wider cells — and 4 rows
+  (250dp) tall.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:description="@string/widget_nextup_description"
     android:initialLayout="@layout/glance_default_loading_layout"
+    android:maxResizeWidth="255dp"
+    android:maxResizeHeight="250dp"
     android:minWidth="250dp"
     android:minHeight="180dp"
     android:minResizeWidth="110dp"
-    android:minResizeHeight="60dp"
+    android:minResizeHeight="110dp"
     android:previewImage="@drawable/widget_preview_nextup"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"

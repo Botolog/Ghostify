@@ -112,16 +112,38 @@ private fun PlaylistLauncherContent(tiles: List<PlaylistTile>) {
     ) {
         Column(modifier = GlanceModifier.fillMaxSize()) {
             if (layout.showHeader) {
-                Text(
-                    text = LocalContext.current.getString(R.string.widget_playlist_header),
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onSurface,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = layout.headerSp.sp,
-                    ),
-                    maxLines = 1,
+                // The header carries the overflow count ("+2") on the trailing edge, so
+                // playlists that do not fit are marked instead of silently hidden — at no
+                // extra height, wherever the header is on screen.
+                Row(
                     modifier = GlanceModifier.fillMaxWidth().padding(bottom = 6.dp),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = LocalContext.current.getString(R.string.widget_playlist_header),
+                        style = TextStyle(
+                            color = GlanceTheme.colors.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = layout.headerSp.sp,
+                        ),
+                        maxLines = 1,
+                    )
+                    if (layout.overflowCount > 0) {
+                        Spacer(GlanceModifier.defaultWeight())
+                        Text(
+                            text = LocalContext.current.getString(
+                                R.string.widget_playlist_more,
+                                layout.overflowCount,
+                            ),
+                            style = TextStyle(
+                                color = GlanceTheme.colors.onSurfaceVariant,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = layout.headerSp.sp,
+                            ),
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
             if (rows.isEmpty()) {
                 // Centre the empty message in the space the grid would have filled, so a tall
@@ -145,6 +167,24 @@ private fun PlaylistLauncherContent(tiles: List<PlaylistTile>) {
                         row = row,
                         covers = covers,
                         layout = layout,
+                    )
+                }
+                // Headerless cells have no header line to carry the count, so the overflow
+                // got its own reserved line under the grid (see [playlistLayout]).
+                if (!layout.showHeader && layout.overflowCount > 0) {
+                    Spacer(GlanceModifier.height(6.dp))
+                    Text(
+                        text = LocalContext.current.getString(
+                            R.string.widget_playlist_more,
+                            layout.overflowCount,
+                        ),
+                        style = TextStyle(
+                            color = GlanceTheme.colors.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = layout.nameSp.sp,
+                        ),
+                        maxLines = 1,
+                        modifier = GlanceModifier.fillMaxWidth(),
                     )
                 }
             }

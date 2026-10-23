@@ -8,18 +8,22 @@
 
   The countdown is app-process-only (never persisted), so the cold state is the idle one.
   minResizeWidth/minResizeHeight are held at the 2x2 default: below that the ring / number
-  and the Cancel button no longer fit legibly.
+  and the Cancel button no longer fit legibly. The widget is vertical-resize only: a
+  contiguous resize range can't exclude the un-verified 3-wide band while keeping 4-wide,
+  so horizontal resizing is disabled and SleepWidget keeps its natural 2-wide look.
+  maxResizeHeight caps at the sweep-verified 4-row envelope (250dp).
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:description="@string/widget_sleep_description"
     android:initialLayout="@layout/glance_default_loading_layout"
+    android:maxResizeHeight="250dp"
     android:minWidth="110dp"
     android:minHeight="110dp"
     android:minResizeWidth="110dp"
     android:minResizeHeight="110dp"
     android:previewImage="@drawable/widget_preview_sleep"
-    android:resizeMode="horizontal|vertical"
+    android:resizeMode="vertical"
     android:targetCellWidth="2"
     android:targetCellHeight="2"
     android:updatePeriodMillis="0"

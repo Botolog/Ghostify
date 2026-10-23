@@ -81,15 +81,58 @@ class WidgetCreativeLayoutTest {
 
     @Test
     fun sleepTallCellStacksTheRingAboveCancel() {
-        // 4x3 content box ≈ 233x163dp: not wide-and-short, so the ring stacks under the
-        // caption with Cancel beneath it.
-        val layout = sleepLayout(233, 163)
-        assertFalse("4x3 is not the wide row", layout.wide)
-        assertTrue("4x3 still draws the real ring", layout.activeRing)
+        // 3x3 ≈ 164x164dp: not wide — the shrunk wide row (≤ ~60dp) would be smaller than
+        // the ring the stacked shape affords, so the caption + ring + Cancel stack stands.
+        val layout = sleepLayout(164, 164)
+        assertFalse("a 3x3 is not the wide row", layout.wide)
+        assertTrue("3x3 still draws the real ring", layout.activeRing)
         assertTrue(layout.showLabel)
         val needed = SLEEP_CAPTION_DP + SLEEP_STACK_GAP_DP + layout.ringDp +
             SLEEP_STACK_GAP_DP + layout.cancelDp
-        assertTrue("4x3 active stack overflows (needed $needed)", needed <= 163 - 16)
+        assertTrue("3x3 active stack overflows (needed $needed)", needed <= 164 - 16)
+    }
+
+    @Test
+    fun sleepWideRowAppliesWhenARingShrinkBeatsTheStackedRing() {
+        // 3x2 (164x94dp) misses the classic `w >= 170` gate by 6dp and the 4x3 (234x164dp)
+        // misses the `w >= h*3/2` aspect by 12dp; both used to strand a small centred ring
+        // between ~46-69dp gutters. A ring shrunk to leave the caption/Cancel column its
+        // width is bigger than the stacked one, so both become wide rows.
+        val threeByTwo = sleepLayout(164, 94)
+        val fourByThree = sleepLayout(234, 164)
+        assertTrue("a 3x2 uses the wide row", threeByTwo.wide)
+        assertTrue("a 4x3 uses the wide row", fourByThree.wide)
+        for (cell in listOf(164 to threeByTwo, 234 to fourByThree)) {
+            val (w, layout) = cell
+            assertTrue("a shrunk ring stays a real ring", layout.ringDp >= SLEEP_COMPACT_RING_MIN_DP)
+            val needed = layout.ringDp + SLEEP_WIDE_RING_GAP_DP + sleepCancelWidthDp(layout)
+            assertTrue(
+                "wide row overflows the ${w}dp cell (needed $needed)",
+                needed <= w - 16,
+            )
+        }
+    }
+
+    @Test
+    fun sleepNarrowTallCellCapsTheRingByWidth() {
+        // 2x4 ≈ 93x234dp: the height-derived stacked ring reached ~141dp — wider than the
+        // cell, so the arcs ran off both edges and the countdown floated between them.
+        // The ring is now capped by the padded width, with the glyph/time scaling along.
+        val layout = sleepLayout(93, 234)
+        assertFalse("a narrow tall cell keeps the stacked shape", layout.wide)
+        assertTrue("the 2x4 keeps a real ring", layout.activeRing)
+        assertTrue(
+            "ring ${layout.ringDp} overflows the 93dp cell",
+            layout.ringDp <= 93 - 16,
+        )
+        val inner = layout.ringDp - 2 * layout.ringStrokeDp
+        val text = layout.ringTimeSp * 14 / 10
+        val needed = if (layout.ringGlyphDp > 0) layout.ringGlyphDp + 2 + text else text
+        assertTrue("ring contents touch the stroke (inner=$inner needed=$needed)", needed <= inner)
+        // The pill and caption still stack inside the height.
+        val stackNeeded = SLEEP_CAPTION_DP + SLEEP_STACK_GAP_DP + layout.ringDp +
+            SLEEP_STACK_GAP_DP + layout.cancelDp
+        assertTrue("2x4 active stack overflows (needed $stackNeeded)", stackNeeded <= 234 - 16)
     }
 
     @Test
@@ -289,6 +332,25 @@ class WidgetCreativeLayoutTest {
     // ── Shuffle roulette ─────────────────────────────────────────────────
 
     @Test
+    fun rouletteOneRowCellsDropTheStatusAndShrinkThePill() {
+        // 2x1/3x1/4x1 ≈ 44dp tall: the status line (18dp) + a minimum 34dp SPIN pill was
+        // ~52dp against ~28dp of inner height and the pill came out sliced flat. Those
+        // cells drop the status line and size the pill to the height it really has.
+        for (cell in listOf(93, 164, 234)) {
+            val layout = rouletteLayout(cell, 44)
+            assertFalse("a 1-row cell drops the status line", layout.showStatus)
+            assertFalse("a 1-row cell drops the title too", layout.showTitle)
+            assertTrue("SPIN fits the padded height (${layout.spinDp})", layout.spinDp <= 44 - 16)
+            assertTrue("SPIN stays tappable", layout.spinDp >= 20)
+            val shuffle = layout.shuffleDp
+            assertTrue("the toggle fits too ($shuffle)", shuffle <= layout.spinDp)
+        }
+        // From the 2x2 up the status readout and the readable pill both return.
+        assertTrue(rouletteLayout(94, 94).showStatus)
+        assertTrue(rouletteLayout(94, 94).spinDp >= ROULETTE_SPIN_MIN_DP)
+    }
+
+    @Test
     fun rouletteSpinAlwaysFitsThePaddedHeight() {
         for (h in listOf(60, 94, 110, 164, 234, 320)) {
             val layout = rouletteLayout(234, h)
@@ -347,8 +409,14 @@ class WidgetCreativeLayoutTest {
     }
 
     @Test
-    fun rouletteSpreadOnlyOnTheWidestHeaderlessCell() {
-        assertFalse("a 4x2 stacks instead of spreading", rouletteLayout(234, 94).spread)
+    fun rouletteSpreadOnlyOnTheWideHeaderlessCells() {
+        // The spread shape covers the headerless short cells from the 4x2 (~234dp) up: at
+        // the old 320dp gate the 4x2/5x2 stranded the stack between 59-94dp gutters.
+        assertTrue(
+            "a 4x2 spreads instead of marooning a centred stack",
+            rouletteLayout(234, 94).spread,
+        )
+        assertTrue(rouletteLayout(304, 94).spread)
         assertFalse("a 2x2 stacks instead of spreading", rouletteLayout(94, 94).spread)
         // A tall-but-narrow-shaped 6x3 has its own proper header, so it never spreads.
         assertFalse("a headered cell never spreads", rouletteLayout(369, 164).spread)

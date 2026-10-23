@@ -369,16 +369,18 @@ private fun TransportRow(isPlaying: Boolean, layout: LyricsLayout) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        WidgetIconButton(
-            iconRes = R.drawable.ic_widget_previous,
-            descriptionRes = R.string.player_previous,
-            action = previousAction(),
-            tint = GlanceTheme.colors.onSurfaceVariant,
-            filled = false,
-            buttonSize = layout.skipDp.dp,
-            iconSize = (layout.skipDp * 0.65f).dp,
-        )
-        Spacer(GlanceModifier.width(10.dp))
+        if (layout.showSkip) {
+            WidgetIconButton(
+                iconRes = R.drawable.ic_widget_previous,
+                descriptionRes = R.string.player_previous,
+                action = previousAction(),
+                tint = GlanceTheme.colors.onSurfaceVariant,
+                filled = false,
+                buttonSize = layout.skipDp.dp,
+                iconSize = (layout.skipDp * 0.65f).dp,
+            )
+            Spacer(GlanceModifier.width(LYRICS_TRANSPORT_GAP_DP.dp))
+        }
         WidgetIconButton(
             iconRes = if (isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play,
             descriptionRes = if (isPlaying) R.string.player_pause else R.string.player_play,
@@ -388,15 +390,17 @@ private fun TransportRow(isPlaying: Boolean, layout: LyricsLayout) {
             buttonSize = layout.playDp.dp,
             iconSize = (layout.playDp * 0.53f).dp,
         )
-        Spacer(GlanceModifier.width(10.dp))
-        WidgetIconButton(
-            iconRes = R.drawable.ic_widget_next,
-            descriptionRes = R.string.player_next,
-            action = nextAction(),
-            tint = GlanceTheme.colors.onSurfaceVariant,
-            filled = false,
-            buttonSize = layout.skipDp.dp,
-            iconSize = (layout.skipDp * 0.65f).dp,
-        )
+        if (layout.showSkip) {
+            Spacer(GlanceModifier.width(LYRICS_TRANSPORT_GAP_DP.dp))
+            WidgetIconButton(
+                iconRes = R.drawable.ic_widget_next,
+                descriptionRes = R.string.player_next,
+                action = nextAction(),
+                tint = GlanceTheme.colors.onSurfaceVariant,
+                filled = false,
+                buttonSize = layout.skipDp.dp,
+                iconSize = (layout.skipDp * 0.65f).dp,
+            )
+        }
     }
 }

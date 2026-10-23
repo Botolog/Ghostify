@@ -116,25 +116,34 @@ private fun LibraryStatsContent(stats: LibraryStats, sync: SyncStatus) {
             modifier = GlanceModifier.fillMaxSize(),
             // Centring the column turns whatever height the blocks do not use into an even
             // top/bottom margin, instead of the lopsided band a top-aligned tall cell left
-            // under the figures (the old 4x4 pooled ~77dp below "980 of 1,284").
-            verticalAlignment = Alignment.CenterVertically,
+            // under the figures (the old 4x4 pooled ~77dp below "980 of 1,284"). The
+            // progress-only tall cells (4x3/6x3) pool a band above AND below when centred,
+            // so they pin to the top instead (see [StatsLayout.topAlign]).
+            verticalAlignment = if (layout.topAlign) Alignment.Top else Alignment.CenterVertically,
         ) {
             if (layout.showHeader) {
                 HeaderRow(layout, kind, syncTextShort)
             }
-            if (layout.showSyncLine) {
-                Text(
-                    text = ellipsize(syncTextShort, layout.syncChars),
-                    style = TextStyle(
-                        color = syncColor(kind),
-                        fontWeight = FontWeight.Medium,
-                        fontSize = layout.syncSp.sp,
-                    ),
-                    maxLines = 1,
-                    modifier = GlanceModifier.fillMaxWidth().padding(bottom = 2.dp),
-                )
+            if (layout.singleLine) {
+                // The shortest headerless cells: figures, the sync-state dot and (where it
+                // fits) the short readout share ONE line, instead of a dedicated sync line
+                // consuming the whole height and dropping every figure.
+                SingleLineRow(stats, kind, syncTextShort, layout)
+            } else {
+                if (layout.showSyncLine) {
+                    Text(
+                        text = ellipsize(syncTextShort, layout.syncChars),
+                        style = TextStyle(
+                            color = syncColor(kind),
+                            fontWeight = FontWeight.Medium,
+                            fontSize = layout.syncSp.sp,
+                        ),
+                        maxLines = 1,
+                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 2.dp),
+                    )
+                }
+                layout.statRows.forEach { row -> StatRow(row, stats, layout) }
             }
-            layout.statRows.forEach { row -> StatRow(row, stats, layout) }
             if (layout.showProgress) {
                 ProgressBlock(stats, layout)
             }
@@ -210,6 +219,57 @@ private fun StatRow(kinds: List<LibraryStatKind>, stats: LibraryStats, layout: S
                 )
             }
             StatFigure(kind, stats, layout, GlanceModifier.defaultWeight())
+        }
+    }
+}
+
+/**
+ * The 1-row cell's combined readout: the sync-state dot, the figures in priority order and
+ * (when the short readout fits after them) the short sync words. Parts are dropped from the
+ * **end** until the line fits its budget, so the figures are never replaced by a fragmentary
+ * readout — this is only why the 3x1 lost every figure before.
+ */
+@Composable
+private fun SingleLineRow(
+    stats: LibraryStats,
+    kind: SyncLabelKind,
+    syncTextShort: String,
+    layout: StatsLayout,
+) {
+    val context = LocalContext.current
+    val separator = context.getString(R.string.widget_library_stat_separator)
+    val parts = buildList {
+        layout.statItems.forEach { add(statText(it, stats, context, short = true)) }
+        if (layout.syncOnLine) add(syncTextShort)
+    }
+    var shown = parts
+    while (shown.size > 1 &&
+        shown.joinToString(separator).length > layout.singleLineChars
+    ) {
+        shown = shown.dropLast(1)
+    }
+    val text = if (shown.isEmpty()) "" else ellipsize(shown.joinToString(separator), layout.singleLineChars)
+    Row(
+        modifier = GlanceModifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = GlanceModifier
+                .size(8.dp)
+                .background(syncColor(kind))
+                .cornerRadius(4.dp),
+        ) {}
+        Spacer(GlanceModifier.width(4.dp))
+        if (text.isNotBlank()) {
+            Text(
+                text = text,
+                style = TextStyle(
+                    color = GlanceTheme.colors.onSurface,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = layout.statSp.sp,
+                ),
+                maxLines = 1,
+            )
         }
     }
 }

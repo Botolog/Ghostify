@@ -112,6 +112,7 @@
     <string name="widget_playlist_description">Tap a playlist to start playing it.</string>
     <string name="widget_playlist_header">Playlists</string>
     <string name="widget_playlist_empty">No playlists yet</string>
+    <string name="widget_playlist_more">+%1$d more</string>
     <string name="widget_playlist_untitled">Untitled playlist</string>
     <string name="widget_playlist_play">Play %1$s</string>
 

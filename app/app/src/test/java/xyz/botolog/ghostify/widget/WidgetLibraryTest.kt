@@ -249,6 +249,52 @@ class WidgetLibraryTest {
     }
 
     @Test
+    fun playlistsOneRowCellsKeepATileInsteadOfClaimingThereAreNone() {
+        // 2x1/3x1/4x1 ≈ 44dp tall: the free height (28dp) is under the readable row pitch
+        // (38dp), which used to collapse the grid to zero tiles and paint a false
+        // "No playlists yet" over two real playlists.
+        for (w in listOf(93, 164, 234)) {
+            val layout = playlistLayout(w, 44, tileCount = 2)
+            assertEquals("a 1-row cell keeps one compact tile", 1, layout.rows)
+            // The widest cell fits both side by side; the narrow ones keep one tile.
+            assertEquals(minOf(2, layout.columns), layout.tiles)
+            assertEquals(0, layout.overflowCount)
+        }
+        // Truly nothing to show still paints the empty message.
+        val none = playlistLayout(234, 44, tileCount = 0)
+        assertEquals(0, none.rows)
+    }
+
+    @Test
+    fun playlistsNarrowHeaderCellKeepsAFullHeaderInsteadOfClippingTheCount() {
+        // A 2x2 (~93dp) cannot afford "Playlists +99 more" on one header line: the marker
+        // used to clip mid-glyph at the squircle edge. Drop the count there; a 3x2 (~164dp)
+        // still marks the hidden playlists on its roomy header line.
+        val narrow = playlistLayout(93, 94, tileCount = 3)
+        assertTrue(narrow.showHeader)
+        assertEquals(0, narrow.overflowCount)
+        assertEquals("the grid still keeps its tile", 1, narrow.rows)
+        assertTrue(playlistLayout(164, 94, tileCount = 3).overflowCount > 0)
+    }
+
+    @Test
+    fun playlistsHiddenTilesAreMarkedByTheOverflowCount() {
+        // three_4x2: 2 columns × 1 row fit 2 of the 3 playlists; the 3rd must be marked,
+        // not hidden silently. The count rides the header, so nothing else changes.
+        val layout = playlistLayout(234, 94, tileCount = 3)
+        assertEquals(2, layout.tiles)
+        assertEquals(1, layout.overflowCount)
+        // Two playlists fill the grid exactly: no marker.
+        assertEquals(0, playlistLayout(234, 94, tileCount = 2).overflowCount)
+        // A headerless cell that can afford the line reserves it under the grid.
+        val headerless = playlistLayout(234, 70, tileCount = 3)
+        assertEquals(1, headerless.rows)
+        assertEquals(1, headerless.overflowCount)
+        val used = headerless.rows * headerless.rowHeightDp + PLAYLIST_OVERFLOW_TOTAL_DP
+        assertTrue("headerless overflow overflows (used $used)", used <= 70 - 16)
+    }
+
+    @Test
     fun playlistsOuterColumnStaysUnderTheChildCap() {
         for (w in listOf(94, 234, 370)) {
             for (h in listOf(60, 94, 164)) {
@@ -404,6 +450,53 @@ class WidgetLibraryTest {
         val layout = statsLayout(234, 60)
         assertFalse(layout.showHeader)
         assertTrue("the sync readout must survive the dropped header", layout.showSyncLine)
+    }
+
+    @Test
+    fun libraryOneRowCellsFoldEverythingIntoOneCombinedLine() {
+        // 2x1/3x1/4x1 ≈ 44dp tall: a headerless cell that can hold neither the sync line
+        // AND a figure row used to let the line eat the whole budget (3x1/4x1 dropped every
+        // figure; 2x1 dropped the readout). Everything now shares one line, led by the dot.
+        for (cell in listOf(93 to 1, 164 to 2, 234 to 2)) {
+            val (w, expectedItems) = cell
+            val layout = statsLayout(w, 44)
+            assertTrue("$w: one combined line", layout.singleLine)
+            assertFalse(layout.showSyncLine)
+            assertEquals(expectedItems, layout.itemsPerRow)
+            assertEquals(
+                "figures survive on the combined line",
+                expectedItems,
+                layout.statItems.size,
+            )
+            assertTrue(
+                "\"12,345 songs\" must fit the combined budget: ${layout.singleLineChars}",
+                if (expectedItems == 1) {
+                    layout.singleLineChars >= "12,345 songs".length
+                } else {
+                    layout.singleLineChars >= "12,345 songs · 9,876 dl".length
+                },
+            )
+            assertTrue("...and each figure budget is still legible", layout.statItemChars >= 1)
+        }
+        // A 4x1 is wide enough to carry the short readout's words too.
+        assertTrue(statsLayout(234, 44).syncOnLine)
+        val wideFull = "12,345 songs · 9,876 dl · 3 min ago"
+        assertTrue(
+            "the full combined readout fits: ${statsLayout(234, 44).singleLineChars}",
+            statsLayout(234, 44).singleLineChars >= wideFull.length,
+        )
+        // A short-but-taller headerless cell keeps the dedicated line AND the figures.
+        val taller = statsLayout(234, 60)
+        assertFalse(taller.singleLine)
+        assertTrue(taller.showSyncLine)
+    }
+
+    @Test
+    fun libraryProgressOnlyTallCellsTopAlignTheirContent() {
+        assertFalse("the hero cell keeps its centring", statsLayout(234, 234).topAlign)
+        assertTrue("4x3 pins to the top", statsLayout(234, 164).topAlign)
+        assertTrue("6x3 pins to the top", statsLayout(369, 164).topAlign)
+        assertFalse("a cell without the progress block keeps centring", statsLayout(234, 94).topAlign)
     }
 
     @Test

@@ -6,18 +6,22 @@
   periodic polling (the running app pushes updates via WidgetUpdateCoordinator, and the
   widget otherwise renders from persisted state + Room).
 
-  minResizeWidth/minResizeHeight are held at the 2x2 floor: below that the tile grid (and
-  the name beside a cover) stops fitting. The widget is resizable both ways; PlaylistLayout
-  derives the grid from the real cell size.
+  minResizeWidth/minResizeHeight let the user shrink down to the single-row form
+  (44dp is a floor below one grid row, so the launcher's own row minimum decides).
+  The widget is resizable both ways; PlaylistLayout derives the grid from the real cell
+  size. maxResizeWidth/maxResizeHeight cap it at the sweep-verified envelope:
+  6 columns (~390dp) wide, 3 rows (180dp) tall.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:description="@string/widget_playlist_description"
     android:initialLayout="@layout/glance_default_loading_layout"
+    android:maxResizeWidth="390dp"
+    android:maxResizeHeight="180dp"
     android:minWidth="250dp"
     android:minHeight="110dp"
     android:minResizeWidth="110dp"
-    android:minResizeHeight="110dp"
+    android:minResizeHeight="44dp"
     android:previewImage="@drawable/widget_preview_playlists"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"

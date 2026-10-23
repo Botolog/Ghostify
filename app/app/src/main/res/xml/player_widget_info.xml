@@ -9,16 +9,22 @@
   targetCellWidth/targetCellHeight are API 31+ attributes; older launchers fall
   back to minWidth/minHeight. minWidth/minHeight describe the default 4x2 cell;
   minResizeWidth/minResizeHeight let the user shrink all the way to the widget's
-  single-row (2x1) form, which PlayerWidget lays out responsively.
+  single-row (2x1) form, which PlayerWidget lays out responsively (44dp is a
+  floor below one grid row, so the launcher's own row minimum decides).
+  maxResizeWidth/maxResizeHeight cap the size at the sweep-verified envelope:
+  6 columns (~390dp) wide, 3 rows (180dp) tall; anything beyond that (e.g. a
+  5-row player) was never layout-verified.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:description="@string/widget_player_description"
     android:initialLayout="@layout/glance_default_loading_layout"
+    android:maxResizeWidth="390dp"
+    android:maxResizeHeight="180dp"
     android:minWidth="250dp"
     android:minHeight="110dp"
     android:minResizeWidth="110dp"
-    android:minResizeHeight="60dp"
+    android:minResizeHeight="44dp"
     android:previewImage="@drawable/widget_preview_player"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"
